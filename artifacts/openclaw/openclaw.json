@@ -1,0 +1,98 @@
+{
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "allowTailscale": false,
+      "rateLimit": {}
+    },
+    "trustedProxies": ["<docker-bridge-gateway-ip>"],
+    "allowRealIpFallback": false
+  },
+  "tools": {
+    "profile": "messaging",
+    "exec": {
+      "security": "deny",
+      "ask": "always"
+    },
+    "fs": {
+      "workspaceOnly": true
+    },
+    "elevated": {
+      "enabled": false
+    },
+    "web": {
+      "search": {
+        "enabled": true,
+        "provider": "duckduckgo",
+        "maxResults": 5,
+        "cacheTtlMinutes": 15,
+        "openaiCodex": {
+          "enabled": true,
+          "mode": "cached",
+          "contextSize": "high",
+          "userLocation": {
+            "country": "RU",
+            "timezone": "Europe/Moscow"
+          }
+        }
+      }
+    }
+  },
+  "logging": {
+    "redactSensitive": "tools"
+  },
+  "discovery": {
+    "mdns": {
+      "mode": "off"
+    }
+  },
+  "session": {
+    "dmScope": "per-channel-peer"
+  },
+  "browser": {
+    "ssrfPolicy": {
+      "dangerouslyAllowPrivateNetwork": false
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/home/node/.openclaw/workspace",
+      "model": {
+        "primary": "openai-codex/gpt-5.4"
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "allowlist",
+      "botToken": "<telegram-bot-token>",
+      "allowFrom": ["<owner-telegram-user-id>"],
+      "groupAllowFrom": ["<owner-telegram-user-id>"],
+      "groups": {
+        "*": {
+          "requireMention": true
+        },
+        "<supergroup-chat-id>": {
+          "requireMention": false,
+          "groupPolicy": "open"
+        }
+      },
+      "groupPolicy": "allowlist",
+      "streaming": {
+        "mode": "partial"
+      }
+    }
+  },
+  "auth": {
+    "profiles": {
+      "openai-codex:default": {
+        "provider": "openai-codex",
+        "mode": "oauth"
+      }
+    },
+    "order": {
+      "openai-codex": ["openai-codex:default"]
+    }
+  }
+}

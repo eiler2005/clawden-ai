@@ -1,0 +1,81 @@
+# Rollback And Backup
+
+## Rollback goals
+
+Rollback should preserve two invariants:
+
+1. the pre-existing `deploy-bridge-1` service must remain untouched
+2. OpenClaw changes must be reversible without requiring a full host rebuild
+
+## Simple rollback
+
+Stop OpenClaw only:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose down
+'
+```
+
+If you only need to disable public access temporarily:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  sudo systemctl stop caddy
+'
+```
+
+## Config rollback
+
+Relevant rollback points were stored on the server under:
+
+- `/opt/openclaw/backups/`
+- `/etc/caddy/Caddyfile.pre-*`
+
+Typical rollback path:
+
+1. restore the previous `docker-compose.yml`
+2. restore the previous `openclaw.json`
+3. restore the previous `Caddyfile`
+4. recreate the gateway container
+5. reload `Caddy`
+
+## Hard rollback
+
+If OpenClaw must be removed entirely:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose down || true &&
+  sudo rm -rf /opt/openclaw
+'
+```
+
+If public access should be removed as well:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  sudo systemctl stop caddy
+'
+```
+
+## Minimum backup set
+
+- `/opt/openclaw/.env`
+- `/opt/openclaw/docker-compose.yml`
+- `/opt/openclaw/config/openclaw.json`
+- `/opt/openclaw/config/agents/main/agent/auth-profiles.json`
+- `/etc/caddy/Caddyfile`
+
+## Sensitive backup set
+
+These are operationally important but must never go to Git:
+
+- client certificate materials
+- access CA materials
+- tokenized browser URLs
+- any real server access notes
+
+Keep them only in local password managers, secure file storage, or explicitly private backup locations.

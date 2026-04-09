@@ -1,0 +1,37 @@
+{
+    servers {
+        protocols h1
+    }
+}
+
+http://<openclaw-public-host> {
+    redir https://<openclaw-public-host>{uri} 301
+}
+
+<openclaw-public-host> {
+    tls /etc/caddy/certs/<server-fullchain>.pem /etc/caddy/certs/<server-privkey>.pem {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /etc/caddy/certs/<client-ca>.crt
+        }
+    }
+
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    }
+
+    reverse_proxy 127.0.0.1:18789 {
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Host {http.request.host}
+        header_up X-Forwarded-Proto https
+        transport http {
+            versions h1_1
+        }
+    }
+}

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "profiles": {
+    "openai-codex:default": {
+      "type": "oauth",
+      "provider": "openai-codex",
+      "access": "[redacted]",
+      "refresh": "[redacted]",
+      "expires": 1776019823000,
+      "accountId": "[redacted-account-id]"
+    }
+  }
+}

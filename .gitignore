@@ -1,0 +1,24 @@
+# Local-only access and environment notes
+LOCAL_ACCESS.md
+CLAUDE.local.md
+*.local.md
+*.private.md
+.claude/settings.local.json
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Temporary notes
+tmp/
+scratch/
+*.log
+
+# Never commit copied secrets
+secrets/
+*.pem
+*.key
+*.token
