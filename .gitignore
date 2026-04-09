@@ -22,3 +22,20 @@ secrets/
 *.pem
 *.key
 *.token
+
+# LightRAG env (contains API keys)
+scripts/lightrag.env
+
+# Bot-managed runtime files (daily notes, auto-generated)
+workspace/memory/[0-9]*.md
+workspace/memory/archive/
+workspace/raw/*
+!workspace/raw/.gitkeep
+
+# Local session context
+LOCAL_*.md
+
+# Personal profile files (real name, phone, email, family, clients)
+workspace/USER.md
+workspace/MEMORY.md
+workspace/SOUL.md

@@ -387,6 +387,109 @@ sudo mkdir -p /var/tmp/openclaw-compile-cache
 
 `openclaw doctor` warns that `bind=lan` (0.0.0.0) is network-accessible. This is intentional: Caddy handles all public exposure via mTLS. The gateway port is only published to `127.0.0.1:18789` on the host — not externally reachable. The warning can be ignored in this architecture.
 
+## Memory management
+
+### Memory system overview
+
+The bot uses a three-layer memory system. See `docs/10-memory-architecture.md` for full details.
+
+```
+LIVE > RAW > DERIVED
+```
+
+Quick rule: current-state questions → always live-check. Never answer from memory files.
+
+### Check LightRAG health
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf http://127.0.0.1:8020/health | jq .
+'
+```
+
+### View LightRAG logs
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/lightrag && docker compose -f docker-compose.yml -f docker-compose.override.yml logs --tail=100 lightrag
+'
+```
+
+### Trigger LightRAG re-index (after bulk workspace or Obsidian changes)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  /opt/lightrag/scripts/lightrag-ingest.sh
+'
+```
+
+### Query LightRAG directly (for debugging)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf -X POST http://127.0.0.1:8020/query \
+    -H "Content-Type: application/json" \
+    -d "{\"query\": \"test query\", \"mode\": \"hybrid\"}" | jq .
+'
+```
+
+### Read today's memory index
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'docker compose -f /opt/openclaw/docker-compose.yml exec -T openclaw-gateway \
+   sh -lc "cat /home/node/.openclaw/workspace/memory/INDEX.md 2>/dev/null || echo no-index-yet"'
+```
+
+### Read workspace master index
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'docker compose -f /opt/openclaw/docker-compose.yml exec -T openclaw-gateway \
+   sh -lc "cat /home/node/.openclaw/workspace/INDEX.md"'
+```
+
+### Weekly memory maintenance (manual)
+
+Run when HEARTBEAT prompts or weekly:
+
+1. Move daily notes older than 14 days to `memory/archive/`
+2. Update `memory/INDEX.md` — remove stale entries
+3. Trigger LightRAG re-index
+4. Scan for contradictions between `MEMORY.md` and recent raw/ entries
+
+```bash
+# Example: archive old daily note
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw/workspace &&
+  mv memory/2026-04-08.md memory/archive/ 2>/dev/null || echo "file not found"
+'
+```
+
+After archiving, deploy updated `memory/INDEX.md` and trigger `/new` in the bot.
+
+### Obsidian vault sync check
+
+The vault is synced one-way from Mac via rsync (launchd, every 15 min). Check last sync time:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  ls -la /opt/obsidian-vault/ | head -20
+'
+```
+
+Check sync log on Mac:
+
+```bash
+tail -50 /tmp/obsidian-sync.log
+```
+
+Force sync manually from Mac:
+
+```bash
+OPENCLAW_HOST="deploy@<server-host>" TRIGGER_REINDEX=true ./scripts/sync-obsidian.sh
+```
+
 ## If SSH times out during banner exchange
 
 This indicates a host-level access problem before shell login. Use Hetzner Console for recovery checks:

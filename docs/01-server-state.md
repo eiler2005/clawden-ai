@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-06`
+Snapshot date: `2026-04-09`
 
 ## Host
 
@@ -17,6 +17,30 @@ Snapshot date: `2026-04-06`
 - purpose: pre-existing production workload
 - project root: `/opt/maxtg-bridge`
 - status during setup: left running and not rebuilt
+
+### LightRAG (knowledge graph memory)
+
+- project root: `/opt/lightrag`
+- compose files: `/opt/lightrag/docker-compose.yml` + `docker-compose.override.yml`
+- image: `ghcr.io/hkuds/lightrag:latest` (upstream official); local build also present as `lightrag-local:latest`
+- data dir: `/opt/lightrag/data/` (graph + vector + kv state, file-based)
+- port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
+- input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
+- LLM: `gemini-2.0-flash` via Gemini API (free tier: 15 RPM, 1500 RPD)
+- embedding: `gemini-embedding-001` (same API key, dim=3072)
+- storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
+- ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
+- cron: every 30 minutes
+- see `docs/10-memory-architecture.md` and `docs/11-lightrag-setup.md`
+
+### Obsidian vault
+
+- path: `/opt/obsidian-vault/`
+- purpose: external AI Wiki, fed into LightRAG for knowledge graph indexing
+- sync method: **one-way rsync from Mac** (iCloud vault) to server via SSH — NOT git
+- trigger: launchd agent on Mac (`com.openclaw.obsidian-sync`), runs every 15 minutes
+- script: `scripts/sync-obsidian.sh` with `TRIGGER_REINDEX=true`
+- re-index: triggers `/opt/lightrag/scripts/lightrag-ingest.sh` after each sync
 
 ### OpenClaw deployment
 
@@ -55,6 +79,7 @@ That absence is intentional. In this deployment, agent-facing runtime tools belo
 
 - `127.0.0.1:18789` for the OpenClaw gateway publish
 - `127.0.0.1:18790` for the bridge/helper publish
+- `127.0.0.1:8020` for LightRAG API (port 8020 → container 9621; UFW blocks external access even if bound on 0.0.0.0 internally)
 
 ### Administrative access
 
@@ -104,16 +129,20 @@ Workspace directory in container: `/home/node/.openclaw/workspace/`
 | `SOUL.md` | Anti-sycophancy protocol, values, techno-minimalist purpose |
 | `USER.md` | Denis's profile — tech enthusiast, builder, domain expertise |
 | `AGENTS.md` | Operating instructions, session protocol, decision approach |
+| `INDEX.md` | Master memory catalog: what lives where, navigation |
 | `MEMORY.md` | Long-term curated memory: projects, partnerships, professional facts |
 | `HEARTBEAT.md` | Lightweight periodic tasks (no heavy scanning) |
-| `TOOLS.md` | Workspace tools and Denis's external tool stack |
-| `BOOT.md` | Session startup checklist |
+| `TOOLS.md` | Workspace tools including lightrag_query |
+| `BOOT.md` | Session startup checklist (8-step, includes LightRAG health check) |
 
 ### Runtime-managed files (not tracked in git)
 
 | Path | Description |
 |------|-------------|
 | `memory/YYYY-MM-DD.md` | Daily conversation logs, created by bot |
+| `memory/INDEX.md` | Daily note index (bot-managed) |
+| `memory/archive/` | Compressed old daily notes (bot-managed) |
+| `raw/YYYY-MM-DD-{topic}.md` | Verbatim decision threads, redacted (bot-managed) |
 | `BOOTSTRAP.md` | Pre-existing file from initial setup (not modified) |
 | `.openclaw/` | Internal bot state (sessions, search index) |
 | `state/` | Bot runtime state |

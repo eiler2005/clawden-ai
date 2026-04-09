@@ -28,9 +28,16 @@
 - Review `.gitignore` before adding new local-only files.
 - If deployment behavior changes, update the relevant docs in the same task.
 
+## Changelog
+
+- Update `CHANGELOG.md` with every significant change — new features, fixes, config changes, deployments.
+- Do this in the same task as the change itself, before or together with the commit.
+- Format: add an entry under `[Unreleased]` or a dated section using [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) conventions.
+
 ## Files To Keep Aligned
 
 - `README.md`
+- `CHANGELOG.md`
 - `docs/01-server-state.md`
 - `docs/02-openclaw-installation.md`
 - `docs/03-operations.md`
@@ -42,3 +49,10 @@
 
 - Use `CLAUDE.local.md` for personal notes that should not be committed.
 - Use `.claude/settings.local.json` for local Claude Code overrides that should not be committed.
+
+## Commit Permission Rule
+
+- **Never create a git commit or push to remote without explicit user approval in the current session.**
+- Before any `git commit` or `git push`, state what will be committed and ask for confirmation.
+- This rule overrides any general "commit when done" instructions.
+- One-time approval does not carry over to future commits in the same or other sessions.

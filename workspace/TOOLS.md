@@ -7,6 +7,30 @@
 - Веб-фетч (внешние URL по запросу)
 - Выполнение кода (по явному разрешению)
 
+### lightrag_query — поиск по базе знаний
+
+Использовать вместо прямого чтения архивных дневников и raw/.
+Один вызов ~2KB ответа vs загрузка MB истории.
+
+```
+POST http://lightrag-lightrag-1:9621/query
+Content-Type: application/json
+
+{"query": "почему выбрали PostgreSQL вместо Redis", "mode": "hybrid"}
+```
+
+Режимы: `hybrid` (рекомендован) · `local` (граф) · `global` (векторный)
+
+Health-check: `GET http://lightrag-lightrag-1:9621/health`
+
+**Важно:** результаты LightRAG — Derived-уровень. Не использовать для ответов о текущем состоянии системы.
+
+### Obsidian vault
+
+Путь на сервере: `/opt/obsidian-vault/` (монтируется в LightRAG read-only)
+Синхронизация: git pull каждые 15 минут (cron)
+Re-index: после bulk-изменений запустить `scripts/lightrag-ingest.sh`
+
 ## Инструменты Дениса (внешние, для контекста)
 
 **AI / Разработка**

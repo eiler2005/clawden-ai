@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd plist for automatic Obsidian → server sync every 15 minutes.
+
+  Setup:
+    1. Copy to ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
+    2. Edit OPENCLAW_HOST and SSH_KEY values below
+    3. Run:
+         launchctl load ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
+
+  To unload:
+         launchctl unload ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
+
+  Logs:
+    stdout: /tmp/obsidian-sync.log
+    stderr: /tmp/obsidian-sync-error.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.openclaw.obsidian-sync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPLACE_WITH_ABSOLUTE_PATH_TO/scripts/sync-obsidian.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OPENCLAW_HOST</key>
+    <string>deploy@REPLACE_WITH_SERVER_HOST</string>
+    <key>SSH_KEY</key>
+    <string>/Users/DenisErmilov/.ssh/id_rsa</string>
+    <key>TRIGGER_REINDEX</key>
+    <string>true</string>
+  </dict>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/obsidian-sync.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/tmp/obsidian-sync-error.log</string>
+</dict>
+</plist>
