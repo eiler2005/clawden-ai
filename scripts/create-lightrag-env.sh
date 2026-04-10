@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # create-lightrag-env.sh
-# Creates scripts/lightrag.env by prompting for the Anthropic API key.
-# Everything else (embeddings, storage) is local — no extra keys needed.
+# Creates scripts/lightrag.env by prompting for the Google Gemini API key.
+# The same key is used for LightRAG extraction and embeddings.
 #
 # Usage:
 #   ./scripts/create-lightrag-env.sh
 #
-# If ANTHROPIC_API_KEY is already set in the environment, it will be used
+# If GEMINI_API_KEY is already set in the environment, it will be used
 # automatically without prompting.
 
 set -euo pipefail

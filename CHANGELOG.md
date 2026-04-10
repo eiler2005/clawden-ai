@@ -8,7 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Pending
-- LightRAG initial bulk indexing (blocked: Gemini free tier RPD quota, resets UTC midnight)
+- None
+
+### Fixed
+- LightRAG indexing repaired on the live server:
+  - attached `lightrag-lightrag-1` to `openclaw_default` with DNS alias `lightrag`
+  - replaced public `0.0.0.0:9621` publish with host-local `127.0.0.1:8020`
+  - changed healthcheck from missing `curl` to Python `urllib`
+  - switched LightRAG extraction from OmniRoute `light` to direct Gemini `gemini-2.5-flash-lite`
+  - reprocessed the corpus successfully (`processed=26`, `failed=0`)
+
+### Changed
+- Expanded LightRAG documentation across README, memory architecture, setup, operations, and workspace tool docs:
+  - why LightRAG exists
+  - what data is ingested
+  - how cron/upload/reprocess updates the index
+  - how OpenClaw queries it
+  - when LightRAG results are trustworthy versus when live checks are required
 
 ---
 

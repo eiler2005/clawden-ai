@@ -399,6 +399,26 @@ LIVE > RAW > DERIVED
 
 Quick rule: current-state questions → always live-check. Never answer from memory files.
 
+LightRAG is the retrieval layer over the markdown memory corpus. It indexes workspace files and the
+Obsidian vault, then lets OpenClaw ask narrow historical questions without loading archives into
+the conversation. It is useful for "what do we know about X?" and "why did we decide Y?", but it is
+not authoritative for live service state.
+
+Data flow:
+
+```text
+workspace/*.md + workspace/memory/*.md + workspace/raw/*.md
+Obsidian vault via Syncthing
+        ↓
+/opt/lightrag/scripts/lightrag-ingest.sh
+        ↓
+POST /documents/upload + POST /documents/reprocess_failed
+        ↓
+chunks + entities + relationships + vectors
+        ↓
+OpenClaw lightrag_query → http://lightrag:9621/query
+```
+
 ### Check LightRAG health
 
 ```bash
@@ -406,6 +426,17 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   curl -sf http://127.0.0.1:8020/health | jq .
 '
 ```
+
+### Check LightRAG indexing status
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf http://127.0.0.1:8020/documents/status_counts | jq .
+'
+```
+
+Healthy indexing should converge to `failed=0`. Upload success alone is not enough: documents can
+be accepted by `/documents/upload` and still fail later during LLM extraction.
 
 ### View LightRAG logs
 
@@ -430,6 +461,21 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   curl -sf -X POST http://127.0.0.1:8020/query \
     -H "Content-Type: application/json" \
     -d "{\"query\": \"test query\", \"mode\": \"hybrid\"}" | jq .
+'
+```
+
+### Query LightRAG as OpenClaw sees it
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose exec -T openclaw-gateway sh -lc "
+    node -e \"fetch(\\\"http://lightrag:9621/query\\\", {
+      method: \\\"POST\\\",
+      headers: {\\\"Content-Type\\\": \\\"application/json\\\"},
+      body: JSON.stringify({query: \\\"test query\\\", mode: \\\"hybrid\\\"})
+    }).then(r => r.text()).then(t => console.log(t.slice(0, 1000)))\"
+  "
 '
 ```
 

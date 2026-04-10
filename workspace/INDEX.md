@@ -69,7 +69,7 @@ Before writing to raw: redaction pass (remove IPs, tokens, certs, credentials).
 
 ## LightRAG (knowledge graph brain)
 
-Endpoint: `http://lightrag:8020`
+Endpoint: `http://lightrag:9621`
 Health: `GET /health`
 Query: `POST /query` → `{"query": "...", "mode": "hybrid"}`
 

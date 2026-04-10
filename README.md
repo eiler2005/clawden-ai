@@ -69,7 +69,7 @@ Messages arrive via Telegram → routed through OpenClaw gateway → Беньк�
 │  │  LightRAG  (Docker)        127.0.0.1:8020    │                      │
 │  │  image: ghcr.io/hkuds/lightrag:latest        │                      │
 │  │                                              │                      │
-│  │  LLM:       OmniRoute `light` tier           │                      │
+│  │  LLM:       Gemini 2.5 Flash Lite            │                      │
 │  │  Embedding: gemini-embedding-001 (dim=3072)  │                      │
 │  │  Storage:   NetworkX · NanoVectorDB · JsonKV │                      │
 │  │                                              │                      │
@@ -102,7 +102,7 @@ Not every task needs the most powerful (and expensive) model. OmniRoute acts as 
 |------|-----|---------|
 | **smart** | Complex code, architecture decisions, multi-step reasoning, long context (>8K tokens) | "Review this 200-line module and redesign the auth flow" |
 | **medium** | Normal conversation, Q&A, summarization, translation | "What's the deadline for the roadmap item?" |
-| **light** | Background system tasks — classification, tagging, data extraction | LightRAG entity extraction, format checking |
+| **light** | Background helper tasks — classification, tagging, formatting | Note tagging, format checking |
 
 ### How Бенька decides
 
@@ -113,7 +113,7 @@ Simple rule chain, top-to-bottom:
 3. Needs architectural trade-off analysis → **smart**
 4. Normal chat, Q&A, summary → **medium**
 5. Classification, data extraction, formatting → **light**
-6. Any LightRAG indexing operation → always **light**
+6. Any delegated LightRAG helper task → **light**; LightRAG's own extraction LLM is direct Gemini
 
 ### Provider chains (priority order within each tier)
 
@@ -135,7 +135,7 @@ light:  Gemini 2.0 Flash
 
 ### Where does OpenAI gpt-5.4 fit?
 
-OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main conversation via an existing Plus subscription (OAuth, not API key). It doesn't go through OmniRoute because the Plus subscription is OAuth-only and can't be routed via a proxy. OmniRoute covers everything else: subtask delegation, LightRAG LLM, and alternative provider fallbacks.
+OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main conversation via an existing Plus subscription (OAuth, not API key). It doesn't go through OmniRoute because the Plus subscription is OAuth-only and can't be routed via a proxy. OmniRoute covers delegated subtasks and alternative provider fallbacks; LightRAG extraction uses direct Gemini for stability.
 
 ### Providers
 
@@ -143,7 +143,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 |----------|------|-----------------|------|
 | **Kiro** | AWS Builder ID OAuth | Claude Sonnet 3.7, Claude Haiku | Free, unlimited |
 | **OpenRouter** | API key | Claude 3.5, Kimi K2, Qwen3 family | Pay-per-token hub; free models available |
-| **Gemini** | API key | gemini-2.0-flash | Free tier (1500 req/day) |
+| **Gemini** | API key | gemini-2.5-flash-lite, gemini-embedding-001 | Free tier |
 | **OpenAI** | Plus OAuth (via OpenClaw) | gpt-5.4 | Existing Plus subscription |
 
 ---
@@ -180,6 +180,9 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 
 ## Memory System
 
+Long-term memory is file-first. Markdown remains readable and editable by humans; LightRAG is the
+retrieval/index layer built from those files.
+
 Three trust layers — never conflate them:
 
 ```
@@ -187,6 +190,42 @@ LIVE    — docker ps / curl / logs        highest trust, current state only
 RAW     — workspace/raw/YYYY-MM-DD-*.md  verbatim decisions, redacted before commit
 DERIVED — MEMORY.md, daily notes         quick recall, not canonical
 ```
+
+### What Gets Stored
+
+| Layer | Examples | How it enters memory |
+|-------|----------|----------------------|
+| Workspace context | `MEMORY.md`, `USER.md`, `AGENTS.md`, `TOOLS.md` | edited locally or by the bot, deployed to `/opt/openclaw/workspace` |
+| Daily memory | `workspace/memory/YYYY-MM-DD.md` | bot session logs and compact decisions |
+| Raw decision records | `workspace/raw/YYYY-MM-DD-topic.md` | explicit decisions, root causes, rejected options, redacted before git |
+| Obsidian notes | reading notes, project wiki, personal knowledge | Syncthing syncs Mac Obsidian vault to `/opt/obsidian-vault` |
+
+### How LightRAG Fits
+
+LightRAG indexes workspace markdown and the Obsidian vault every 30 minutes via
+`/opt/lightrag/scripts/lightrag-ingest.sh`. The script uploads markdown file-by-file, retries
+failed/pending documents, and LightRAG turns the content into chunks, vectors, entities, and graph
+relationships.
+
+OpenClaw uses LightRAG from inside Docker at:
+
+```text
+http://lightrag:9621/query
+```
+
+The server host uses:
+
+```text
+http://127.0.0.1:8020/query
+```
+
+Бенька asks LightRAG when the question is about historical context, decisions, notes, books,
+projects, or "what do we know about X?" The response includes a synthesized answer plus file
+references. For important decisions, the bot should inspect the referenced source file before
+answering confidently.
+
+LightRAG is not the source of truth for live infrastructure. Questions like "is this running now?"
+still require direct checks with Docker, curl, config reads, or logs.
 
 **Boot sequence** (5–8 KB total context):
 1. `MEMORY.md` + `USER.md` — long-term curated facts (gitignored, populated locally)

@@ -1,4 +1,4 @@
-# LightRAG Setup
+# LightRAG Setup And Usage
 
 LightRAG is the knowledge graph brain for the memory system. It indexes all markdown content
 (workspace files + Obsidian vault) and provides hybrid retrieval (vector + graph traversal).
@@ -7,10 +7,30 @@ See `docs/10-memory-architecture.md` for the full memory system context.
 
 ---
 
+## Why LightRAG Exists
+
+OpenClaw sessions are persistent, but the model context window is still finite. Without an
+external retrieval layer, the bot has two bad choices: forget older decisions, or bulk-load many
+daily notes and raw files until the conversation becomes slow and noisy.
+
+LightRAG is the middle path:
+
+- It turns markdown notes into searchable chunks, entities, and relationships.
+- It lets Бенька ask narrow questions like "why did we choose X?" without reading an archive.
+- It connects related facts across workspace memory, daily notes, raw decision records, and
+  Obsidian notes.
+- It keeps retrieval as Derived-tier memory: useful context, not proof of current state.
+
+Use LightRAG for historical/contextual recall. Do not use it to answer whether a service is
+currently running, which config is active, or what the live server is doing right now. Those
+questions require live checks.
+
+---
+
 ## Architecture Position
 
 ```
-Mac iCloud vault (/DenisJournals) ──rsync every 15 min──────────────────┐
+Mac iCloud vault (/DenisJournals) ──Syncthing bidirectional sync────────┐
 workspace/ markdown files ──────────────────────────────────────────────┤
                                                                         ▼
                                                            /opt/obsidian-vault/
@@ -30,6 +50,69 @@ LightRAG is NOT exposed publicly. Caddy does not proxy it. Internal access only.
 
 ---
 
+## Data Lifecycle
+
+### What goes in
+
+LightRAG indexes markdown from two source trees:
+
+| Source | Server path | Purpose | Write owner |
+|--------|-------------|---------|-------------|
+| OpenClaw workspace | `/opt/openclaw/workspace` | bot identity, boot rules, curated memory, daily notes, raw decision threads | OpenClaw / deploy scripts |
+| Obsidian vault | `/opt/obsidian-vault` | external AI wiki, personal/project notes, reading lists, long-form context | Syncthing from Mac and bot writes |
+
+The LightRAG container mounts both paths read-only under `/app/data/inputs/`. The source files
+remain the canonical human-editable records; LightRAG stores only its derived graph/vector/index
+state under `/opt/lightrag/data/rag_storage/`.
+
+### How data is ingested
+
+`/opt/lightrag/scripts/lightrag-ingest.sh` runs every 30 minutes from cron and can also be run
+manually after bulk edits. It:
+
+1. Checks `GET http://127.0.0.1:8020/health`.
+2. Finds markdown files in `/opt/openclaw/workspace` and `/opt/obsidian-vault`.
+3. Uploads each file with `POST /documents/upload`.
+4. Calls `POST /documents/reprocess_failed` so pending or previously failed documents are retried.
+
+LightRAG deduplicates by document identity/content, so repeated cron runs are expected. The useful
+operational check is not "did upload return 200?" but whether `/documents/status_counts` converges
+to `processed > 0` and `failed = 0`.
+
+### What LightRAG builds
+
+During processing, LightRAG:
+
+- splits documents into text chunks;
+- calls the configured extraction LLM (`gemini-2.5-flash-lite`);
+- extracts entities and relationships;
+- stores vectors in NanoVectorDB and graph edges in NetworkX;
+- records document lifecycle in `kv_store_doc_status.json`.
+
+The index can be rebuilt from source markdown plus `/opt/lightrag/.env`, but `/opt/lightrag/data/`
+is backed up because rebuilding takes API quota and time.
+
+### How data is retrieved
+
+OpenClaw reaches LightRAG over Docker DNS:
+
+```text
+OpenClaw container → http://lightrag:9621/query
+Server host        → http://127.0.0.1:8020/query
+```
+
+The bot uses `lightrag_query` for questions such as:
+
+- "What did we decide about OmniRoute?"
+- "Why did we reject the previous sync approach?"
+- "Find notes about Semikhatov / недосказанность."
+- "What context do we have about project X?"
+
+The response contains a synthesized answer plus references to source files. Those references tell
+the bot which raw/workspace/Obsidian file to inspect next if the answer needs stronger grounding.
+
+---
+
 ## Resource Requirements (Hetzner CX23: 3 vCPU, 4GB RAM)
 
 | Component | Choice | Why |
@@ -37,7 +120,7 @@ LightRAG is NOT exposed publicly. Caddy does not proxy it. Internal access only.
 | Graph storage | NetworkX (built-in) | File-based, no Neo4j |
 | Vector storage | NanoVectorDB (built-in) | File-based, no Qdrant |
 | KV storage | JsonKV (built-in) | File-based, no Redis |
-| LLM | `gemini-2.0-flash` | Fast, cheap, free tier 15 RPM / 1500 RPD |
+| LLM | `gemini-2.5-flash-lite` | Stable direct Gemini extraction for bulk LightRAG indexing |
 | Embedding | `gemini-embedding-001` | Same API key, dim=3072 |
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
@@ -81,7 +164,12 @@ File: `/opt/lightrag/docker-compose.override.yml`
 services:
   lightrag:
     image: lightrag-local:latest   # local build; falls back to ghcr.io/hkuds/lightrag:latest
-    ports:
+    networks:
+      default:
+      openclaw_default:
+        aliases:
+          - lightrag
+    ports: !override
       - "127.0.0.1:8020:9621"      # internal only; container port is 9621
     volumes:
       - ./data:/app/data
@@ -89,12 +177,18 @@ services:
       - /opt/openclaw/workspace:/app/data/inputs/workspace:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9621/health"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 90s
+
+networks:
+  openclaw_default:
+    external: true
 ```
+
+`ports: !override` is intentional: the upstream compose file publishes `${HOST:-0.0.0.0}:${PORT:-9621}:9621`; the override replaces that with the host-local `127.0.0.1:8020` mapping.
 
 **Start command** (always use both files):
 
@@ -124,7 +218,7 @@ Or manually from template `scripts/lightrag.env.template`:
 ```env
 # LLM: Google Gemini Flash
 LLM_BINDING=gemini
-LLM_MODEL=gemini-2.0-flash
+LLM_MODEL=gemini-2.5-flash-lite
 LLM_BINDING_API_KEY=<gemini-api-key>
 LLM_BINDING_HOST=https://generativelanguage.googleapis.com
 LLM_MAX_TOKEN_SIZE=32768
@@ -145,8 +239,8 @@ LIGHTRAG_DOC_STATUS_STORAGE=JsonDocStatusStorage
 
 # Rate limiting (important for free tier)
 MAX_PARALLEL_INSERT=1
-MAX_ASYNC=2
-TIMEOUT=120
+MAX_ASYNC=1
+TIMEOUT=180
 
 # Server
 HOST=0.0.0.0
@@ -162,40 +256,24 @@ Only `LLM_BINDING_API_KEY` / `EMBEDDING_BINDING_API_KEY` (Gemini key) are secret
 
 ## Obsidian Vault Sync
 
-### Method: rsync from Mac (deployed)
+### Method: Syncthing bidirectional sync
 
-The vault is synced one-way from Mac iCloud to server via rsync. No git repo needed on the server.
+The vault is synced between the Mac iCloud Obsidian folder and the server with Syncthing. This
+means both Denis and the bot can add notes, and the changes converge without using git for the
+vault itself.
 
 **Mac vault path:** `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/DenisJournals`  
 **Server path:** `/opt/obsidian-vault/`
 
-Script: `scripts/sync-obsidian.sh`
+LightRAG does not watch the filesystem directly. Syncthing moves markdown files into place;
+LightRAG picks them up on the next ingest cron run or when `/opt/lightrag/scripts/lightrag-ingest.sh`
+is run manually.
 
-```bash
-# One-time manual sync:
-OPENCLAW_HOST="deploy@<server-host>" ./scripts/sync-obsidian.sh
-```
+### Legacy rsync
 
-### Auto-sync via launchd (installed on Mac)
-
-Template: `scripts/com.openclaw.obsidian-sync.plist.template`
-
-Installed at: `~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist`
-
-Runs every 900 seconds (15 minutes). With `TRIGGER_REINDEX=true`, calls the ingest script on server after sync.
-
-```bash
-# Load (run once after install):
-launchctl load ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
-
-# Check status:
-launchctl list | grep obsidian
-
-# Unload:
-launchctl unload ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
-```
-
-Logs: `/tmp/obsidian-sync.log`, `/tmp/obsidian-sync-error.log`
+`scripts/sync-obsidian.sh` and `scripts/com.openclaw.obsidian-sync.plist.template` are legacy
+one-way sync tools. They remain in the repo as a fallback/runbook artifact, but the deployed sync
+method is Syncthing.
 
 ---
 
@@ -209,16 +287,28 @@ File: `/opt/lightrag/scripts/lightrag-ingest.sh`
 
 ```bash
 #!/bin/bash
-# Uploads all .md files under /opt/lightrag/data/inputs/ to LightRAG one by one
+# Uploads workspace + Obsidian markdown files to LightRAG one by one
 set -euo pipefail
-INPUT_BASE="/opt/lightrag/data/inputs"
+API="http://127.0.0.1:8020"
+UPLOADED=0
+FAILED=0
 
-for file in $(find "$INPUT_BASE" -name "*.md" -type f); do
-  curl -sf -X POST http://127.0.0.1:8020/documents/upload \
-    -F "file=@${file}" \
-    -F "description=auto-ingested" | jq -c '.'
-done
-echo "LightRAG re-index triggered at $(date)"
+upload_dir() {
+  local DIR="$1"
+  while IFS= read -r -d "" file; do
+    curl -sf -X POST "${API}/documents/upload" \
+      -F "file=@${file}" > /dev/null 2>&1 && UPLOADED=$((UPLOADED+1)) || FAILED=$((FAILED+1))
+  done < <(find "${DIR}" -name "*.md" -not -path "*/archive/*" -print0)
+}
+
+upload_dir "/opt/openclaw/workspace"
+upload_dir "/opt/obsidian-vault"
+
+if [ "${FAILED}" -eq 0 ]; then
+  curl -sf -X POST "${API}/documents/reprocess_failed" > /dev/null 2>&1 || true
+fi
+
+echo "Done: ${UPLOADED} uploaded, ${FAILED} failed"
 ```
 
 ### Trigger manually from local machine
@@ -240,7 +330,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 From OpenClaw bot (Бенька) via `lightrag_query` tool (see `workspace/TOOLS.md`):
 
 ```
-POST http://127.0.0.1:8020/query
+POST http://lightrag:9621/query
 Content-Type: application/json
 
 {"query": "why did we choose PostgreSQL over Redis", "mode": "hybrid"}
@@ -255,6 +345,17 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
     -d "{\"query\": \"test query\", \"mode\": \"hybrid\"}" | jq .
 '
 ```
+
+### How OpenClaw should use results
+
+LightRAG is a retrieval helper, not an authority. Бенька should treat the answer as a shortlist of
+likely relevant context:
+
+1. Use the `response` field for quick recall when the question is low-risk.
+2. Use `references[].file_path` to inspect the source file when the answer affects a decision.
+3. For live operational state, ignore LightRAG and run Docker/curl/log checks instead.
+4. If references are empty or weak, say that memory did not find enough context and continue with
+   live checks or explicit file reads.
 
 ---
 
@@ -325,12 +426,12 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 ## Initial Indexing Notes
 
-During the first bulk index of all Obsidian + workspace files (26+ files), the Gemini free tier
-RPD limit (1500/day) can be exhausted. If you see `429 RESOURCE_EXHAUSTED`:
+During bulk indexing, Gemini can return temporary capacity or quota errors. If you see
+`503 UNAVAILABLE` ("high demand") or `429 RESOURCE_EXHAUSTED`:
 
-1. Wait until UTC midnight (03:00 МСК) for quota reset
+1. Wait a few minutes for `503`; wait until UTC midnight (03:00 МСК) for daily `429`
 2. Or add billing to the GCP project to remove the daily cap
-3. `MAX_PARALLEL_INSERT=1` and `MAX_ASYNC=2` are already set in `.env` to serialize requests
+3. Keep `MAX_PARALLEL_INSERT=1` and `MAX_ASYNC=1` in `.env` to serialize requests
 
 After quota resets, re-run: `ssh deploy@<server> '/opt/lightrag/scripts/lightrag-ingest.sh'`
 
@@ -338,8 +439,8 @@ After quota resets, re-run: `ssh deploy@<server> '/opt/lightrag/scripts/lightrag
 
 ## Security Notes
 
-- LightRAG port `8020` is bound to `127.0.0.1` only — not reachable from internet
-- UFW allows only 22/80/443 — even if container bound on 0.0.0.0:9621, UFW blocks it externally
+- LightRAG host port `8020` is bound to `127.0.0.1` only — not reachable from internet
+- Container port `9621` is available only on Docker networks; OpenClaw uses `http://lightrag:9621`
 - Caddy does NOT proxy LightRAG (no public API endpoint)
 - `.env` contains API keys — never commit, keep in `LOCAL_ACCESS.md`
 - Obsidian vault mounted read-only in the container

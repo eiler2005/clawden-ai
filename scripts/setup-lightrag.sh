@@ -76,19 +76,29 @@ echo "[3/6] Uploading docker-compose.override.yml and .env..."
 ${SSH} "${OPENCLAW_HOST}" 'cat > /opt/lightrag/docker-compose.override.yml' << 'COMPOSE_EOF'
 services:
   lightrag:
-    ports:
+    image: lightrag-local:latest
+    networks:
+      default:
+      openclaw_default:
+        aliases:
+          - lightrag
+    ports: !override
       - "127.0.0.1:8020:9621"
     volumes:
       - ./data:/app/data
-      - /opt/obsidian-vault:/app/inputs/obsidian:ro
-      - /opt/openclaw/workspace:/app/inputs/workspace:ro
+      - /opt/obsidian-vault:/app/data/inputs/obsidian:ro
+      - /opt/openclaw/workspace:/app/data/inputs/workspace:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9621/health"]
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 90s
+
+networks:
+  openclaw_default:
+    external: true
 COMPOSE_EOF
 
 # Upload env file
@@ -102,22 +112,35 @@ echo "[4/6] Uploading lightrag-ingest.sh..."
 ${SSH} "${OPENCLAW_HOST}" 'cat > /opt/lightrag/scripts/lightrag-ingest.sh' << 'INGEST_EOF'
 #!/bin/bash
 set -euo pipefail
+API="http://127.0.0.1:8020"
 LOG_FILE="/var/log/lightrag-ingest.log"
+UPLOADED=0
+FAILED=0
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting LightRAG re-index..." | tee -a "${LOG_FILE}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] LightRAG ingest started" | tee -a "${LOG_FILE}"
 
 # Check LightRAG is running
-if ! curl -sf http://127.0.0.1:8020/health > /dev/null 2>&1; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: LightRAG not reachable at :8020" | tee -a "${LOG_FILE}"
+if ! curl -sf "${API}/health" > /dev/null 2>&1; then
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: LightRAG not reachable" | tee -a "${LOG_FILE}"
   exit 1
 fi
 
-# Trigger scan of all input directories
-RESULT=$(curl -sf -X POST http://127.0.0.1:8020/documents/scan \
-  -H "Content-Type: application/json" \
-  -d '{"input_dir": "/app/inputs"}' 2>&1)
+upload_dir() {
+  local DIR="$1"
+  while IFS= read -r -d "" file; do
+    curl -sf -X POST "${API}/documents/upload" \
+      -F "file=@${file}" > /dev/null 2>&1 && UPLOADED=$((UPLOADED+1)) || FAILED=$((FAILED+1))
+  done < <(find "${DIR}" -name "*.md" -not -path "*/archive/*" -print0)
+}
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Re-index result: ${RESULT}" | tee -a "${LOG_FILE}"
+upload_dir "/opt/openclaw/workspace"
+upload_dir "/opt/obsidian-vault"
+
+if [ "${FAILED}" -eq 0 ]; then
+  curl -sf -X POST "${API}/documents/reprocess_failed" > /dev/null 2>&1 || true
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Done: ${UPLOADED} uploaded, ${FAILED} failed" | tee -a "${LOG_FILE}"
 INGEST_EOF
 
 ${SSH} "${OPENCLAW_HOST}" 'chmod +x /opt/lightrag/scripts/lightrag-ingest.sh'
@@ -130,8 +153,6 @@ ${SSH} "${OPENCLAW_HOST}" '
   cd /opt/lightrag
   docker build -f Dockerfile.lite -t lightrag-local:latest . 2>&1 | tail -10
   echo "  Image built: lightrag-local:latest"
-  # Patch override to use local image instead of upstream
-  sed -i "s|image:.*|image: lightrag-local:latest|g" docker-compose.override.yml 2>/dev/null || true
   docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
   echo "  LightRAG container started"
   sleep 5

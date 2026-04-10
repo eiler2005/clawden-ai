@@ -25,12 +25,14 @@ Snapshot date: `2026-04-10`
 - image: `ghcr.io/hkuds/lightrag:latest` (upstream official); local build also present as `lightrag-local:latest`
 - data dir: `/opt/lightrag/data/` (graph + vector + kv state, file-based)
 - port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
+- Docker networks: `lightrag_default` + `openclaw_default`; OpenClaw container uses `http://lightrag:9621`
 - input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
-- LLM: OmniRoute `light` tier (`http://omniroute:20129/v1`, model=`light`) — routes through Gemini Flash → OpenRouter/Qwen3-8B → Kiro Haiku
+- LLM: direct Gemini `gemini-2.5-flash-lite` (`MAX_ASYNC=1`, `TIMEOUT=180`) for stable bulk extraction
 - embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, not routed through OmniRoute)
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
 - cron: every 30 minutes
+- validation on 2026-04-10: `processed=26`, `failed=0`; query for "Сто лет недосказанности Семихатов" returns `Книги и статьи.md`
 - see `docs/10-memory-architecture.md` and `docs/11-lightrag-setup.md`
 
 ### Obsidian vault
@@ -83,7 +85,7 @@ That absence is intentional. In this deployment, agent-facing runtime tools belo
 
 - `127.0.0.1:18789` for the OpenClaw gateway publish
 - `127.0.0.1:18790` for the bridge/helper publish
-- `127.0.0.1:8020` for LightRAG API (port 8020 → container 9621; UFW blocks external access even if bound on 0.0.0.0 internally)
+- `127.0.0.1:8020` for LightRAG API (host-local publish; container port 9621)
 - `127.0.0.1:20128` for OmniRoute dashboard (SSH tunnel access only)
 - `127.0.0.1:20129` for OmniRoute OpenAI-compatible API (container-to-container only)
 
@@ -202,7 +204,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
   - `light` → Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b → Kiro/claude-3-5-haiku-20241022
-- LightRAG integration: **active** — LightRAG LLM binding switched to OmniRoute `light` tier (`LLM_BINDING=openai`, `LLM_BINDING_HOST=http://omniroute:20129/v1`)
+- LightRAG integration: **active** — OpenClaw can query LightRAG at `http://lightrag:9621`; LightRAG uses direct Gemini for extraction because OmniRoute `light` is too bursty for bulk indexing
 - OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json` with 3 virtual models (`smart`, `medium`, `light`); Codex/gpt-5.4 stays primary
-- Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, LightRAG tasks → light
+- Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`

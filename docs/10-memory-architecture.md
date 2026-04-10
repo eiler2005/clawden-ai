@@ -87,7 +87,7 @@ Executed at the start of every session. Total context budget: **~5–8KB**.
 2. Read memory/INDEX.md   (~1KB, find today + yesterday)
 3. Read today's daily     (if exists and topic is relevant)
 4. Read yesterday's daily (only if today has <3 entries)
-5. GET http://lightrag:8020/health  (non-blocking, log status)
+5. GET http://lightrag:9621/health  (non-blocking, log status)
 6. Mark unclosed tasks from previous session
 7. Confirm ready: "Гав. Слушаю."
 ```
@@ -166,10 +166,58 @@ dual-mode retrieval: vector similarity + knowledge graph traversal.
 **What it replaces:** bulk-reading archive files to find context.
 **What it is not:** a source of truth for current system state.
 
+### Why it exists
+
+The workspace files are intentionally small enough to load at boot. That keeps a fresh OpenClaw
+session fast, but it means older daily notes, raw decision records, and Obsidian wiki pages should
+not be loaded blindly. LightRAG lets the bot search that long tail on demand.
+
+The design goal is not "the bot remembers everything automatically." The goal is:
+
+- fast boot context from curated files;
+- durable source files that humans can read and edit;
+- retrieval over older material when a question asks for history or background;
+- explicit source references when memory influences a decision.
+
+### Ingestion boundary
+
+LightRAG ingests markdown from:
+
+| Source | Server path | Typical content |
+|--------|-------------|-----------------|
+| OpenClaw workspace | `/opt/openclaw/workspace` | identity, tool docs, curated memory, daily notes, raw decision threads |
+| Obsidian vault | `/opt/obsidian-vault` | external wiki, reading notes, project notes, long-form knowledge |
+
+Ingestion is batch-oriented:
+
+1. Syncthing or workspace deploy puts markdown files on the server.
+2. `/opt/lightrag/scripts/lightrag-ingest.sh` uploads markdown files with `POST /documents/upload`.
+3. The script calls `POST /documents/reprocess_failed` to retry pending/failed docs.
+4. LightRAG extracts chunks, entities, relationships, vectors, and document statuses.
+
+Cron runs the ingest script every 30 minutes. Manual re-index is useful after bulk edits.
+
+### Retrieval boundary
+
+OpenClaw calls LightRAG from the Docker network:
+
+```
+POST http://lightrag:9621/query
+Content-Type: application/json
+
+{"query": "why did we choose PostgreSQL", "mode": "hybrid"}
+```
+
+The host-local equivalent is `http://127.0.0.1:8020/query`.
+
+Use the result as a ranked context bundle. The answer is convenient, but the references matter more
+when accuracy is important. If LightRAG says `references: []`, treat it as "memory did not find
+support," not as proof that the fact is false.
+
 ### Query interface
 
 ```
-POST http://lightrag:8020/query
+POST http://lightrag:9621/query
 Content-Type: application/json
 
 {"query": "why did we choose PostgreSQL", "mode": "hybrid"}
@@ -201,7 +249,7 @@ Obsidian serves as the external AI Wiki. Notes live as raw `.md` files — no em
 the LLM does the heavy lifting via LightRAG.
 
 **Vault location on server:** `/opt/obsidian-vault/`
-**Sync method:** Obsidian Git plugin → private repo → server pulls via cron every 15 minutes
+**Sync method:** Syncthing bidirectional sync between Mac iCloud vault and server
 **LightRAG mount:** vault mounted read-only into LightRAG container
 **Re-index:** cron job (`scripts/lightrag-ingest.sh`) runs every 30 minutes
 
