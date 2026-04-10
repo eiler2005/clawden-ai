@@ -468,26 +468,109 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 After archiving, deploy updated `memory/INDEX.md` and trigger `/new` in the bot.
 
+### Obsidian vault sync — Syncthing setup (bidirectional)
+
+The vault syncs **bidirectionally** between Mac (iCloud) and server via Syncthing.
+Changes on either side propagate automatically within seconds.
+
+**Current state (already configured):**
+
+| Parameter | Mac | Server |
+|---|---|---|
+| Device ID | `EJ6FHJG` | `6JODYFX` |
+| Config dir | `~/Library/Application Support/Syncthing/` | `~/.config/syncthing/` |
+| Vault path | `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/DenisJournals` | `/opt/obsidian-vault` |
+| Service | `homebrew.mxcl.syncthing` (launchd) | `syncthing@deploy` (systemd) |
+| Folder ID | `obsidian-vault` | `obsidian-vault` |
+| Connection | via global relay (Hetzner cloud firewall blocks port 22000 externally) | |
+
+**GUI access:**
+
+| Side | URL | Notes |
+|---|---|---|
+| Mac | `http://127.0.0.1:8384` | open directly in browser |
+| Server | `http://127.0.0.1:8384` (on server) | access via SSH tunnel: `ssh -i ~/.ssh/id_rsa -L 8385:127.0.0.1:8384 deploy@<server-host>` → `http://127.0.0.1:8385` |
+
+Folder shows **"Up to Date"** when in sync. Remote device shows **"Up to Date"** when peer is connected and synced.
+
+**Check sync status (Mac):**
+
+```bash
+# Via Syncthing API
+curl -s -H "X-API-Key: $(grep -o '<apikey>[^<]*' ~/Library/Application\ Support/Syncthing/config.xml | cut -d'>' -f2)" \
+  http://127.0.0.1:8384/rest/system/connections | python3 -c "
+import json,sys; d=json.load(sys.stdin)
+for k,v in d.get('connections',{}).items():
+    if k!='total': print(k[:16],'connected:',v.get('connected'),'addr:',v.get('address','-'))
+"
+```
+
+Or open `http://127.0.0.1:8384` in browser — folder shows **Up to Date** when in sync.
+
+**Restart Syncthing if disconnected:**
+
+```bash
+# Mac
+brew services restart syncthing
+
+# Server
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'sudo systemctl restart syncthing@deploy'
+```
+
+**If devices show "Disconnected (Inactive)" — force reconnect:**
+
+```bash
+API_KEY=$(grep -o '<apikey>[^<]*' ~/Library/Application\ Support/Syncthing/config.xml | cut -d'>' -f2)
+SRV_ID="6JODYFX-EEYVQQA-VRWGIUE-OAKH3DA-5LAMQYZ-3FR5HEN-GK7JWU5-DH24MAD"
+# Pause then unpause to force retry
+curl -s -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"deviceID\":\"$SRV_ID\",\"paused\":true}" http://127.0.0.1:8384/rest/config/devices/$SRV_ID
+sleep 2
+curl -s -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
+  -d "{\"deviceID\":\"$SRV_ID\",\"paused\":false}" http://127.0.0.1:8384/rest/config/devices/$SRV_ID
+```
+
+**Fresh install on a new Mac:**
+
+1. Install Syncthing: `brew install syncthing && brew services start syncthing`
+2. Open `http://127.0.0.1:8384` → Actions → Show ID — note the device ID
+3. Add the device ID to server config via server's Syncthing GUI (via SSH tunnel: `ssh -L 8385:127.0.0.1:8384 deploy@<server-host>`, then open `http://127.0.0.1:8385`)
+4. Share folder `obsidian-vault` with the new device on both sides
+5. Create `.stfolder` marker: `touch ~/Library/Mobile\ Documents/iCloud~md~obsidian/Documents/DenisJournals/.stfolder`
+
+---
+
 ### Obsidian vault sync check
 
-The vault is synced one-way from Mac via rsync (launchd, every 15 min). Check last sync time:
-
 ```bash
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
-  ls -la /opt/obsidian-vault/ | head -20
-'
+# Files on server
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" "find /opt/obsidian-vault -name '*.md' | wc -l"
+# Expected: > 0 (should match Mac vault count)
+
+# Server Syncthing status
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  "curl -s -H 'X-API-Key: \$(grep -o \"<apikey>[^<]*\" ~/.config/syncthing/config.xml | cut -d\">\" -f2)' \
+  http://127.0.0.1:8384/rest/db/status?folder=obsidian-vault" | python3 -c \
+  "import json,sys; d=json.load(sys.stdin); print('state:',d.get('state'),'files:',d.get('globalFiles'),'needFiles:',d.get('needFiles'))"
 ```
 
-Check sync log on Mac:
+**Trigger LightRAG re-index after bulk Obsidian changes:**
 
 ```bash
-tail -50 /tmp/obsidian-sync.log
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 ```
 
-Force sync manually from Mac:
+---
+
+### Legacy rsync sync (deprecated)
+
+The old one-way rsync agent (`com.openclaw.obsidian-sync`) is still installed at
+`~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist` but is superseded by Syncthing.
+It can be left in place (it runs but finds nothing to sync since Syncthing handles it),
+or unloaded:
 
 ```bash
-OPENCLAW_HOST="deploy@<server-host>" TRIGGER_REINDEX=true ./scripts/sync-obsidian.sh
+launchctl unload ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
 ```
 
 ## If SSH times out during banner exchange
@@ -498,3 +581,84 @@ This indicates a host-level access problem before shell login. Use Hetzner Conso
 2. verify Hetzner Firewall still allows `22/tcp` from your current client IP
 3. verify `sshd` is active (`systemctl status ssh`)
 4. if the host is overloaded, restart only `openclaw-gateway` first, then re-test SSH
+
+## OmniRoute operations
+
+OmniRoute runs as an additional service inside the OpenClaw Docker Compose project (`docker-compose.override.yml`).
+
+### Start / stop
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/openclaw && sudo docker compose up -d omniroute'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/openclaw && sudo docker compose stop omniroute'
+```
+
+### Status and logs
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/openclaw && sudo docker compose ps'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/openclaw && sudo docker compose logs --tail=100 omniroute'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/openclaw && sudo docker compose logs -f omniroute'
+```
+
+### Access dashboard via SSH tunnel
+
+```bash
+ssh -i ~/.ssh/id_rsa -L 20128:localhost:20128 "$OPENCLAW_HOST" -N &
+# Open http://localhost:20128 in browser
+# Password: see /opt/openclaw/client-secrets/omniroute-password.txt on server
+kill %1   # close tunnel when done
+```
+
+### Test API from server
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf http://127.0.0.1:20129/v1/models \
+    -H "Authorization: Bearer $(grep ^OMNIROUTE_API_KEY /opt/openclaw/.env | cut -d= -f2)"
+'
+```
+
+### Bootstrap providers (one-time, via SSH tunnel)
+
+Open dashboard via SSH tunnel (see above), then:
+
+1. **OpenRouter** — auto-connects from `OPENROUTER_API_KEY` in `omniroute.env` (check green in Dashboard → Providers)
+2. **Codex CLI** — Dashboard → Providers → Codex CLI → Connect → OpenAI OAuth (same credentials as OpenClaw)
+3. **Kiro** — Dashboard → Providers → Kiro → Connect → AWS Builder ID OAuth
+4. **Qoder** — Dashboard → Providers → Qoder → Connect → OAuth (gives Kimi, Qwen, DeepSeek)
+5. **Gemini CLI** — Dashboard → Providers → Gemini CLI → Connect → Google OAuth (same Google account)
+
+After auth, tokens persist in the `omniroute-data` volume and auto-refresh.
+
+### Create routing tiers (one-time, via dashboard)
+
+Dashboard → Combos → Create New:
+
+| Combo name | Strategy | Chain |
+|---|---|---|
+| `smart` | priority | Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2 |
+| `medium` | priority | Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3 |
+| `light` | priority | Gemini CLI/gemini-2.0-flash → Qoder/qwen3-coder → Kiro/claude-haiku |
+
+After creating combos: Dashboard → API Manager → Create Key → copy bearer token.
+
+### Generate OmniRoute API key (one-time)
+
+1. Open dashboard
+2. Go to API Manager → Create Key
+3. Copy bearer token
+4. Add to `/opt/openclaw/.env`: `OMNIROUTE_API_KEY=<token>`
+5. Re-create openclaw-gateway: `sudo docker compose up -d --force-recreate openclaw-gateway`
+
+### Upgrade OmniRoute
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw/omniroute-src && sudo git pull
+  cd /opt/openclaw && sudo docker compose build --no-cache omniroute
+  sudo docker compose up -d --force-recreate omniroute
+'
+```
+
+The `omniroute-data` volume persists auth tokens and settings across rebuilds.

@@ -39,3 +39,6 @@ LOCAL_*.md
 workspace/USER.md
 workspace/MEMORY.md
 workspace/SOUL.md
+
+# OmniRoute secrets (contains JWT secrets, API keys)
+omniroute.env

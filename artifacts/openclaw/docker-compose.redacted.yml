@@ -43,3 +43,6 @@ services:
     tty: true
     init: true
     entrypoint: ["node", "openclaw.mjs"]
+
+# NOTE: docker-compose.override.yml (not committed) adds the omniroute service.
+# See artifacts/omniroute/docker-compose.override.yml for the redacted version.

@@ -67,7 +67,7 @@ Messages arrive via Telegram → routed through OpenClaw gateway → agent respo
 │  │    obsidian/   ←  /opt/obsidian-vault        │                  │
 │  └──────────────────────────────────────────────┘                  │
 │                                                                     │
-│  /opt/obsidian-vault/   ← rsync from Mac every 15 min (launchd)   │
+│  /opt/obsidian-vault/   ← Syncthing bidirectional sync with Mac    │
 └─────────────────────────────────────────────────────────────────────┘
           │                        │                    │
           ▼                        ▼                    ▼
@@ -83,7 +83,7 @@ Messages arrive via Telegram → routed through OpenClaw gateway → agent respo
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
 - **Voice messages** — Whisper transcription baked into container
 - **Three-layer memory** — live workspace → raw decision log → LightRAG knowledge graph
-- **Obsidian vault sync** — Mac → server via launchd rsync every 15 min, auto re-indexed
+- **Obsidian vault sync** — bidirectional Syncthing between Mac (iCloud) and server, changes propagate in seconds
 - **Full tool access** — shell exec, filesystem, web search, browser, subagents, cron
 - **Persistent sessions** — per-channel-peer session scope, resumes context across restarts
 - **Knowledge graph queries** — hybrid vector + graph retrieval via LightRAG
@@ -100,7 +100,7 @@ Messages arrive via Telegram → routed through OpenClaw gateway → agent respo
 | Voice transcription | Whisper (ffmpeg, baked into image) |
 | Interface | Telegram Bot API |
 | Reverse proxy | Caddy 2 (mTLS client cert auth) |
-| Notes sync | Obsidian → rsync → launchd |
+| Notes sync | Obsidian ↔ [Syncthing](https://syncthing.net) (bidirectional) |
 | Host | Hetzner CX23, Ubuntu 24.04 |
 
 ---
@@ -150,10 +150,10 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 ├── scripts/
 │   ├── deploy-workspace.sh         rsync workspace/ to server
 │   ├── setup-lightrag.sh           provision LightRAG on server
-│   ├── sync-obsidian.sh            rsync Obsidian vault → server + re-index
+│   ├── sync-obsidian.sh            legacy one-way rsync (superseded by Syncthing)
 │   ├── create-lightrag-env.sh      generate scripts/lightrag.env from template
 │   ├── lightrag.env.template       env template (no secrets)
-│   └── com.openclaw.obsidian-sync.plist.template  macOS launchd template
+│   └── com.openclaw.obsidian-sync.plist.template  legacy rsync launchd template (superseded)
 ├── workspace/                      bot workspace (deployed to server)
 │   ├── IDENTITY.md                 bot persona: Бенька
 │   ├── AGENTS.md                   session protocol, memory rules, boot sequence
@@ -184,7 +184,7 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
    - `workspace/USER.md`, `workspace/MEMORY.md`, `workspace/SOUL.md` — personal bot context
 4. **Deploy workspace** to server: `./scripts/deploy-workspace.sh`
 5. **Provision LightRAG** (first time): `./scripts/setup-lightrag.sh`
-6. **Set up Obsidian sync** on Mac: copy and load `scripts/com.openclaw.obsidian-sync.plist.template`
+6. **Set up Obsidian sync**: install Syncthing on Mac (`brew install syncthing && brew services start syncthing`) and follow `docs/03-operations.md` → "Obsidian vault sync — Syncthing setup"
 
 ---
 
@@ -205,8 +205,11 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:8020/health | j
 # Trigger knowledge graph re-index
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 
-# Sync Obsidian vault manually
-OPENCLAW_HOST="deploy@<server-host>" TRIGGER_REINDEX=true ./scripts/sync-obsidian.sh
+# Check Obsidian vault sync status (Syncthing)
+open http://127.0.0.1:8384
+
+# Trigger LightRAG re-index after bulk Obsidian changes
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.

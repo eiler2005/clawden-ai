@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-09`
+Snapshot date: `2026-04-10`
 
 ## Host
 
@@ -37,10 +37,14 @@ Snapshot date: `2026-04-09`
 
 - path: `/opt/obsidian-vault/`
 - purpose: external AI Wiki, fed into LightRAG for knowledge graph indexing
-- sync method: **one-way rsync from Mac** (iCloud vault) to server via SSH — NOT git
-- trigger: launchd agent on Mac (`com.openclaw.obsidian-sync`), runs every 15 minutes
-- script: `scripts/sync-obsidian.sh` with `TRIGGER_REINDEX=true`
-- re-index: triggers `/opt/lightrag/scripts/lightrag-ingest.sh` after each sync
+- sync method: **bidirectional Syncthing** between Mac (iCloud vault) and server — NOT git, NOT rsync
+- Mac device: `EJ6FHJG` (MacBook-Pro-Denis.local), Server device: `6JODYFX` (ubuntu-4gb-hel1-6)
+- folder ID: `obsidian-vault`, type: `sendreceive` on both sides
+- connection: via Syncthing global relay (port 22000 blocked by Hetzner cloud firewall)
+- Syncthing on Mac: homebrew service (`homebrew.mxcl.syncthing`), config: `~/Library/Application Support/Syncthing/`, GUI: `http://127.0.0.1:8384`
+- Syncthing on server: systemd service (`syncthing@deploy`), config: `~/.config/syncthing/`, GUI via SSH tunnel: `ssh -L 8385:127.0.0.1:8384 deploy@<server-host>` → `http://127.0.0.1:8385`
+- re-index: manual or after bulk changes — `lightrag-ingest.sh`
+- legacy rsync agent (`com.openclaw.obsidian-sync`) still installed but **superseded by Syncthing**
 
 ### OpenClaw deployment
 
@@ -80,6 +84,8 @@ That absence is intentional. In this deployment, agent-facing runtime tools belo
 - `127.0.0.1:18789` for the OpenClaw gateway publish
 - `127.0.0.1:18790` for the bridge/helper publish
 - `127.0.0.1:8020` for LightRAG API (port 8020 → container 9621; UFW blocks external access even if bound on 0.0.0.0 internally)
+- `127.0.0.1:20128` for OmniRoute dashboard (SSH tunnel access only)
+- `127.0.0.1:20129` for OmniRoute OpenAI-compatible API (container-to-container only)
 
 ### Administrative access
 
@@ -177,3 +183,27 @@ Operationally relevant truth sources are:
 - successful browser access using the local tokenized URL kept in `secrets/`
 
 During gateway cold starts or config-triggered restarts, `docker compose ps` can temporarily show `starting` or `unhealthy` before converging to `healthy`.
+
+### OmniRoute (smart model routing)
+
+- project root: `/opt/openclaw` (not a separate project — added via `docker-compose.override.yml`)
+- source: `/opt/openclaw/omniroute-src` (git clone of diegosouzapw/OmniRoute)
+- compose override: `/opt/openclaw/docker-compose.override.yml` (merged automatically)
+- env file: `/opt/openclaw/omniroute.env` (gitignored; secrets in `client-secrets/omniroute-password.txt`)
+- dashboard port: `127.0.0.1:20128` → container `20128` (SSH tunnel access only)
+- API port: `127.0.0.1:20129` → container `20129` (OpenAI-compatible `/v1/*`)
+- network: `openclaw_default` (same as openclaw-gateway; visible to LightRAG via existing network join)
+- data volume: `omniroute-data` (SQLite — stores auth tokens, combos, API keys)
+- providers:
+  - Codex CLI (OpenAI gpt-5.4 / gpt-4o-mini) — OAuth, same credentials as OpenClaw
+  - Kiro (Claude Sonnet 3.7) — AWS Builder ID OAuth, free unlimited
+  - OpenRouter — API key hub, some free models available
+  - Qoder — OAuth (Kimi, Qwen, DeepSeek), free unlimited
+  - Gemini CLI — Google OAuth, 180K tokens/month (already used by LightRAG)
+- routing tiers:
+  - `smart` → Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2
+  - `medium` → Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3
+  - `light` → Gemini/flash → Qoder/qwen3-coder → Kiro/claude-haiku
+- LightRAG integration: LightRAG LLM binding switches from direct Gemini to OmniRoute `light` tier (pending provider auth)
+- OpenClaw integration: registered as `omniroute` provider in `openclaw.json` (Codex stays primary)
+- auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected

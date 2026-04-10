@@ -12,6 +12,54 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2026-04-10] — OmniRoute smart model routing layer
+
+### Added
+- **OmniRoute** deployed as additional service in OpenClaw Docker Compose ()
+  - Source cloned to `/opt/openclaw/omniroute-src`
+  - Dashboard: `127.0.0.1:20128` (SSH tunnel access only)
+  - API: `127.0.0.1:20129` (OpenAI-compatible `/v1/*`, `REQUIRE_API_KEY=true`)
+  - Network: `openclaw_default` (same as openclaw-gateway and lightrag)
+  - Providers (pending OAuth bootstrap): OpenRouter (API key), Codex CLI (OAuth), Kiro (AWS Builder ID OAuth), Qoder/Kimi/Qwen (OAuth), Gemini CLI (Google OAuth)
+  - Routing tiers:
+    - `smart`: Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2
+    - `medium`: Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3
+    - `light`: Gemini/flash → Qoder/qwen3-coder → Kiro/claude-haiku
+- **** — redacted compose and env example added to git repo
+
+### Changed
+- `docs/01-server-state.md`: OmniRoute service entry added; snapshot date updated to 2026-04-10; ports 20128/20129 added to network exposure section
+- `docs/03-operations.md`: OmniRoute operations section added (start/stop/logs/tunnel/upgrade/bootstrap/combo setup)
+
+### Pending (next session)
+- Bootstrap provider OAuth (tunnel → Dashboard → connect providers)
+- Create combo tiers in dashboard
+- Generate API key; add `OMNIROUTE_API_KEY` to `/opt/openclaw/.env`
+- Switch LightRAG LLM binding from direct Gemini to OmniRoute `light` tier
+- Register OmniRoute as additional provider in `openclaw.json`
+
+---
+
+## [2026-04-09b] — Syncthing bidirectional sync + clawden-ai GitHub release
+
+### Added
+- **Syncthing bidirectional vault sync** — replaces one-way rsync
+  - Mac (`EJ6FHJG`, homebrew service) ↔ Server (`6JODYFX`, systemd `syncthing@deploy`)
+  - Folder ID: `obsidian-vault`, type `sendreceive`, connection via global relay
+  - Bot can now write notes directly to vault; changes appear in Obsidian on Mac
+- **GitHub repo published**: `eiler2005/clawden-ai` (public, MIT)
+  - Sensitive files gitignored: `workspace/USER.md`, `MEMORY.md`, `SOUL.md`, daily notes
+- **OpenClaw elevated permissions**: `profile=full`, `exec.security=full`, `elevated.enabled=true`, `fs.workspaceOnly=false`
+- **`/opt/obsidian-vault` mounted** into `openclaw-gateway` container with `rw` access
+
+### Changed
+- `CLAUDE.md`: added "Commit Permission Rule" — no commit/push without explicit user approval
+- `docs/03-operations.md`: Syncthing setup guide added, legacy rsync marked deprecated
+- `docs/01-server-state.md`: Obsidian sync method updated to reflect Syncthing
+- `README.md`: architecture diagram, tech stack, quick ops updated for Syncthing
+
+---
+
 ## [2026-04-09] — Memory system + LightRAG
 
 ### Added

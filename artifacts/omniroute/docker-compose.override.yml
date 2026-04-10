@@ -1,0 +1,29 @@
+# OmniRoute service — merged into OpenClaw compose automatically
+# Deploy: copy to /opt/openclaw/docker-compose.override.yml
+# Docker Compose picks this up automatically alongside docker-compose.yml
+
+services:
+  omniroute:
+    container_name: omniroute
+    build:
+      context: ./omniroute-src
+      target: runner-base
+    restart: unless-stopped
+    env_file: omniroute.env
+    ports:
+      - "127.0.0.1:20128:20128"   # dashboard (SSH tunnel access only)
+      - "127.0.0.1:20129:20129"   # OpenAI-compatible API
+    volumes:
+      - omniroute-data:/app/data
+    networks:
+      - default                    # same openclaw_default network as openclaw-gateway
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.mjs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  omniroute-data:
+    name: omniroute-data
