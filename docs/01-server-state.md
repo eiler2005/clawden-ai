@@ -26,8 +26,8 @@ Snapshot date: `2026-04-10`
 - data dir: `/opt/lightrag/data/` (graph + vector + kv state, file-based)
 - port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
 - input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
-- LLM: `gemini-2.0-flash` via Gemini API (free tier: 15 RPM, 1500 RPD)
-- embedding: `gemini-embedding-001` (same API key, dim=3072)
+- LLM: OmniRoute `light` tier (`http://omniroute:20129/v1`, model=`light`) — routes through Gemini Flash → OpenRouter/Qwen3-8B → Kiro Haiku
+- embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, not routed through OmniRoute)
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
 - cron: every 30 minutes
@@ -187,23 +187,22 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 ### OmniRoute (smart model routing)
 
 - project root: `/opt/openclaw` (not a separate project — added via `docker-compose.override.yml`)
-- source: `/opt/openclaw/omniroute-src` (git clone of diegosouzapw/OmniRoute)
-- compose override: `/opt/openclaw/docker-compose.override.yml` (merged automatically)
-- env file: `/opt/openclaw/omniroute.env` (gitignored; secrets in `client-secrets/omniroute-password.txt`)
+- source: `/opt/openclaw/omniroute-src` (git clone of diegosouzapw/OmniRoute, `target: runner-base`)
+- compose override: `/opt/openclaw/docker-compose.override.yml` (merged automatically by Docker Compose)
+- env file: `/opt/openclaw/omniroute.env` (gitignored; see `artifacts/omniroute/omniroute.env.example`)
 - dashboard port: `127.0.0.1:20128` → container `20128` (SSH tunnel access only)
-- API port: `127.0.0.1:20129` → container `20129` (OpenAI-compatible `/v1/*`)
-- network: `openclaw_default` (same as openclaw-gateway; visible to LightRAG via existing network join)
-- data volume: `omniroute-data` (SQLite — stores auth tokens, combos, API keys)
-- providers:
-  - Codex CLI (OpenAI gpt-5.4 / gpt-4o-mini) — OAuth, same credentials as OpenClaw
-  - Kiro (Claude Sonnet 3.7) — AWS Builder ID OAuth, free unlimited
-  - OpenRouter — API key hub, some free models available
-  - Qoder — OAuth (Kimi, Qwen, DeepSeek), free unlimited
-  - Gemini CLI — Google OAuth, 180K tokens/month (already used by LightRAG)
-- routing tiers:
-  - `smart` → Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2
-  - `medium` → Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3
-  - `light` → Gemini/flash → Qoder/qwen3-coder → Kiro/claude-haiku
-- LightRAG integration: LightRAG LLM binding switches from direct Gemini to OmniRoute `light` tier (pending provider auth)
-- OpenClaw integration: registered as `omniroute` provider in `openclaw.json` (Codex stays primary)
-- auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected
+- API port: `127.0.0.1:20129` → container `20129` (OpenAI-compatible `/v1/*`, `REQUIRE_API_KEY=true`)
+- network: `openclaw_default` (same as openclaw-gateway and LightRAG)
+- data volume: `omniroute-data` (SQLite — stores OAuth tokens, combo configs, API keys)
+- providers connected:
+  - **Kiro** (Claude Sonnet 4.5 / Haiku) — AWS Builder ID OAuth, free unlimited
+  - **OpenRouter** — API key hub (routes to Claude 3.5, Kimi K2, Qwen3 and others)
+  - **Gemini** — direct API key (`gemini-2.0-flash`), free tier 1500 req/day
+- routing tiers (priority order, auto-fallback if provider unavailable):
+  - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
+  - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
+  - `light` → Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b → Kiro/claude-3-5-haiku-20241022
+- LightRAG integration: **active** — LightRAG LLM binding switched to OmniRoute `light` tier (`LLM_BINDING=openai`, `LLM_BINDING_HOST=http://omniroute:20129/v1`)
+- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json` with 3 virtual models (`smart`, `medium`, `light`); Codex/gpt-5.4 stays primary
+- Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, LightRAG tasks → light
+- auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`

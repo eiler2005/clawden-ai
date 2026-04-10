@@ -12,31 +12,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [2026-04-10] — OmniRoute smart model routing layer
+## [2026-04-10] — OmniRoute smart model routing layer + Бенька model selection
 
 ### Added
-- **OmniRoute** deployed as additional service in OpenClaw Docker Compose ()
+- **OmniRoute** deployed as additional service in OpenClaw Docker Compose (via `docker-compose.override.yml`)
   - Source cloned to `/opt/openclaw/omniroute-src`
   - Dashboard: `127.0.0.1:20128` (SSH tunnel access only)
   - API: `127.0.0.1:20129` (OpenAI-compatible `/v1/*`, `REQUIRE_API_KEY=true`)
   - Network: `openclaw_default` (same as openclaw-gateway and lightrag)
-  - Providers (pending OAuth bootstrap): OpenRouter (API key), Codex CLI (OAuth), Kiro (AWS Builder ID OAuth), Qoder/Kimi/Qwen (OAuth), Gemini CLI (Google OAuth)
-  - Routing tiers:
-    - `smart`: Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2
-    - `medium`: Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3
-    - `light`: Gemini/flash → Qoder/qwen3-coder → Kiro/claude-haiku
-- **** — redacted compose and env example added to git repo
+  - Providers connected: Kiro (AWS Builder ID OAuth, Claude Sonnet/Haiku, free unlimited), OpenRouter (API key hub — Claude 3.5, Kimi K2, Qwen3), Gemini (API key, Flash)
+  - Routing tiers (priority order, auto-fallback):
+    - `smart`: Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
+    - `medium`: Kiro/claude-3-5-haiku → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b
+    - `light`: Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b → Kiro/claude-3-5-haiku
+- **LightRAG LLM** switched from direct Gemini to OmniRoute `light` tier (`LLM_BINDING=openai`, `LLM_BINDING_HOST=http://omniroute:20129/v1`)
+- **OpenClaw**: OmniRoute registered as additional provider in `openclaw.json` (3 virtual models: `smart`, `medium`, `light`); Codex/gpt-5.4 remains primary
+- **Бенька model selection rules** added to `workspace/AGENTS.md` — rule-based heuristics for choosing routing tier by task complexity (code → smart, chat → medium, LightRAG → light)
+- **SSH TCP forwarding** enabled for `deploy` user via `/etc/ssh/sshd_config.d/50-deploy-forwarding.conf` (was blocked by hardening config)
+- `artifacts/omniroute/` — redacted compose override and env example added to repo
 
 ### Changed
-- `docs/01-server-state.md`: OmniRoute service entry added; snapshot date updated to 2026-04-10; ports 20128/20129 added to network exposure section
-- `docs/03-operations.md`: OmniRoute operations section added (start/stop/logs/tunnel/upgrade/bootstrap/combo setup)
-
-### Pending (next session)
-- Bootstrap provider OAuth (tunnel → Dashboard → connect providers)
-- Create combo tiers in dashboard
-- Generate API key; add `OMNIROUTE_API_KEY` to `/opt/openclaw/.env`
-- Switch LightRAG LLM binding from direct Gemini to OmniRoute `light` tier
-- Register OmniRoute as additional provider in `openclaw.json`
+- `docs/01-server-state.md`: OmniRoute service entry, ports 20128/20129, actual providers and tiers
+- `docs/03-operations.md`: OmniRoute operations section (start/stop/logs/tunnel/upgrade/bootstrap)
+- `README.md`: architecture diagram updated with OmniRoute layer; new "Model Routing" section; tech stack and features updated
 
 ---
 

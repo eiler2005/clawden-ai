@@ -1,13 +1,14 @@
 # clawden-ai
 
-> Personal AI assistant infrastructure — OpenClaw + LightRAG + Telegram, running 24/7 on a private Hetzner server.
+> Personal AI assistant infrastructure — OpenClaw + OmniRoute + LightRAG + Telegram, running 24/7 on a private Hetzner server.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/runtime-OpenClaw-black)](https://github.com/coollabsio/openclaw)
 [![Telegram Bot](https://img.shields.io/badge/interface-Telegram-2CA5E0)](https://telegram.org)
 [![LightRAG](https://img.shields.io/badge/memory-LightRAG-6B46C1)](https://github.com/HKUDS/LightRAG)
+[![OmniRoute](https://img.shields.io/badge/routing-OmniRoute-orange)](https://github.com/diegosouzapw/OmniRoute)
 
-**Бенька.** Always on. Knows your context.
+**Бенька.** Always on. Knows your context. Routes every request to the right model.
 
 This repository is the **ops & config package** — deployment runbooks, workspace templates, redacted config artifacts, and infrastructure scripts. Not the OpenClaw source tree.
 
@@ -16,6 +17,7 @@ This repository is the **ops & config package** — deployment runbooks, workspa
 ## Table of Contents
 
 - [How It Works](#how-it-works)
+- [Model Routing](#model-routing)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Memory System](#memory-system)
@@ -30,51 +32,119 @@ This repository is the **ops & config package** — deployment runbooks, workspa
 
 ## How It Works
 
-Messages arrive via Telegram → routed through OpenClaw gateway → agent responds with full tool access. Long-term context lives in a three-layer memory system backed by a LightRAG knowledge graph.
+Messages arrive via Telegram → routed through OpenClaw gateway → Бенька picks the right AI model for the task → responds with full tool access. Long-term context lives in a three-layer memory system backed by a LightRAG knowledge graph.
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Hetzner CX23 (3 vCPU / 4GB RAM, Ubuntu 24.04)                     │
-│                                                                     │
-│  ┌──────────────────────────────────────────────┐                  │
-│  │  Caddy (reverse proxy)                       │ ← 443 / 80       │
-│  │  TLS termination + mTLS client cert auth     │                  │
-│  └──────────────────┬───────────────────────────┘                  │
-│                     │ 127.0.0.1:18789                              │
-│  ┌──────────────────▼───────────────────────────┐                  │
-│  │  openclaw-gateway  (Docker)                  │                  │
-│  │  image: openclaw-with-iproute2:20260408      │                  │
-│  │                                              │                  │
-│  │  baked in:  ffmpeg · whisper · iproute2      │                  │
-│  │  volume:    /opt/openclaw/config/  → state   │                  │
-│  │             /opt/openclaw/workspace/ → bot   │                  │
-│  │             /opt/obsidian-vault/ → vault     │                  │
-│  │                                              │                  │
-│  │  tools:  shell · fs · web · browser          │                  │
-│  │          subagents · sessions · cron         │                  │
-│  └──────────────────┬───────────────────────────┘                  │
-│                     │ Docker network (openclaw_default)            │
-│  ┌──────────────────▼───────────────────────────┐                  │
-│  │  LightRAG  (Docker)        127.0.0.1:8020    │                  │
-│  │  image: ghcr.io/hkuds/lightrag:latest        │                  │
-│  │                                              │                  │
-│  │  LLM:       gemini-2.0-flash                 │                  │
-│  │  Embedding: gemini-embedding-001 (dim=3072)  │                  │
-│  │  Storage:   NetworkX · NanoVectorDB · JsonKV │                  │
-│  │                                              │                  │
-│  │  inputs (read-only):                         │                  │
-│  │    workspace/  ←  /opt/openclaw/workspace    │                  │
-│  │    obsidian/   ←  /opt/obsidian-vault        │                  │
-│  └──────────────────────────────────────────────┘                  │
-│                                                                     │
-│  /opt/obsidian-vault/   ← Syncthing bidirectional sync with Mac    │
-└─────────────────────────────────────────────────────────────────────┘
-          │                        │                    │
-          ▼                        ▼                    ▼
-   Telegram Bot API          OpenAI (gpt-5.4)    Google Gemini API
-   (inbound messages)        via openai-codex     (LightRAG LLM +
-                             OAuth                 embeddings)
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Hetzner CX23 (3 vCPU / 4GB RAM, Ubuntu 24.04)                         │
+│                                                                         │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  Caddy (reverse proxy)                       │ ← 443 / 80           │
+│  │  TLS termination + mTLS client cert auth     │                      │
+│  └──────────────────┬───────────────────────────┘                      │
+│                     │ 127.0.0.1:18789                                  │
+│  ┌──────────────────▼───────────────────────────┐                      │
+│  │  openclaw-gateway  (Docker)                  │                      │
+│  │  image: openclaw-with-iproute2:20260408      │                      │
+│  │                                              │──→ OpenAI gpt-5.4    │
+│  │  baked in:  ffmpeg · whisper · iproute2      │    (primary, OAuth)  │
+│  │  volume:    /opt/openclaw/config/  → state   │                      │
+│  │             /opt/openclaw/workspace/ → bot   │──→ omniroute:20129   │
+│  │             /opt/obsidian-vault/ → vault     │    (smart/med/light) │
+│  │                                              │                      │
+│  │  tools:  shell · fs · web · browser          │                      │
+│  │          subagents · sessions · cron         │                      │
+│  └──────────────────┬───────────────────────────┘                      │
+│                     │ Docker network (openclaw_default)                │
+│  ┌──────────────────▼──────────────────────────────────────────────┐  │
+│  │  OmniRoute  (Docker)   127.0.0.1:20128 (dashboard, SSH tunnel)  │  │
+│  │                        127.0.0.1:20129 (OpenAI-compatible API)  │  │
+│  │                                                                  │  │
+│  │  smart  → Kiro/Claude Sonnet → OpenRouter/Claude 3.5 → OR/Kimi  │  │
+│  │  medium → Kiro/Claude Haiku  → Gemini Flash → OpenRouter/Qwen3  │  │
+│  │  light  → Gemini Flash → OpenRouter/Qwen3-8B → Kiro/Haiku       │  │
+│  └──────────────────┬───────────────────────────────────────────────┘  │
+│                     │                                                   │
+│  ┌──────────────────▼───────────────────────────┐                      │
+│  │  LightRAG  (Docker)        127.0.0.1:8020    │                      │
+│  │  image: ghcr.io/hkuds/lightrag:latest        │                      │
+│  │                                              │                      │
+│  │  LLM:       OmniRoute `light` tier           │                      │
+│  │  Embedding: gemini-embedding-001 (dim=3072)  │                      │
+│  │  Storage:   NetworkX · NanoVectorDB · JsonKV │                      │
+│  │                                              │                      │
+│  │  inputs (read-only):                         │                      │
+│  │    workspace/  ←  /opt/openclaw/workspace    │                      │
+│  │    obsidian/   ←  /opt/obsidian-vault        │                      │
+│  └──────────────────────────────────────────────┘                      │
+│                                                                         │
+│  /opt/obsidian-vault/   ← Syncthing bidirectional sync with Mac        │
+└─────────────────────────────────────────────────────────────────────────┘
+        │              │ (primary)         │ (routing)         │
+        ▼              ▼                   ▼                   ▼
+ Telegram Bot    OpenAI gpt-5.4      Kiro (Claude)     Google Gemini
+ (inbound)       via OAuth/Plus      AWS Builder ID    (embeddings +
+                 (best quality)      free unlimited     light LLM)
+                                         +
+                                    OpenRouter hub
+                                    (Claude/Kimi/Qwen)
 ```
+
+---
+
+## Model Routing
+
+Not every task needs the most powerful (and expensive) model. OmniRoute acts as a smart dispatcher — Бенька decides which tier to use based on task complexity, and OmniRoute handles the actual provider selection with automatic fallback.
+
+### Why three tiers?
+
+| Tier | For | Example |
+|------|-----|---------|
+| **smart** | Complex code, architecture decisions, multi-step reasoning, long context (>8K tokens) | "Review this 200-line module and redesign the auth flow" |
+| **medium** | Normal conversation, Q&A, summarization, translation | "What's the deadline for the roadmap item?" |
+| **light** | Background system tasks — classification, tagging, data extraction | LightRAG entity extraction, format checking |
+
+### How Бенька decides
+
+Simple rule chain, top-to-bottom:
+
+1. Task involves code that needs to be generated or reviewed → **smart**
+2. Request context exceeds 8K tokens → **smart**
+3. Needs architectural trade-off analysis → **smart**
+4. Normal chat, Q&A, summary → **medium**
+5. Classification, data extraction, formatting → **light**
+6. Any LightRAG indexing operation → always **light**
+
+### Provider chains (priority order within each tier)
+
+OmniRoute tries providers in order. If one is unavailable or rate-limited, it automatically moves to the next.
+
+```
+smart:  Kiro / Claude Sonnet 4.5
+         → OpenRouter / Claude 3.5 Sonnet
+         → OpenRouter / Kimi K2
+
+medium: Kiro / Claude 3.5 Haiku
+         → Gemini 2.0 Flash
+         → OpenRouter / Qwen3-30B
+
+light:  Gemini 2.0 Flash
+         → OpenRouter / Qwen3-8B
+         → Kiro / Claude 3.5 Haiku
+```
+
+### Where does OpenAI gpt-5.4 fit?
+
+OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main conversation via an existing Plus subscription (OAuth, not API key). It doesn't go through OmniRoute because the Plus subscription is OAuth-only and can't be routed via a proxy. OmniRoute covers everything else: subtask delegation, LightRAG LLM, and alternative provider fallbacks.
+
+### Providers
+
+| Provider | Auth | Models available | Cost |
+|----------|------|-----------------|------|
+| **Kiro** | AWS Builder ID OAuth | Claude Sonnet 3.7, Claude Haiku | Free, unlimited |
+| **OpenRouter** | API key | Claude 3.5, Kimi K2, Qwen3 family | Pay-per-token hub; free models available |
+| **Gemini** | API key | gemini-2.0-flash | Free tier (1500 req/day) |
+| **OpenAI** | Plus OAuth (via OpenClaw) | gpt-5.4 | Existing Plus subscription |
 
 ---
 
@@ -82,6 +152,7 @@ Messages arrive via Telegram → routed through OpenClaw gateway → agent respo
 
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
 - **Voice messages** — Whisper transcription baked into container
+- **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
 - **Three-layer memory** — live workspace → raw decision log → LightRAG knowledge graph
 - **Obsidian vault sync** — bidirectional Syncthing between Mac (iCloud) and server, changes propagate in seconds
 - **Full tool access** — shell exec, filesystem, web search, browser, subagents, cron
@@ -95,7 +166,9 @@ Messages arrive via Telegram → routed through OpenClaw gateway → agent respo
 | Layer | Technology |
 |-------|------------|
 | Agent runtime | [OpenClaw](https://github.com/coollabsio/openclaw) (Docker) |
-| LLM | OpenAI gpt-5.4 via openai-codex OAuth |
+| Primary LLM | OpenAI gpt-5.4 via openai-codex OAuth (Plus subscription) |
+| Model routing | [OmniRoute](https://github.com/diegosouzapw/OmniRoute) — smart/medium/light tiers, 3 provider chains |
+| Routing providers | Kiro (Claude, AWS Builder ID) · OpenRouter hub · Gemini |
 | Knowledge graph | [LightRAG](https://github.com/HKUDS/LightRAG) + Gemini embeddings |
 | Voice transcription | Whisper (ffmpeg, baked into image) |
 | Interface | Telegram Bot API |
@@ -137,6 +210,9 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── docker-compose.redacted.yml compose template
 │   ├── env.redacted.example        env vars template
 │   └── auth-profile.redacted.json  OAuth profile template
+├── artifacts/omniroute/
+│   ├── docker-compose.override.yml compose override template (adds OmniRoute service)
+│   └── omniroute.env.example       env template with secret generation instructions
 ├── docs/
 │   ├── 01-server-state.md          current server snapshot (services, ports, images)
 │   ├── 02-openclaw-installation.md deployment decisions and auth setup
@@ -196,20 +272,20 @@ export OPENCLAW_HOST="deploy@<server-host>"
 # Deploy workspace changes to server
 ./scripts/deploy-workspace.sh
 
-# Check gateway health
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:18789/healthz'
+# Check all services health
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:18789/healthz'         # OpenClaw
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:8020/health | jq .status'  # LightRAG
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:20128/api/monitoring/health'  # OmniRoute
 
-# Check LightRAG health
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:8020/health | jq .status'
+# OmniRoute dashboard (SSH tunnel → open in browser)
+ssh -i ~/.ssh/id_rsa -L 20128:127.0.0.1:20128 "$OPENCLAW_HOST" -N &
+# → open http://localhost:20128
 
 # Trigger knowledge graph re-index
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 
 # Check Obsidian vault sync status (Syncthing)
 open http://127.0.0.1:8384
-
-# Trigger LightRAG re-index after bulk Obsidian changes
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.
