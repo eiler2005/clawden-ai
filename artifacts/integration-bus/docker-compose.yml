@@ -1,0 +1,18 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: integration-bus-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    networks:
+      - openclaw_default
+
+volumes:
+  redis-data:
+    name: integration-bus-redis-data
+
+networks:
+  openclaw_default:
+    external: true

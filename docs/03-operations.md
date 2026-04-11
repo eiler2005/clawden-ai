@@ -833,3 +833,80 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 ```
 
 The `omniroute-data` volume persists auth tokens and settings across rebuilds.
+
+---
+
+## Integration Bus (Redis Streams)
+
+Redis runs as a standalone Docker Compose project at `/opt/integration-bus/`.
+
+### Start / status
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/integration-bus && sudo docker compose ps
+'
+```
+
+### Deploy (first time or after config change)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/integration-bus && sudo docker compose up -d
+'
+```
+
+### Ping Redis
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli ping
+'
+```
+
+### Check stream lengths
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XLEN ingest:jobs:telegram
+  docker exec integration-bus-redis redis-cli XLEN dlq:failed
+'
+```
+
+### Check pending (jobs in-flight)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli \
+    XPENDING ingest:jobs:telegram digest-workers - + 10
+'
+```
+
+### Inspect dead letter queue
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli \
+    XRANGE dlq:failed - + COUNT 20
+'
+```
+
+### Manually enqueue a digest job (bypass cron_bridge)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:telegram "*" \
+    run_id manual-test \
+    digest_type interval \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+```
+
+### Trim stream (keep last 1000 entries)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XTRIM ingest:jobs:telegram MAXLEN 1000
+'
+```

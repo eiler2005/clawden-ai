@@ -18,6 +18,8 @@ services:
     restart: unless-stopped
     env_file: telethon.env
     command: ["python", "cron_bridge.py"]
+    environment:
+      REDIS_URL: redis://integration-bus-redis:6379
     volumes:
       - telethon-sessions:/app/sessions
       - telethon-state:/app/state

@@ -8,7 +8,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Pending
-- Monitor the first scheduled Telethon Digest daemon run after deployment.
+- Deploy `/opt/integration-bus/` (Redis) to server and restart `telethon-digest-cron-bridge`.
+- Monitor first async digest run through Redis bus.
+
+## [2026-04-11] — Integration bus v1 (Redis Streams)
+
+### Added
+- **`artifacts/integration-bus/docker-compose.yml`**: standalone Redis 7 Alpine Compose project.
+  Joins `openclaw_default` network; persistent `integration-bus-redis-data` volume.
+  Deploy at `/opt/integration-bus/` on server.
+- **Integration bus streams** (naming convention):
+  - `ingest:jobs:{source}` — batch job triggers (telegram, email, …)
+  - `ingest:events:{source}` — real-time item events (signals, private groups — v2)
+  - `ingest:rag:queue` — LightRAG indexer queue (v2)
+  - `dlq:failed` — dead letter queue for all sources
+
+### Changed
+- **`cron_bridge.py`** refactored to async-first bridge:
+  - `POST /trigger` now enqueues to `ingest:jobs:telegram` via Redis XADD and returns HTTP 202
+    immediately (previously blocked synchronously for up to 90 min).
+  - Redis consumer loop runs as a background thread in the same container; reads from
+    `ingest:jobs:telegram` consumer group `digest-workers`, calls `digest_worker.py --now`,
+    writes status to `cron-bridge-status.json` (unchanged), pushes failures to `dlq:failed`.
+  - Removed `fcntl` file lock (consumer group handles sequential processing).
+  - Added graceful Redis reconnect with exponential backoff.
+- **`requirements.txt`**: added `redis>=5.0.0`.
+- **`docker-compose.yml`** (telethon-digest): added `REDIS_URL` env to `cron-bridge` service.
+
+### Docs
+- `docs/13-ai-assistant-architecture.md`: updated Telegram Digest architecture diagram to show
+  async bus; replaced backlog section with implemented status + v2 backlog.
+- `docs/03-operations.md`: added Integration Bus operations section (deploy, ping, stream
+  inspection, DLQ, manual enqueue, trim commands).
 
 ## [2026-04-10] — telethon-digest: Telegram channel digest service
 

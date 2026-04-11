@@ -262,20 +262,51 @@ topic in `Benka_Clawbot_SuperGroup` — 6× daily (08:00, 09:00, 12:00, 15:00, 1
 ```
 OpenClaw Cron Jobs (08:00/09:00/12:00/15:00/19:00/21:00 МСК)
   └── isolated OpenClaw agent run
-        └── HTTP trigger → telethon-digest-cron-bridge
-              └── python digest_worker.py --now
-                    └── telethon-digest container context (Python, async)
-        ├── reader.py       — Telethon MTProto, batched reads (10/batch), FloodWait-safe
-        ├── scorer.py       — Pass 1: folder_priority × pin_boost; top-30 → LLM
-        ├── link_builder.py — t.me deep links per post
-        ├── summarizer.py   — OmniRoute medium, structured digest prompts
-        └── poster.py       — Bot API → telegram-digest topic, split at 4000 chars
+        └── HTTP POST /trigger → telethon-digest-cron-bridge
+              └── XADD ingest:jobs:telegram → HTTP 202 (immediate)
+
+                        ↓ async (Redis Streams)
+
+              telethon-digest-cron-bridge (consumer loop, same container)
+                    └── python digest_worker.py --now
+                          └── telethon-digest container context (Python, async)
+              ├── reader.py       — Telethon MTProto, batched reads (10/batch), FloodWait-safe
+              ├── scorer.py       — Pass 1: folder_priority × pin_boost; top-30 → LLM
+              ├── link_builder.py — t.me deep links per post
+              ├── summarizer.py   — OmniRoute medium, structured digest prompts
+              └── poster.py       — Bot API → telegram-digest topic, split at 4000 chars
 ```
 
-Container `telethon-digest` shares the `openclaw_default` network, giving it
-direct access to `http://omniroute:20129/v1` without external routing.
+**Integration bus** (`integration-bus-redis`, Redis 7 Alpine):
 
-The scheduler of record is now the OpenClaw Gateway itself. The six digest jobs
+```
+                            REDIS STREAMS (integration-bus-redis)
+                       ┌──────────────────────────────────────────────┐
+ [Producers]           │                                              │  [Workers]
+                       │  ingest:jobs:telegram ───────────────────────┼──► cron-bridge consumer loop
+ cron /trigger ────────┤    {run_id, digest_type, config_ref}        │    → digest_worker.py --now
+                       │                                              │
+                       │  ingest:jobs:email ──────────────────────────┼──► email-worker (future)
+ email-trigger ────────┤                                              │
+                       │  ingest:events:telegram ─────────────────────┼──► telethon-event-listener (future)
+ Telethon listener ────┤    (individual messages, real-time)         │    → enrich → classify → alert/rag
+                       │                                              │
+                       │  ingest:rag:queue ───────────────────────────┼──► lightrag-indexer (future)
+                       │                                              │
+                       │  dlq:failed ─────────────────────────────────┼──► monitoring / retry
+                       └──────────────────────────────────────────────┘
+```
+
+Stream naming:
+- `ingest:jobs:{source}` — batch job triggers (telegram, email)
+- `ingest:events:{source}` — real-time item events (signals, private groups)
+- `ingest:rag:queue` — items queued for LightRAG indexing
+- `dlq:failed` — dead letter queue (all sources)
+
+Container `telethon-digest-cron-bridge` shares the `openclaw_default` network and
+has direct access to `http://omniroute:20129/v1` and `http://integration-bus-redis:6379`.
+
+The scheduler of record is the OpenClaw Gateway itself. The six digest jobs
 are stored in the gateway cron store and show up in Control → Cron Jobs:
 
 - `Telethon Digest · 08:00 Morning brief`
@@ -291,45 +322,28 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 - Telethon auto-retries on `FloodWaitError` internally.
 - Full read of 200 channels: ~30–60 s (well within the longest regular interval).
 
-### Backlog: async ingestion bus
+### Integration bus status
 
-Current digest runs still couple source reading, scoring, LLM summarization, and publication
-inside one synchronous execution path. This is workable for the current Telegram setup, but it
-creates a fragile boundary around long reads, provider timeouts, and cron-trigger response times.
+**Implemented (v1):** Redis Streams async ingestion bus is live.
 
-Current pulse rendering has a related failure mode at the presentation layer: `poster.py` hides the
-entire `Пульс дня` block when `document.themes` is empty, while `summarizer.py` can legitimately
-sanitize all candidate themes down to `[]`. That case should be treated as a content-quality
-fallback, not as a reason to remove the section entirely.
+- `cron_bridge.py` enqueues jobs to `ingest:jobs:telegram` and returns HTTP 202 immediately.
+- Consumer loop runs as a background thread in the same container; calls `digest_worker.py --now`.
+- Failed pipelines are written to `dlq:failed` stream.
+- `integration-bus-redis` (Redis 7 Alpine) runs as a standalone Docker Compose project at
+  `/opt/integration-bus/`, joined to `openclaw_default` network.
 
-Recommended next step:
+**Known failure mode (poster.py):** `poster.py` hides the entire `Пульс дня` block when
+`document.themes` is empty, but `summarizer.py` can legitimately sanitize all candidate
+themes down to `[]`. That case should be treated as a content-quality fallback, not a reason
+to hide the section.
 
-- introduce a small async ingestion layer between source readers and downstream digest generation
-- use `Redis Streams` as the preferred v1 queue: boring, durable enough, easy to operate, and a
-  good fit for producer/worker/publisher flow without adding a heavy platform
-- keep it intentionally simple and standard: source producers, durable queue, idempotent workers,
-  and separate publishers
-- normalize inbound events so the same pipeline can later ingest Telegram posts, work email
-  summaries, and other signal feeds without bespoke retry logic per source
-- move slow operations out of the request/cron critical path; the trigger should enqueue work and
-  return quickly, while workers continue enrichment, deduplication, summarization, and posting
-- keep the architectural boundary explicit:
-  - producers enqueue normalized events
-  - workers read source windows, normalize, persist enqueue checkpoints, enrich, deduplicate,
-    classify, and summarize
-  - publishers emit digest posts and other derived outputs
-- define a minimum shared event model for all sources:
-  - `source_type`
-  - `source_id`
-  - `event_id`
-  - `occurred_at`
-  - `payload_ref` or normalized payload
-  - `dedup_key`
-  - `ingestion_state`
-- target this shared layer at:
-  - Telegram Digest
-  - Work Email
-  - future signal feeds
+**Backlog (v2):**
+
+- `ingest:events:telegram` — real-time Telethon listener for private groups and signal channels
+- `ingest:jobs:email` — Work Email digest producer
+- `ingest:rag:queue` — LightRAG indexer worker consuming enriched items
+- Per-item pipeline: individual posts as events (vs. current whole-digest-as-job)
+- Monitoring/metrics for Redis streams (XLEN, DLQ alerts)
 
 ### Scoring
 
