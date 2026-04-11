@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Pending
 - (none)
 
+## [2026-04-11c] — Fix sync-openclaw-cron-jobs.sh duplicate prevention
+
+### Fixed
+- **`sync-openclaw-cron-jobs.sh`**: `read_existing_job_ids()` now uses `openclaw cron list`
+  CLI output instead of reading the JSON file directly. Parses JSON output first, falls back
+  to UUID extraction from text table lines. Eliminates silent failures that caused duplicates.
+- Removed unused `OPENCLAW_CRON_STORE` variable from the script.
+
 ## [2026-04-11b] — Integration bus: async LightRAG ingest via ingest:rag:queue
 
 ### Added

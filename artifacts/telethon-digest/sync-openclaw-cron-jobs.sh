@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-OPENCLAW_CRON_STORE="${OPENCLAW_CRON_STORE:-/opt/openclaw/config/cron/jobs.json}"
 OPENCLAW_CRON_AGENT="${OPENCLAW_CRON_AGENT:-main}"
 OPENCLAW_CRON_TZ="${OPENCLAW_CRON_TZ:-Europe/Moscow}"
 TELETHON_ENV_FILE="${TELETHON_ENV_FILE:-/opt/telethon-digest/telethon.env}"
@@ -39,37 +38,49 @@ run_openclaw() {
 }
 
 read_existing_job_ids() {
-  local raw_json=""
-  if [[ -r "$OPENCLAW_CRON_STORE" ]]; then
-    raw_json="$(cat "$OPENCLAW_CRON_STORE")"
-  elif command -v sudo >/dev/null 2>&1; then
-    raw_json="$(sudo cat "$OPENCLAW_CRON_STORE" 2>/dev/null || true)"
-  fi
+  local cron_list
+  cron_list="$(run_openclaw cron list 2>/dev/null)"
 
-  RAW_JSON="$raw_json" python3 - <<'PY'
-import json
+  # Pass via env var: piping into a heredoc-fed python3 causes heredoc to win over pipe
+  CRON_LIST="$cron_list" python3 - <<'PY'
 import os
-import sys
+import json
+import re
 
-managed_names = {
-    "Telethon Digest · 08:00 Morning brief",
-    "Telethon Digest · 09:00 Regular digest",
-    "Telethon Digest · 12:00 Regular digest",
-    "Telethon Digest · 15:00 Regular digest",
-    "Telethon Digest · 19:00 Regular digest",
-    "Telethon Digest · 21:00 Evening editorial",
-}
-raw = os.environ.get("RAW_JSON", "").strip()
+# Prefix shared by all managed jobs — works even when names are truncated in text output
+MANAGED_PREFIX = "Telethon Digest"
+
+uuid_re = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.I
+)
+
+raw = os.environ.get("CRON_LIST", "").strip()
 if not raw:
     raise SystemExit(0)
+
+# Try JSON parse first (if openclaw cron list returns JSON)
 try:
     data = json.loads(raw)
-except Exception:
+    jobs = (
+        data.get("jobs", []) if isinstance(data, dict)
+        else data if isinstance(data, list)
+        else []
+    )
+    for job in jobs:
+        if isinstance(job, dict) and str(job.get("name", "")).startswith(MANAGED_PREFIX):
+            jid = job.get("jobId") or job.get("id")
+            if jid:
+                print(jid)
     raise SystemExit(0)
-jobs = data.get("jobs", []) if isinstance(data, dict) else data if isinstance(data, list) else []
-for job in jobs:
-    if isinstance(job, dict) and job.get("name") in managed_names and job.get("jobId"):
-        print(job["jobId"])
+except (json.JSONDecodeError, KeyError):
+    pass
+
+# Fallback: text table — match any line containing the managed prefix, extract leading UUID
+for line in raw.splitlines():
+    if MANAGED_PREFIX in line:
+        m = uuid_re.search(line)
+        if m:
+            print(m.group(0))
 PY
 }
 
