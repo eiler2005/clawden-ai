@@ -20,6 +20,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import redis as redis_lib
 
 logging.basicConfig(
@@ -36,10 +37,15 @@ REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 STATE_DIR = Path("/app/state")
 STATUS_PATH = STATE_DIR / "cron-bridge-status.json"
 
+LIGHTRAG_URL = os.environ.get("LIGHTRAG_URL", "http://lightrag:9621")
+
 STREAM_JOBS = "ingest:jobs:telegram"
+STREAM_RAG = "ingest:rag:queue"
 STREAM_DLQ = "dlq:failed"
 CONSUMER_GROUP = "digest-workers"
 CONSUMER_NAME = "cron-bridge-worker"
+RAG_CONSUMER_GROUP = "rag-workers"
+RAG_CONSUMER_NAME = "rag-worker"
 BLOCK_MS = 5000
 
 VALID_DIGEST_TYPES = {"morning", "interval", "editorial"}
@@ -289,6 +295,98 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
             logger.error("Failed to XACK msg_id=%s: %s", msg_id, exc)
 
 
+# ---------------------------------------------------------------------------
+# RAG consumer loop (background thread)
+# ---------------------------------------------------------------------------
+
+def _upload_file_to_lightrag_sync(file_path: str, file_name: str) -> None:
+    """Upload a markdown file to LightRAG synchronously (runs in consumer thread)."""
+    path_obj = Path(file_path)
+    if not path_obj.exists():
+        logger.warning("RAG worker: file not found: %s", file_path)
+        return
+    content = path_obj.read_bytes()
+    with httpx.Client(timeout=60) as client:
+        resp = client.post(
+            f"{LIGHTRAG_URL}/documents/upload",
+            files={"file": (file_name, content, "text/markdown")},
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"LightRAG upload failed HTTP {resp.status_code}")
+        logger.info("RAG worker: uploaded %s → LightRAG", file_name)
+    with httpx.Client(timeout=30) as client:
+        try:
+            client.post(f"{LIGHTRAG_URL}/documents/reprocess_failed")
+        except Exception as exc:
+            logger.warning("RAG worker: reprocess_failed error: %s", exc)
+
+
+def _rag_consumer_loop_inner(r: redis_lib.Redis) -> None:
+    """Inner RAG consumer loop; raises on Redis errors for outer reconnect logic."""
+    try:
+        r.xgroup_create(STREAM_RAG, RAG_CONSUMER_GROUP, id="0", mkstream=True)
+        logger.info("RAG consumer group '%s' created on '%s'", RAG_CONSUMER_GROUP, STREAM_RAG)
+    except redis_lib.exceptions.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+    logger.info("RAG consumer loop ready — listening on '%s'", STREAM_RAG)
+
+    while True:
+        messages = r.xreadgroup(
+            RAG_CONSUMER_GROUP,
+            RAG_CONSUMER_NAME,
+            {STREAM_RAG: ">"},
+            block=BLOCK_MS,
+            count=1,
+        )
+        if not messages:
+            continue
+
+        _, entries = messages[0]
+        msg_id, data = entries[0]
+        file_path = data.get("file_path", "")
+        file_name = data.get("file_name", Path(file_path).name if file_path else "unknown")
+        logger.info("RAG worker: processing %s", file_name)
+
+        try:
+            _upload_file_to_lightrag_sync(file_path, file_name)
+            r.xack(STREAM_RAG, RAG_CONSUMER_GROUP, msg_id)
+        except Exception as exc:
+            logger.error("RAG worker: failed %s: %s → dlq", file_name, exc)
+            try:
+                r.xadd(STREAM_DLQ, {
+                    "source": "rag-worker",
+                    "msg_id": msg_id,
+                    "file_path": file_path,
+                    "error": str(exc),
+                    "failed_at": _utc_now(),
+                })
+            except Exception:
+                pass
+            r.xack(STREAM_RAG, RAG_CONSUMER_GROUP, msg_id)
+
+
+def rag_consumer_loop() -> None:
+    """Background thread: connect to Redis, run RAG consumer loop with reconnect."""
+    logger.info("RAG consumer loop starting")
+    while True:
+        try:
+            r = _make_redis()
+            r.ping()
+            _rag_consumer_loop_inner(r)
+        except redis_lib.exceptions.ConnectionError as exc:
+            logger.error("RAG consumer Redis lost: %s — reconnecting in 10s", exc)
+            time.sleep(10)
+        except Exception as exc:
+            logger.error("RAG consumer unexpected error: %s — restarting in 5s", exc)
+            time.sleep(5)
+
+
+# ---------------------------------------------------------------------------
+# Digest consumer loop (background thread)
+# ---------------------------------------------------------------------------
+
 def consumer_loop() -> None:
     """Background thread: connect to Redis, run consumer loop with reconnect."""
     logger.info("Consumer loop starting (REDIS_URL=%s)", REDIS_URL)
@@ -312,11 +410,13 @@ def consumer_loop() -> None:
 def main() -> None:
     if not REDIS_URL:
         logger.warning(
-            "REDIS_URL is not set — consumer loop disabled, /trigger will return 503"
+            "REDIS_URL is not set — consumer loops disabled, /trigger will return 503"
         )
     else:
-        t = threading.Thread(target=consumer_loop, daemon=True, name="redis-consumer")
+        t = threading.Thread(target=consumer_loop, daemon=True, name="digest-consumer")
         t.start()
+        r = threading.Thread(target=rag_consumer_loop, daemon=True, name="rag-consumer")
+        r.start()
 
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     logger.info("Bridge listening on 0.0.0.0:%s", PORT)

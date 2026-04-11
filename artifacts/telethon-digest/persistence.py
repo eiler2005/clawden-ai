@@ -8,10 +8,11 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import aiohttp
+import redis.asyncio as aioredis
 
 from models import CuratedDigestNote, DigestDocument, DigestItem
 from omniroute_client import call_chat_completion, extract_json_payload, has_markdown_fences
@@ -22,7 +23,9 @@ LIGHTRAG_URL = os.environ.get("LIGHTRAG_URL", "http://lightrag:9621")
 OBSIDIAN_OUTPUT_DIR = os.environ.get("OBSIDIAN_OUTPUT_DIR", "/app/obsidian")
 OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://omniroute:20129/v1")
 OMNIROUTE_API_KEY = os.environ.get("OMNIROUTE_API_KEY", "")
+REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 CURATION_MODEL = "medium"
+STREAM_RAG = "ingest:rag:queue"
 
 
 def _persistence_cfg(config: dict) -> dict:
@@ -449,6 +452,30 @@ async def _extract_curated_notes(document: DigestDocument, config: dict) -> list
     return notes
 
 
+async def _enqueue_lightrag_uploads(paths: list[Path]) -> None:
+    """Push file paths to ingest:rag:queue for async LightRAG ingestion.
+    Falls back to direct upload when Redis is not configured."""
+    if not paths:
+        return
+    if not REDIS_URL:
+        await _upload_paths_to_lightrag(paths)
+        return
+    try:
+        r = aioredis.from_url(REDIS_URL, decode_responses=True)
+        for path in paths:
+            await r.xadd(STREAM_RAG, {
+                "source": "telegram-digest",
+                "file_path": str(path),
+                "file_name": path.name,
+                "enqueued_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logger.info("Enqueued RAG ingest: %s", path.name)
+        await r.aclose()
+    except Exception as exc:
+        logger.warning("Redis enqueue failed, falling back to direct LightRAG: %s", exc)
+        await _upload_paths_to_lightrag(paths)
+
+
 async def _upload_paths_to_lightrag(paths: list[Path]) -> None:
     if not paths:
         return
@@ -523,6 +550,6 @@ async def persist_digest(
         logger.info("Persisted curated digest note: %s", note_path)
 
     if _persistence_cfg(config).get("immediate_lightrag_ingest", False):
-        await _upload_paths_to_lightrag(written_paths)
+        await _enqueue_lightrag_uploads(written_paths)
 
     return written_paths

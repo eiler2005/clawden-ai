@@ -8,8 +8,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Pending
-- Deploy `/opt/integration-bus/` (Redis) to server and restart `telethon-digest-cron-bridge`.
-- Monitor first async digest run through Redis bus.
+- (none)
+
+## [2026-04-11b] — Integration bus: async LightRAG ingest via ingest:rag:queue
+
+### Added
+- **`ingest:rag:queue` Redis stream**: LightRAG file uploads now go through the bus
+  instead of being called synchronously inside the digest pipeline.
+- **`rag_consumer_loop()`** in `cron_bridge.py`: second background thread that reads
+  from `ingest:rag:queue` (consumer group `rag-workers`), uploads each file to
+  `LightRAG /documents/upload`, calls `reprocess_failed`, writes `dlq:failed` on error.
+- `_upload_file_to_lightrag_sync()` in `cron_bridge.py`: synchronous httpx upload
+  used by the RAG consumer thread (no aiohttp needed in thread context).
+
+### Changed
+- **`persistence.py`**: `persist_digest()` now calls `_enqueue_lightrag_uploads()`
+  instead of `_upload_paths_to_lightrag()` directly. If `REDIS_URL` is set, file paths
+  are pushed to `ingest:rag:queue`; falls back to direct HTTP if Redis unavailable.
+- **`cron_bridge.py`**: `main()` starts two background threads — `digest-consumer`
+  (unchanged) and new `rag-consumer`.
+
+### Verified
+Digest triggered → `persistence.py` pushed `interval-*.md` to `ingest:rag:queue` →
+`rag-consumer` uploaded to LightRAG HTTP 200 → `reprocess_failed` called → XPENDING=0, DLQ=0.
 
 ## [2026-04-11] — Integration bus v1 (Redis Streams)
 
