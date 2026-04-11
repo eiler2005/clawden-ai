@@ -619,6 +619,116 @@ or unloaded:
 launchctl unload ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
 ```
 
+## Telethon Digest
+
+Telethon Digest reads Denis's Telegram subscriptions via Telethon and posts structured
+digests to the configured supergroup topic using the OpenClaw Telegram bot token.
+It calls OmniRoute (`http://omniroute:20129/v1`) for LLM summarization and dedup.
+
+**Scheduling:** OpenClaw Gateway Cron Jobs trigger one-shot runs at
+`08:00, 09:00, 12:00, 15:00, 19:00, 21:00 MSK`. No long-running daemon.
+
+**Digest types (auto-selected by hour):**
+
+| Hour | Type | Format |
+|------|------|--------|
+| 08:00 | morning | Compact snapshot, 1-2 messages |
+| 09/12/15/19 | interval | Per-folder Tier A detail + Tier B summary |
+| 21:00 | editorial | Full editorial: summary → themes → must-read → low signal → watchpoints |
+
+### Deploy
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+bash scripts/deploy-telethon-digest.sh
+```
+
+The script: rsyncs source, fills secrets from `/opt/openclaw/.env`, rebuilds image,
+stops the old daemon if any, removes legacy `/etc/cron.d/telethon-digest`, and syncs
+the six OpenClaw Cron Jobs into the Gateway store so they appear in Control → Cron Jobs.
+
+**Managed OpenClaw jobs:**
+
+- `Telethon Digest · 08:00 Morning brief`
+- `Telethon Digest · 09:00 Regular digest`
+- `Telethon Digest · 12:00 Regular digest`
+- `Telethon Digest · 15:00 Regular digest`
+- `Telethon Digest · 19:00 Regular digest`
+- `Telethon Digest · 21:00 Evening editorial`
+
+Each job runs as an **isolated OpenClaw cron run** and sends one authenticated
+HTTP trigger from the gateway container to `telethon-digest-cron-bridge` inside
+`openclaw_default`. The bridge then runs `python digest_worker.py --now` with an
+explicit `DIGEST_TYPE_OVERRIDE`, which keeps the run type stable even if the
+gateway retries a job later than the scheduled hour.
+
+**Important:** the target OpenClaw agent must be allowed to use `exec` and must
+have access to `/opt/telethon-digest`. The sync script defaults to agent `main`,
+but you can override it with `OPENCLAW_CRON_AGENT=ops` before deploy if your
+server uses a dedicated ops agent. The sync script reads existing jobs from
+`/opt/openclaw/config/cron/jobs.json` by default; override with
+`OPENCLAW_CRON_STORE=...` if your gateway uses a custom cron store path.
+
+### One-time Telethon authorization
+
+```bash
+ssh -t -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/telethon-digest && sudo docker compose run --rm telethon-digest python auth.py'
+```
+
+### Sync Telegram folders (run after auth, and after folder changes)
+
+```bash
+# Dry-run
+ssh -t -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/telethon-digest && sudo docker compose run --rm telethon-digest python sync_channels.py --dry-run'
+
+# Write config.json (adds position + username per channel)
+ssh -t -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/telethon-digest && sudo docker compose run --rm telethon-digest python sync_channels.py'
+```
+
+Read scope config (`config.json` — not committed):
+
+```json
+{
+  "read_only": true,
+  "require_explicit_allowlist": true,
+  "read_broadcast_channels_only": true,
+  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "faang"]
+}
+```
+
+### Run digest immediately
+
+```bash
+# Auto-detect type by current hour
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'sudo /opt/telethon-digest/cron-digest.sh'
+
+# Force a specific type for testing
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/telethon-digest && sudo docker compose run --rm \
+   -e DIGEST_TYPE_OVERRIDE=morning telethon-digest python digest_worker.py --now'
+```
+
+### Watch logs
+
+```bash
+# Digest log (one line per run)
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'sudo tail -f /var/log/telethon-digest-cron.log'
+
+# Detailed docker log from last run
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/telethon-digest && sudo docker compose logs --tail=100'
+```
+
+### Check OpenClaw cron schedule
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+```
+
 ## If SSH times out during banner exchange
 
 This indicates a host-level access problem before shell login. Use Hetzner Console for recovery checks:

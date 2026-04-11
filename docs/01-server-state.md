@@ -208,3 +208,24 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json` with 3 virtual models (`smart`, `medium`, `light`); Codex/gpt-5.4 stays primary
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
+
+### Telethon Digest (Telegram channel digest)
+
+- project root: `/opt/telethon-digest`
+- compose file: `/opt/telethon-digest/docker-compose.yml`
+- env file: `/opt/telethon-digest/telethon.env` (gitignored secret; local source: `secrets/telethon-digest/telethon.env`)
+- source artifact: `artifacts/telethon-digest/`
+- network: `openclaw_default` (external; used to reach OmniRoute at `http://omniroute:20129/v1`)
+- runtime containers:
+  - `telethon-digest-cron-bridge` — always-on HTTP trigger bridge for OpenClaw Cron Jobs
+  - `telethon-digest` — one-shot worker container used by manual runs / compose runs
+- Docker volumes:
+  - `telethon-sessions` — Telethon user session file
+  - `telethon-state` — per-channel watermarks and last run timestamp
+- runtime config: `/opt/telethon-digest/config.json`, generated from Telegram folders by `sync_channels.py`
+- output target: `telegram-digest` topic in `Benka_Clawbot_SuperGroup`
+- schedule: OpenClaw Cron Jobs at 08:00, 09:00, 12:00, 15:00, 19:00, 21:00 Moscow time
+- read scope: application-enforced allowlist, `read_only=true`, `read_broadcast_channels_only=true`
+- current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `faang`
+- catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
+- status: running as `telethon-digest`; job timing managed by OpenClaw Gateway cron store

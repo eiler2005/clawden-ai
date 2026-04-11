@@ -1,0 +1,1354 @@
+"""
+Structured digest generation via OmniRoute.
+
+All digest types produce one validated DigestDocument. The LLM returns strict
+JSON; Telegram HTML and Markdown are rendered later from the structured object.
+"""
+import json
+import logging
+import os
+import re
+from collections import Counter, defaultdict
+from datetime import datetime
+
+import aiohttp
+import pytz
+
+from models import (
+    DigestDocument,
+    DigestItem,
+    DigestSection,
+    DigestStats,
+    ModelMeta,
+    Post,
+)
+from omniroute_client import (
+    call_chat_completion,
+    extract_json_payload,
+    has_markdown_fences,
+)
+
+logger = logging.getLogger(__name__)
+
+OMNIROUTE_URL = os.environ.get("OMNIROUTE_URL", "http://omniroute:20129/v1")
+OMNIROUTE_API_KEY = os.environ.get("OMNIROUTE_API_KEY", "")
+MODEL = "medium"
+MODEL_EDITORIAL = "smart"
+
+_DEFAULT_TITLES = {
+    "morning": "Утренний снимок",
+    "interval": "Дайджест",
+    "editorial": "Редакция дня",
+}
+
+_CLARIFICATION_MARKERS = (
+    "мне нужна дополнительная информация",
+    "что именно ты хочешь",
+    "что мне не хватает",
+    "как только уточнишь",
+    "уточни структуру",
+    "предоставь полный набор",
+    "what exactly do you want",
+    "i need more information",
+    "what i need",
+    "clarify",
+)
+
+_LOW_SIGNAL_PATTERNS = (
+    "donor messages",
+    "/start donate",
+    "сообщение каналу",
+    "цитата дня",
+    "community pulse",
+    "не пропустите отраслевые мероприятия",
+    "paid group",
+    "new subscribers",
+    "channel posts:",
+    "longreads in group",
+    "мероприятия на следующей неделе",
+)
+
+_TECHISH_PATTERN = re.compile(
+    r"\b(AI|LLM|GPT|Claude|Gemini|agent|automation|GenAI|SynthID|SWE-bench|Terminal-Bench|"
+    r"HKUDS|OpenClaw|Managed Agents|Multica|Telegram|privacy|VPN|proxy|security)\b",
+    re.I,
+)
+_THEME_STOPWORDS = {
+    "сегодня", "вчера", "завтра", "последние", "месяцы", "недели", "года", "году",
+    "новый", "новая", "новые", "главное", "коротко", "подробнее", "уровень", "версия",
+    "канал", "каналы", "пост", "поста", "постов", "сообщение", "сообщения", "сообщений",
+    "автор", "авторы", "канала", "канале", "данные", "детали", "обзор", "сводка",
+    "рынок", "рынки", "система", "работа", "команда", "компании", "компания", "люди",
+    "россия", "русский", "русская", "европа", "европа", "служба", "live", "news",
+    "growth", "work", "personal", "startups", "evolution", "fintech", "investing",
+    "faang", "coffee", "fashion", "property", "новости", "тема", "темы", "окно",
+    "источник", "источником", "short", "medium", "smart", "open", "source", "version",
+    "это", "этот", "эта", "эти", "того", "такой", "также", "которые", "который",
+    "которых", "снова", "после", "вокруг", "сейчас", "почти", "просто", "были",
+    "будет", "будут", "можно", "могут", "через", "очень", "почему", "какие",
+    "какая", "какой", "южной", "северной", "внутри", "против", "должен", "как",
+    "так", "если", "когда", "лишь", "тоже", "здесь", "последний", "последняя",
+    "последние", "весь", "вся", "всё", "все", "которое", "которую", "однако",
+    "между", "среди", "пока", "затем", "итоги", "итог", "часть",
+}
+_THEME_ALLOWED_LOWER = {
+    "telegram", "телеграм", "блокировки", "приватность", "иран", "ормуз", "лидген",
+    "банки", "визы", "рынки", "макро", "агенты", "privacy", "openclaw", "vpn",
+    "proxy", "обход", "доступ", "трамп", "россия", "сша", "iran", "creator",
+    "ai", "gemini",
+}
+_THEME_CONTEXT_STOPWORDS = _THEME_STOPWORDS | {
+    "россии", "сша", "южной", "корее", "израиль", "иран", "трамп", "telegram",
+    "телеграм", "openclaw", "claude", "anthropic", "google", "deepmind",
+    "все", "ещё", "еще", "свой", "свою", "своих", "один", "два", "три",
+    "млрд", "млн", "пакет", "уровня", "уровне", "проблема", "главные",
+    "час", "часа", "часов", "сигнал", "сигналы",
+}
+_THEME_BLOCKED = {
+    "news", "work", "personal", "evolution", "investing", "fintech", "startups",
+    "growth me", "growth", "faang", "coffee", "fashion", "property", "eb1",
+    "гребенюк", "digest", "дайджест",
+}
+_ANCHOR_PHRASE_RE = re.compile(
+    r"(?:[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё0-9+\-]{2,}|[A-Z]{2,}|[А-ЯЁ]{2,}|[A-Za-z]+[A-Z][A-Za-z0-9+\-]*)"
+    r"(?:\s+(?:[A-ZА-ЯЁ][A-Za-zА-Яа-яЁё0-9+\-]{2,}|[A-Z]{2,}|[А-ЯЁ]{2,}|[A-Za-z]+[A-Z][A-Za-z0-9+\-]*)){0,2}"
+)
+_PULSE_HINTS = (
+    (
+        "Telegram / VPN",
+        "доступ, ограничения, обход",
+        re.compile(r"\b(telegram|телеграм|vpn|proxy|прокси|блокиров|обход|ограничен|доступ)\b", re.I),
+    ),
+    (
+        "Иран / Ормуз",
+        "переговоры на фоне напряженности",
+        re.compile(r"\b(иран|iran|ормуз|ormuz|пролив|переговор|санкц|эскалац|напряж|перемири)\b", re.I),
+    ),
+    (
+        "Трамп / США",
+        "политическая борьба и сигналы",
+        re.compile(r"\b(трамп|trump|белый дом|white house|кампан|выбор|администраци)\b", re.I),
+    ),
+    (
+        "AI / агенты",
+        "open-source инструменты и агенты",
+        re.compile(r"\b(open.?source|openclaw|managed agents|agents?|agentic|automation|автоматизац)\b", re.I),
+    ),
+    (
+        "AI / SynthID",
+        "происхождение и водяные знаки",
+        re.compile(r"\b(synthid|deepmind|gemini|watermark|водян|origin|provenance)\b", re.I),
+    ),
+    (
+        "AI / безопасность",
+        "бенчмарки, хаки, уязвимости",
+        re.compile(r"\b(swe-bench|terminal-bench|security|уязв|взлом|hack)\b", re.I),
+    ),
+    (
+        "Creator Economy",
+        "рынок креатива и вакансии",
+        re.compile(r"\b(creator|creative|vetted|job board|джоб|ваканси|бренд|video creators?)\b", re.I),
+    ),
+    (
+        "Банки / финтех",
+        "платежи, токенизация, сделки",
+        re.compile(r"\b(bank|банк|банки|payment|payments|visa|mastercard|securitize|tokeniz|rwa)\b", re.I),
+    ),
+    (
+        "Россия",
+        "внутренняя и цифровая повестка",
+        re.compile(r"\b(фсб|сизо|приложени|надзор|слежк|цифров|регулир)\b", re.I),
+    ),
+    (
+        "Артемида-2",
+        "миссия, капсула, приводнение",
+        re.compile(r"\b(артемид|artemis|orion|мисси|капсул|nasa|океан|приводнен)\b", re.I),
+    ),
+)
+_PULSE_SKIP_RE = re.compile(
+    r"(community pulse|channel posts:|paid group:|new subscribers|shared:|longreads in group|"
+    r"не пропустите|форум|конференц|вебинар|митап|практикум|регистрац|реклама|"
+    r"сводка за|искусственный интеллект\s+[–-]\s+сводка)",
+    re.I,
+)
+_PULSE_BAG_RE = re.compile(
+    r"^[A-Za-zА-Яа-яЁё0-9+\-/]+(?:,\s*[A-Za-zА-Яа-яЁё0-9+\-/]+){2,}$"
+)
+_PULSE_VERBISH_RE = re.compile(
+    r"\b(получил|получила|получили|прибыл|прибыла|прибыло|прилетел|прилетела|выпустил|"
+    r"выпустила|запустил|запустила|приводнился|приводнилась|заявил|заявила|обсуждают|"
+    r"усиливает|вышел|вышла|показал|показала|собрала|собрал|разбирают|жалуются|"
+    r"готовит|готовят|продвигает|получила|перешли|передали|взяла|получают|растёт|"
+    r"accelerates|launched|released|announced|discussed|discusses|arrived)\b",
+    re.I,
+)
+
+
+def _default_title(digest_type: str) -> str:
+    return _DEFAULT_TITLES.get(digest_type, "Дайджест")
+
+
+def _period_label(start: datetime, end: datetime, timezone_name: str) -> str:
+    tz = pytz.timezone(timezone_name)
+    return f"{start.astimezone(tz).strftime('%H:%M')}–{end.astimezone(tz).strftime('%H:%M')}"
+
+
+def _folder_tier(folder_name: str, config: dict) -> str:
+    tiers = config.get("folder_tiers", {})
+    folder_lc = folder_name.lower()
+    for tier_name, tier_cfg in tiers.items():
+        folders = [f.lower() for f in tier_cfg.get("folders", [])]
+        if folder_lc in folders:
+            return tier_name
+    return "C"
+
+
+def _tier_rank(tier_name: str) -> int:
+    return {"A": 0, "B": 1, "C": 2}.get(tier_name.upper(), 3)
+
+
+def _position_bucket(position: int) -> str:
+    if position <= 3:
+        return "top_1_4"
+    if position <= 7:
+        return "top_5_8"
+    if position <= 11:
+        return "top_9_12"
+    return "other"
+
+
+def _clean_text(value: str, max_len: int = 240) -> str:
+    text = value or ""
+    text = re.sub(r"```.+?```", " ", text, flags=re.S)
+    text = text.replace("```", " ")
+    text = text.replace("`", " ")
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1", text)
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"www\.\S+", " ", text)
+    text = re.sub(r"(?<!\w)#([A-Za-zА-Яа-я0-9_]+)", r"\1", text)
+    text = re.sub(r"[*_~]+", " ", text)
+    text = re.sub(r"\bmt\s+в\s+max\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bgithub\b", "GitHub", text, flags=re.IGNORECASE)
+    text = re.sub(r"\(\s*\)", " ", text)
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+
+def _reason_from_post(post: Post, config: dict) -> str:
+    reasons = []
+    tier = _folder_tier(post.folder_name, config)
+    if tier == "A":
+        reasons.append("папка Tier A")
+    elif tier == "B":
+        reasons.append("папка Tier B")
+    if post.is_pinned:
+        reasons.append("пост из pinned-канала")
+    bucket = _position_bucket(post.channel_position)
+    if bucket != "other":
+        reasons.append(bucket.replace("_", " "))
+    if post.also_mentioned:
+        reasons.append("тема повторялась в нескольких каналах")
+    if not reasons:
+        reasons.append("сигнал попал в top по score")
+    return ", ".join(reasons)
+
+
+def _post_to_item(post: Post, config: dict, kind: str = "signal") -> DigestItem:
+    return DigestItem(
+        channel=post.channel_name,
+        channel_url=post.channel_url,
+        post_url=post.url or "",
+        summary=_clean_text(post.text),
+        why_important="",
+        kind=kind,
+        pinned=post.is_pinned,
+        also_mentioned=post.also_mentioned[:4],
+    )
+
+
+def _is_low_signal_post(post: Post) -> bool:
+    lowered = (post.text or "").lower()
+    return any(pattern in lowered for pattern in _LOW_SIGNAL_PATTERNS)
+
+
+def _looks_techish(text: str) -> bool:
+    return bool(_TECHISH_PATTERN.search(text or ""))
+
+
+def _post_count_label(count: int) -> str:
+    mod10 = count % 10
+    mod100 = count % 100
+    if mod10 == 1 and mod100 != 11:
+        return f"{count} пост"
+    if mod10 in {2, 3, 4} and mod100 not in {12, 13, 14}:
+        return f"{count} поста"
+    return f"{count} постов"
+
+
+def _normalize_theme_candidate(value: str) -> str:
+    candidate = re.sub(r"[«»\"'`]+", "", value or "")
+    candidate = re.sub(r"[\(\)\[\]\{\}]", " ", candidate)
+    candidate = re.sub(r"[^A-Za-zА-Яа-я0-9+\- ]+", " ", candidate)
+    candidate = re.sub(r"\s+", " ", candidate).strip(" -")
+    if not candidate:
+        return ""
+    words = candidate.split()
+    if len(words) > 3:
+        candidate = " ".join(words[:3])
+    lowered = candidate.casefold()
+    if lowered in _THEME_STOPWORDS or lowered in _THEME_BLOCKED:
+        return ""
+    if len(lowered) < 3:
+        return ""
+    if len(candidate.split()) == 1:
+        word = candidate.split()[0]
+        if not (word[0].isupper() or word.casefold() in _THEME_ALLOWED_LOWER or any(ch.isdigit() for ch in word)):
+            return ""
+    return candidate
+
+
+def _theme_candidates(text: str) -> list[str]:
+    cleaned = _clean_text(text, max_len=500)
+    candidates: list[str] = []
+
+    for match in _ANCHOR_PHRASE_RE.finditer(cleaned):
+        candidate = _normalize_theme_candidate(match.group(0))
+        if candidate:
+            candidates.append(candidate)
+
+    tokens = re.findall(r"[A-Za-zА-Яа-я0-9+\-]{4,}", cleaned)
+    filtered_tokens = [
+        token for token in tokens
+        if token.casefold() not in _THEME_STOPWORDS
+    ]
+
+    for token in filtered_tokens:
+        if token[0].isupper() or token.casefold() in _THEME_ALLOWED_LOWER:
+            candidate = _normalize_theme_candidate(token)
+            if candidate:
+                candidates.append(candidate)
+
+    for idx in range(len(filtered_tokens) - 1):
+        first = filtered_tokens[idx]
+        second = filtered_tokens[idx + 1]
+        if first.casefold() in _THEME_STOPWORDS or second.casefold() in _THEME_STOPWORDS:
+            continue
+        if not (first[0].isupper() or second[0].isupper() or first.casefold() in _THEME_ALLOWED_LOWER):
+            continue
+        candidate = _normalize_theme_candidate(f"{first} {second}")
+        if candidate:
+            candidates.append(candidate)
+
+    return candidates
+
+
+def _theme_token_stem(token: str) -> str:
+    lowered = token.casefold().strip(" -")
+    if not lowered:
+        return ""
+    for suffix in (
+        "иями", "ями", "ами", "ого", "ему", "ому", "ыми", "ими", "его", "ого",
+        "ия", "ие", "ий", "ый", "ой", "ая", "яя", "ое", "ее", "ых", "их",
+        "ам", "ям", "ах", "ях", "ов", "ев", "ом", "ем", "ую", "юю", "а", "я",
+        "ы", "и", "е", "о", "у", "ю", "ь",
+    ):
+        if len(lowered) > len(suffix) + 3 and lowered.endswith(suffix):
+            lowered = lowered[: -len(suffix)]
+            break
+    for suffix in ("ments", "ment", "ation", "ition", "ings", "ing", "ers", "ies", "ied", "ed", "es", "s"):
+        if len(lowered) > len(suffix) + 3 and lowered.endswith(suffix):
+            lowered = lowered[: -len(suffix)]
+            break
+    return lowered
+
+
+def _theme_tokens(text: str) -> list[str]:
+    return re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]{3,}", _clean_text(text, max_len=500))
+
+
+def _is_plain_titlecase(token: str) -> bool:
+    return (
+        len(token) >= 4
+        and token[:1].isupper()
+        and any(ch.islower() for ch in token[1:])
+        and not any(ch.isupper() for ch in token[1:])
+        and not any(ch.isdigit() for ch in token)
+    )
+
+
+def _is_weak_theme_label(label: str) -> bool:
+    words = label.split()
+    if not words:
+        return True
+    if len(words) <= 2 and all(_is_plain_titlecase(word) for word in words):
+        return True
+    if len(words) == 1 and _is_plain_titlecase(words[0]):
+        return True
+    if len(words) == 1 and words[0].casefold() not in _THEME_ALLOWED_LOWER and len(words[0]) <= 4:
+        return True
+    return False
+
+
+def _pulse_theme_label(label_display: str, cluster_posts: list[Post]) -> str:
+    hint_label, _ = _pulse_hint(cluster_posts)
+    if hint_label:
+        return hint_label
+    if _is_weak_theme_label(label_display):
+        return ""
+    return label_display
+
+
+def _strip_pulse_lead_noise(text: str) -> str:
+    cleaned = re.sub(r"^\s*(ребят|коротко|главное|сегодня|кстати|срочно|итак)\s*[:,.-]?\s*", "", text, flags=re.I)
+    cleaned = re.sub(r"^\s*\d{1,2}\.\d{1,2}\.\d{2,4}\s+\d{1,2}:\d{2}\s*", "", cleaned)
+    cleaned = re.sub(r"^\s*(update|live)\s*[:.-]?\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^\s*[📆🧠⚡️⚡🔥✅❗️❗]+\s*", "", cleaned)
+    return cleaned.strip()
+
+
+def _pulse_fact_from_posts(cluster_posts: list[Post], theme_label: str) -> str:
+    theme_tokens = {
+        _theme_token_stem(token)
+        for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", theme_label)
+        if token
+    }
+    ordered_posts = sorted(
+        cluster_posts,
+        key=lambda post: (post.score, len(post.also_mentioned), post.date.timestamp()),
+        reverse=True,
+    )
+    for post in ordered_posts:
+        text = _clean_text(post.text, max_len=260)
+        if not text or _PULSE_SKIP_RE.search(text):
+            continue
+        clauses = re.split(r"[.;!?]\s+|\n+", text)
+        for clause in clauses:
+            candidate = _strip_pulse_lead_noise(clause)
+            candidate = re.sub(r"\s+", " ", candidate).strip(" -")
+            if len(candidate) < 28 or len(candidate) > 150:
+                continue
+            if _PULSE_BAG_RE.match(candidate):
+                continue
+            lowered = candidate.casefold()
+            if lowered.startswith(("это ", "так ", "как ", "что ", "чтобы ")):
+                continue
+            if lowered in {"два поста", "три поста", "несколько постов"}:
+                continue
+            candidate_tokens = {
+                _theme_token_stem(token)
+                for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", candidate)
+            }
+            if candidate_tokens and candidate_tokens <= theme_tokens and len(candidate_tokens) <= 4:
+                continue
+            if _PULSE_VERBISH_RE.search(candidate):
+                return candidate
+    return ""
+
+
+def _normalize_pulse_signature(line: str) -> str:
+    lowered = line.casefold()
+    lowered = re.sub(r"[^a-zа-яё0-9 ]+", " ", lowered)
+    lowered = re.sub(r"\s+", " ", lowered).strip()
+    tokens = [_theme_token_stem(token) for token in lowered.split() if token]
+    return " ".join(tokens[:8])
+
+
+def _theme_context_terms(posts: list[Post], blocked_terms: set[str], max_terms: int = 3) -> list[str]:
+    term_posts: dict[str, set[tuple[int, int]]] = defaultdict(set)
+    term_channels: dict[str, set[int]] = defaultdict(set)
+    term_weight: dict[str, float] = defaultdict(float)
+    term_display: dict[str, str] = {}
+
+    for post in posts:
+        post_key = (post.channel_id, post.msg_id)
+        seen_stems: set[str] = set()
+        for token in _theme_tokens(post.text):
+            lowered = token.casefold()
+            stem = _theme_token_stem(lowered)
+            if (
+                len(stem) < 3
+                or lowered in _THEME_CONTEXT_STOPWORDS
+                or stem in _THEME_CONTEXT_STOPWORDS
+                or lowered in _THEME_BLOCKED
+                or stem in _THEME_BLOCKED
+                or stem in blocked_terms
+                or stem in seen_stems
+            ):
+                continue
+            # Keep context mostly semantic, not just another pile of proper nouns.
+            if _is_plain_titlecase(token):
+                continue
+            seen_stems.add(stem)
+            term_posts[stem].add(post_key)
+            term_channels[stem].add(post.channel_id)
+            term_weight[stem] += max(post.score, 1.0)
+            term_display.setdefault(stem, token.lower())
+
+    ordered = sorted(
+        term_posts,
+        key=lambda stem: (
+            -len(term_channels[stem]),
+            -len(term_posts[stem]),
+            -term_weight[stem],
+            term_display[stem],
+        ),
+    )
+    chosen: list[str] = []
+    for stem in ordered:
+        if len(term_posts[stem]) < 2 and len(term_channels[stem]) < 2 and term_weight[stem] < 14:
+            continue
+        chosen.append(term_display[stem])
+        if len(chosen) >= max_terms:
+            break
+    return chosen
+
+
+def _pulse_hint(posts: list[Post]) -> tuple[str, str]:
+    if not posts:
+        return "", ""
+
+    texts = [_clean_text(post.text, max_len=500) for post in posts]
+    channels = {post.channel_id for post in posts}
+    best: tuple[int, int, str, str] | None = None
+    for label, context, pattern in _PULSE_HINTS:
+        match_posts = sum(1 for text in texts if pattern.search(text))
+        if not match_posts:
+            continue
+        match_channels = len({post.channel_id for post, text in zip(posts, texts) if pattern.search(text)})
+        score = (match_channels, match_posts)
+        candidate = (score[0], score[1], label, context)
+        if best is None or candidate > best:
+            best = candidate
+
+    if best is None:
+        return "", ""
+
+    match_channels, match_posts, label, context = best
+    if match_posts < 2 and match_channels < 2:
+        return "", ""
+    return label, context
+
+
+def _best_theme_partner(
+    anchor_key: str,
+    cluster_posts: list[Post],
+    post_anchor_keys: dict[tuple[int, int], list[str]],
+    anchor_post_sets: dict[str, set[tuple[int, int]]],
+    anchor_display: dict[str, str],
+) -> str:
+    partner_counts: Counter[str] = Counter()
+    partner_channels: dict[str, set[int]] = defaultdict(set)
+    anchor_tokens = {_theme_token_stem(token) for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", anchor_key)}
+    for post in cluster_posts:
+        post_key = (post.channel_id, post.msg_id)
+        for candidate in post_anchor_keys.get(post_key, []):
+            if candidate == anchor_key:
+                continue
+            candidate_tokens = {_theme_token_stem(token) for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", candidate)}
+            if not candidate_tokens or candidate_tokens & anchor_tokens:
+                continue
+            partner_counts[candidate] += 1
+            partner_channels[candidate].add(post.channel_id)
+
+    ordered = sorted(
+        partner_counts,
+        key=lambda candidate: (
+            -len(partner_channels[candidate]),
+            -partner_counts[candidate],
+            -len(anchor_post_sets.get(candidate, set())),
+            len(anchor_display.get(candidate, candidate).split()),
+            anchor_display.get(candidate, candidate).lower(),
+        ),
+    )
+    for candidate in ordered:
+        if partner_counts[candidate] >= 2 or len(partner_channels[candidate]) >= 2:
+            return anchor_display.get(candidate, candidate)
+    return ""
+
+
+def _extract_themes(posts: list[Post], max_items: int = 6) -> list[str]:
+    counts: Counter[str] = Counter()
+    weighted: dict[str, float] = {}
+    max_score: dict[str, float] = {}
+    display: dict[str, str] = {}
+    candidate_posts: dict[str, list[Post]] = defaultdict(list)
+    candidate_channels: dict[str, set[int]] = defaultdict(set)
+    post_anchor_keys: dict[tuple[int, int], list[str]] = defaultdict(list)
+
+    for post in posts:
+        seen: set[str] = set()
+        for candidate in _theme_candidates(post.text):
+            normalized = candidate.casefold()
+            if normalized in seen or normalized in _THEME_BLOCKED:
+                continue
+            seen.add(normalized)
+            counts[normalized] += 1
+            weighted[normalized] = weighted.get(normalized, 0.0) + max(post.score, 1.0)
+            max_score[normalized] = max(max_score.get(normalized, 0.0), post.score)
+            display.setdefault(normalized, candidate)
+            candidate_posts[normalized].append(post)
+            candidate_channels[normalized].add(post.channel_id)
+            post_anchor_keys[(post.channel_id, post.msg_id)].append(normalized)
+
+    ordered = sorted(
+        counts,
+        key=lambda key: (
+            -len(candidate_channels[key]),
+            -counts[key],
+            -weighted.get(key, 0.0),
+            len(display[key].split()),
+            display[key].lower(),
+        ),
+    )
+
+    selected: list[str] = []
+    used_tokens: list[set[str]] = []
+    selected_post_sets: list[set[tuple[int, int]]] = []
+    selected_signatures: set[str] = set()
+    anchor_post_sets = {
+        anchor_key: {(post.channel_id, post.msg_id) for post in posts_for_anchor}
+        for anchor_key, posts_for_anchor in candidate_posts.items()
+    }
+    for key in ordered:
+        label = display[key]
+        channel_count = len(candidate_channels[key])
+        if counts[key] < 2 and channel_count < 2 and max_score.get(key, 0.0) < 8:
+            continue
+        token_set = {_theme_token_stem(token) for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", label)}
+        if not token_set:
+            continue
+        if any(token_set <= existing or existing <= token_set for existing in used_tokens):
+            continue
+        post_set = {(post.channel_id, post.msg_id) for post in candidate_posts[key]}
+        if any(
+            len(post_set & existing) / max(1, min(len(post_set), len(existing))) >= 0.6
+            for existing in selected_post_sets
+        ):
+            continue
+
+        label_display = label
+        cluster_posts = sorted(
+            candidate_posts[key],
+            key=lambda post: (post.score, post.date.timestamp()),
+            reverse=True,
+        )
+        partner_display = _best_theme_partner(
+            key,
+            cluster_posts,
+            post_anchor_keys,
+            anchor_post_sets,
+            display,
+        )
+        if partner_display:
+            partner_tokens = {_theme_token_stem(token) for token in re.findall(r"[A-Za-zА-Яа-яЁё0-9+\-]+", partner_display)}
+            if partner_tokens and not (partner_tokens & token_set):
+                label_display = f"{label} / {partner_display}"
+                token_set |= partner_tokens
+
+        label_display = _pulse_theme_label(label_display, cluster_posts)
+        if not label_display:
+            continue
+
+        fact_line = _pulse_fact_from_posts(cluster_posts, label_display)
+        if not fact_line:
+            _, hint_context = _pulse_hint(cluster_posts)
+            if hint_context:
+                fact_line = hint_context
+            else:
+                descriptor_terms = _theme_context_terms(cluster_posts, token_set, max_terms=2)
+                if not descriptor_terms:
+                    continue
+                fact_line = ", ".join(descriptor_terms)
+
+        line = f"{label_display} — {fact_line}"
+        signature = _normalize_pulse_signature(line)
+        if not signature or signature in selected_signatures:
+            continue
+
+        selected.append(line)
+        selected_signatures.add(signature)
+        used_tokens.append(token_set)
+        selected_post_sets.append(post_set)
+        if len(selected) >= max_items:
+            break
+
+    return selected
+
+
+def _quiet_folders(config: dict, sections: list[DigestSection], max_items: int = 5) -> list[str]:
+    shown = {section.folder.casefold() for section in sections}
+    candidates = []
+    for folder in config.get("allowed_folder_names", []):
+        if folder.casefold() in shown:
+            continue
+        tier = _folder_tier(folder, config)
+        if tier not in {"A", "B"} and folder not in {"personal", "work"}:
+            continue
+        candidates.append((0 if folder in {"work", "personal", "eb1", "гребенюк"} else 1, _tier_rank(tier), folder))
+    candidates.sort(key=lambda item: (item[0], item[1], item[2].lower()))
+    return [folder for _, _, folder in candidates[:max_items]]
+
+
+def _lead_from_sections(sections: list[DigestSection], max_items: int = 6) -> list[str]:
+    candidates: list[tuple[tuple[int, int, int, str], str]] = []
+    for section in sections:
+        for item in section.items:
+            key = (
+                0 if _looks_techish(item.summary) else 1,
+                _tier_rank(section.tier),
+                -(1 + len(item.extra_post_urls)),
+                item.channel.lower(),
+            )
+            candidates.append((key, f"{item.channel}: {item.summary}"))
+    candidates.sort(key=lambda item: item[0])
+    lead: list[str] = []
+    seen_channels: set[str] = set()
+    for _, line in candidates:
+        channel = line.split(":", 1)[0].casefold()
+        if channel in seen_channels:
+            continue
+        seen_channels.add(channel)
+        lead.append(line)
+        if len(lead) >= max_items:
+            break
+    return lead
+
+
+def _pick_must_read_items(sections: list[DigestSection], max_items: int = 4) -> list[DigestItem]:
+    candidates: list[tuple[tuple[int, int, int, str], DigestItem]] = []
+    for section in sections:
+        for item in section.items:
+            key = (
+                0 if _looks_techish(item.summary) else 1,
+                _tier_rank(section.tier),
+                -(len(item.also_mentioned) + len(item.extra_post_urls)),
+                item.channel.lower(),
+            )
+            candidates.append((key, item))
+
+    candidates.sort(key=lambda pair: pair[0])
+    chosen: list[DigestItem] = []
+    seen_channels: set[str] = set()
+    for _, item in candidates:
+        channel_key = item.channel.casefold()
+        if channel_key in seen_channels:
+            continue
+        seen_channels.add(channel_key)
+        chosen.append(item)
+        if len(chosen) >= max_items:
+            break
+    return chosen
+
+
+def _shown_post_urls(items: list[DigestItem]) -> set[str]:
+    urls: set[str] = set()
+    for item in items:
+        if item.post_url:
+            urls.add(item.post_url)
+        for extra_url in item.extra_post_urls:
+            if extra_url:
+                urls.add(extra_url)
+    return urls
+
+
+def _build_new_glance(
+    posts: list[Post],
+    sections: list[DigestSection],
+    must_read: list[DigestItem],
+    *,
+    max_items: int = 3,
+) -> list[DigestItem]:
+    shown_urls = _shown_post_urls(must_read)
+    for section in sections:
+        shown_urls.update(_shown_post_urls(section.items))
+
+    leftovers = [
+        post for post in sorted(posts, key=lambda current: (current.date.timestamp(), current.score), reverse=True)
+        if post.url and post.url not in shown_urls and not _is_low_signal_post(post)
+    ]
+
+    by_channel: dict[str, list[Post]] = defaultdict(list)
+    for post in leftovers:
+        by_channel[post.channel_name].append(post)
+
+    items: list[DigestItem] = []
+    for channel_posts in by_channel.values():
+        if len(items) >= max_items:
+            break
+        batch = channel_posts[:2]
+        if len(batch) >= 2:
+            items.append(_grouped_item(batch, {}))
+        else:
+            items.append(_post_to_item(batch[0], {}, kind="new"))
+    return items
+
+
+def _build_llm_context(
+    posts: list[Post],
+    config: dict,
+    digest_type: str,
+    period_start: datetime,
+    period_end: datetime,
+    stats: DigestStats,
+) -> tuple[dict, str]:
+    timezone_name = config.get("timezone", "Europe/Moscow")
+    period = {
+        "start": period_start.isoformat(),
+        "end": period_end.isoformat(),
+        "label": _period_label(period_start, period_end, timezone_name),
+        "timezone": timezone_name,
+    }
+    folder_links = config.get("folder_links", {}) or {}
+    by_folder: dict[str, list[Post]] = defaultdict(list)
+    for post in posts:
+        by_folder[post.folder_name].append(post)
+
+    folders = []
+    for folder_name in sorted(
+        by_folder,
+        key=lambda name: (
+            _tier_rank(_folder_tier(name, config)),
+            -max(post.score for post in by_folder[name]),
+            name.lower(),
+        ),
+    ):
+        folder_posts = sorted(
+            by_folder[folder_name],
+            key=lambda post: (post.score, post.date.timestamp()),
+            reverse=True,
+        )
+        folders.append(
+            {
+                "name": folder_name,
+                "tier": _folder_tier(folder_name, config),
+                "folder_link": folder_links.get(folder_name),
+                "items": [
+                    {
+                        "channel": post.channel_name,
+                        "channel_url": post.channel_url,
+                        "post_url": post.url,
+                        "text": _clean_text(post.text, max_len=320),
+                        "date": post.date.isoformat(),
+                        "score": round(post.score, 2),
+                        "pinned": post.is_pinned,
+                        "position_bucket": _position_bucket(post.channel_position),
+                        "folder": post.folder_name,
+                        "tier": _folder_tier(post.folder_name, config),
+                        "also_mentioned": post.also_mentioned[:4],
+                    }
+                    for post in folder_posts
+                ],
+            }
+        )
+
+    context = {
+        "digest_type": digest_type,
+        "title_hint": _default_title(digest_type),
+        "period": period,
+        "stats": {
+            "channels_in_scope": stats.channels_in_scope,
+            "new_posts_seen": stats.new_posts_seen,
+            "posts_selected": stats.posts_selected,
+        },
+        "allowed_folder_names": config.get("allowed_folder_names", []),
+        "system_folders": config.get("system_folders", []),
+        "folder_tiers": config.get("folder_tiers", {}),
+        "folder_links": folder_links,
+        "folders": folders,
+    }
+    return context, period["label"]
+
+
+def _system_prompt(digest_type: str) -> str:
+    common = (
+        "Ты персональный редактор Telegram Digest для Дениса.\n"
+        "У тебя УЖЕ есть весь нужный контекст. Никогда не проси дополнительные данные, "
+        "не задавай уточняющих вопросов, не обсуждай нехватку информации, не пересказывай правила.\n"
+        "Работай только по переданному JSON-контексту и возвращай только валидный JSON-объект.\n"
+        "Запрещено: markdown fences, HTML, пояснения до/после JSON, фразы вроде "
+        "«мне нужна дополнительная информация».\n"
+        "Правила:\n"
+        "1. Не искажай факты. Если это мнение автора — явно маркируй как мнение.\n"
+        "2. История важнее источника: сначала что произошло, потом кто это дал.\n"
+        "3. Не дублируй тему в нескольких пунктах, если она уже покрыта.\n"
+        "4. Не пиши «два поста», «три поста», не пересказывай экспорт каналов.\n"
+        "5. Пиши как редактор компактной новостной сводки: короткие сюжетные линии, чистый язык, минимум шума.\n"
+        "6. В lead делай storyline bullets, а не raw excerpts и не channel-first narration.\n"
+        "7. В themes делай 4-6 строк формата «Тема — что происходит / почему это линия окна», а не keyword cloud.\n"
+        "8. В must_read верни 2-4 источника, которые действительно стоит открыть первыми.\n"
+        "9. Sections — это радар по папкам, а не второй полный фид.\n"
+        "10. Не копируй посты целиком, не вставляй внешние ссылки, raw URL или служебный мусор.\n"
+        "11. Можно объединять 2-3 поста одного канала в один пункт. В таком случае summary должно звучать "
+        "как короткий обзор, а дополнительные Telegram-ссылки верни в extra_post_urls.\n"
+        "12. Не включай технические status dumps, сервисные сводки, анонсы мероприятий, рекламные посты "
+        "и дневниковые тизеры без полезного сигнала.\n"
+        "13. Если выбор неоднозначный, слегка предпочитай technology / AI / automation / product / work-сигналы.\n"
+        "14. Используй только реальные Telegram-ссылки из контекста. Не придумывай folder_link/channel_url/"
+        "post_url/extra_post_urls.\n"
+        "15. Если окно слабое, честно отрази это в low_signal или в lead.\n"
+        "16. JSON должен строго соответствовать структуре, все массивы должны существовать.\n"
+        "17. У каждого DigestItem обязателен post_url.\n"
+    )
+
+    if digest_type == "morning":
+        return (
+            common
+            + "Сделай короткий утренний снимок: lead 3-5 bullets, must_read 2-3 пункта, "
+            "sections только по самым важным папкам, low_signal коротко при необходимости.\n"
+            'Верни объект с полями: title, period_label, lead, new_glance, must_read, sections, low_signal, model_meta, themes, quiet_folders.\n'
+        )
+    if digest_type == "editorial":
+        return (
+            common
+            + "Сделай полный вечерний editorial digest: executive_summary 2-5 bullets, "
+            "themes 2-6 bullets, must_read 3-10, sections по сильным папкам, low_signal, watchpoints 2-5.\n"
+            'Верни объект с полями: title, period_label, lead, must_read, sections, low_signal, model_meta, '
+            "executive_summary, themes, quiet_folders, new_glance, watchpoints.\n"
+        )
+    return (
+        common
+        + "Сделай подробный interval digest: lead 3-6 storyline bullets, must_read 2-4 пункта "
+        "в логике «что открыть первым», sections по папкам с реальным сигналом, больше разнообразия "
+        "по каналам, low_signal коротко, themes 4-6 тем окна.\n"
+        'Верни объект с полями: title, period_label, lead, new_glance, must_read, sections, low_signal, model_meta, themes, quiet_folders.\n'
+    )
+
+
+def _user_prompt(context: dict) -> str:
+    schema = {
+        "title": "string",
+        "period_label": "string",
+        "lead": ["string"],
+        "new_glance": ["DigestItem"],
+        "must_read": [
+            {
+                "channel": "string",
+                "channel_url": "string|null",
+                "post_url": "string",
+                "extra_post_urls": ["string"],
+                "summary": "string",
+                "kind": "string",
+                "pinned": "bool",
+                "also_mentioned": ["string"],
+            }
+        ],
+        "sections": [
+            {
+                "folder": "string",
+                "tier": "A|B|C",
+                "folder_link": "string|null",
+                "items": "DigestItem[]",
+            }
+        ],
+        "low_signal": ["string"],
+        "model_meta": {},
+        "executive_summary": ["string"],
+        "themes": ["string"],
+        "quiet_folders": ["string"],
+        "watchpoints": ["string"],
+    }
+    return (
+        "Контекст запуска Telegram Digest в JSON. Используй только его.\n"
+        "Если поле не нужно для этого digest_type, верни пустой массив.\n"
+        "Схема ответа:\n"
+        f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+        "Контекст:\n"
+        f"{json.dumps(context, ensure_ascii=False, indent=2)}"
+    )
+
+
+def _has_retry_markers(raw_text: str) -> bool:
+    lowered = raw_text.lower()
+    if has_markdown_fences(raw_text):
+        return True
+    return any(marker in lowered for marker in _CLARIFICATION_MARKERS)
+
+
+def _require_non_empty_string(value, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    cleaned = _clean_text(value, max_len=600)
+    if not cleaned:
+        raise ValueError(f"{field_name} is empty")
+    return cleaned
+
+
+def _require_string_list(value, field_name: str, max_items: int = 10) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list")
+    result: list[str] = []
+    for item in value[:max_items]:
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name} items must be strings")
+        cleaned = _clean_text(item, max_len=400)
+        if cleaned:
+            result.append(cleaned)
+    return result
+
+
+def _validate_item(value: dict, field_name: str) -> DigestItem:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    channel = _require_non_empty_string(value.get("channel", ""), f"{field_name}.channel")
+    post_url = _require_non_empty_string(value.get("post_url", ""), f"{field_name}.post_url")
+    summary = _require_non_empty_string(value.get("summary", ""), f"{field_name}.summary")
+    kind = _require_non_empty_string(value.get("kind", "signal"), f"{field_name}.kind")
+    channel_url = value.get("channel_url")
+    if channel_url is not None and not isinstance(channel_url, str):
+        raise ValueError(f"{field_name}.channel_url must be string|null")
+    extra_post_urls = _require_string_list(value.get("extra_post_urls", []), f"{field_name}.extra_post_urls", max_items=4)
+    folder_item = DigestItem(
+        channel=channel,
+        channel_url=channel_url or None,
+        post_url=post_url,
+        summary=summary,
+        extra_post_urls=extra_post_urls,
+        why_important="",
+        kind=kind,
+        pinned=bool(value.get("pinned", False)),
+        also_mentioned=_require_string_list(value.get("also_mentioned", []), f"{field_name}.also_mentioned", max_items=6),
+    )
+    return folder_item
+
+
+def _validate_sections(value, folder_links: dict[str, str]) -> list[DigestSection]:
+    if not isinstance(value, list):
+        raise ValueError("sections must be a list")
+    sections: list[DigestSection] = []
+    for idx, section in enumerate(value):
+        if not isinstance(section, dict):
+            raise ValueError("section must be an object")
+        folder = _require_non_empty_string(section.get("folder", ""), f"sections[{idx}].folder")
+        tier = _require_non_empty_string(section.get("tier", "C"), f"sections[{idx}].tier").upper()
+        folder_link = section.get("folder_link")
+        if folder_link is not None and not isinstance(folder_link, str):
+            raise ValueError(f"sections[{idx}].folder_link must be string|null")
+        items_value = section.get("items", [])
+        if not isinstance(items_value, list):
+            raise ValueError(f"sections[{idx}].items must be a list")
+        items = [_validate_item(item, f"sections[{idx}].items[{item_idx}]") for item_idx, item in enumerate(items_value)]
+        if not items:
+            continue
+        sections.append(
+            DigestSection(
+                folder=folder,
+                tier=tier,
+                folder_link=folder_link or folder_links.get(folder),
+                items=items,
+            )
+        )
+    return sections
+
+
+def _validate_document_payload(
+    payload: dict,
+    *,
+    digest_type: str,
+    period_label: str,
+    stats: DigestStats,
+    model_meta: ModelMeta,
+    config: dict,
+) -> DigestDocument:
+    if not isinstance(payload, dict):
+        raise ValueError("Digest response is not an object")
+    folder_links = config.get("folder_links", {}) or {}
+    lead = _require_string_list(payload.get("lead", []), "lead", max_items=6)
+    if not lead:
+        raise ValueError("lead is empty")
+    new_glance = [_validate_item(item, f"new_glance[{idx}]") for idx, item in enumerate(payload.get("new_glance", []))]
+    must_read = [_validate_item(item, f"must_read[{idx}]") for idx, item in enumerate(payload.get("must_read", []))]
+    sections = _validate_sections(payload.get("sections", []), folder_links)
+    if not sections and not must_read:
+        raise ValueError("Digest has neither sections nor must_read items")
+    low_signal = _require_string_list(payload.get("low_signal", []), "low_signal", max_items=6)
+
+    executive_summary = []
+    themes = _require_string_list(payload.get("themes", []), "themes", max_items=8)
+    quiet_folders = _require_string_list(payload.get("quiet_folders", []), "quiet_folders", max_items=6)
+    watchpoints = []
+    if digest_type == "editorial":
+        executive_summary = _require_string_list(payload.get("executive_summary", []), "executive_summary", max_items=6)
+        watchpoints = _require_string_list(payload.get("watchpoints", []), "watchpoints", max_items=6)
+        if not executive_summary:
+            raise ValueError("editorial digest is missing executive_summary")
+
+    title = _clean_text(payload.get("title", "") or _default_title(digest_type), max_len=120)
+    raw_period_label = payload.get("period_label")
+    if not isinstance(raw_period_label, str) or not raw_period_label.strip():
+        raw_period_label = period_label
+
+    return DigestDocument(
+        digest_type=digest_type,
+        title=title,
+        period_label=period_label if raw_period_label != period_label else raw_period_label,
+        lead=lead,
+        new_glance=new_glance[:4],
+        must_read=must_read[:10],
+        sections=sections,
+        low_signal=low_signal,
+        model_meta=model_meta,
+        stats=stats,
+        executive_summary=executive_summary,
+        themes=themes,
+        quiet_folders=quiet_folders,
+        watchpoints=watchpoints,
+    )
+
+
+def _count_label(count: int) -> str:
+    if count == 2:
+        return "Два поста"
+    if count == 3:
+        return "Три поста"
+    return "Несколько постов"
+
+
+def _group_summary(posts: list[Post]) -> str:
+    snippets = [_clean_text(post.text, max_len=88) for post in posts[:3]]
+    snippets = [snippet for snippet in snippets if snippet]
+    unique_snippets: list[str] = []
+    seen: set[str] = set()
+    for snippet in snippets:
+        normalized = snippet.casefold()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_snippets.append(snippet)
+
+    snippets = unique_snippets
+    if not snippets:
+        return "Короткие обновления без сильного сигнала."
+    if len(snippets) == 1:
+        return snippets[0]
+    return "; ".join(snippets[:3])
+
+
+def _grouped_item(posts: list[Post], config: dict) -> DigestItem:
+    lead_post = posts[0]
+    extra_urls = [post.url for post in posts[1:4] if post.url]
+    return DigestItem(
+        channel=lead_post.channel_name,
+        channel_url=lead_post.channel_url,
+        post_url=lead_post.url or "",
+        extra_post_urls=extra_urls,
+        summary=_group_summary(posts),
+        why_important="",
+        kind="roundup" if len(posts) > 1 else "signal",
+        pinned=any(post.is_pinned for post in posts),
+        also_mentioned=lead_post.also_mentioned[:4],
+    )
+
+
+def _fallback_items(posts: list[Post], config: dict, limit_per_folder: int) -> list[DigestItem]:
+    by_channel: dict[str, list[Post]] = defaultdict(list)
+    for post in sorted(posts, key=lambda current: (current.score, current.date.timestamp()), reverse=True):
+        by_channel[post.channel_name].append(post)
+
+    channel_groups = sorted(
+        by_channel.values(),
+        key=lambda group: (
+            group[0].score,
+            len(group),
+            group[0].date.timestamp(),
+        ),
+        reverse=True,
+    )
+
+    items: list[DigestItem] = []
+    for group in channel_groups:
+        if len(items) >= limit_per_folder:
+            break
+        grouped_posts = [post for post in group if post.url][:3]
+        if not grouped_posts:
+            continue
+        if len(grouped_posts) >= 2:
+            items.append(_grouped_item(grouped_posts, config))
+        else:
+            items.append(_post_to_item(grouped_posts[0], config))
+    return items
+
+
+def _fallback_sections(posts: list[Post], config: dict, limit_per_folder: int) -> list[DigestSection]:
+    by_folder: dict[str, list[Post]] = defaultdict(list)
+    for post in posts:
+        by_folder[post.folder_name].append(post)
+
+    sections: list[DigestSection] = []
+    folder_links = config.get("folder_links", {}) or {}
+    for folder_name in sorted(
+        by_folder,
+        key=lambda name: (
+            _tier_rank(_folder_tier(name, config)),
+            -sum(
+                post.score
+                for post in sorted(
+                    by_folder[name],
+                    key=lambda current: (current.score, current.date.timestamp()),
+                    reverse=True,
+                )[:3]
+            ),
+            name.lower(),
+        ),
+    ):
+        items = _fallback_items(by_folder[folder_name], config, limit_per_folder=limit_per_folder)
+        if items:
+            sections.append(
+                DigestSection(
+                    folder=folder_name,
+                    tier=_folder_tier(folder_name, config),
+                    folder_link=folder_links.get(folder_name),
+                    items=items,
+                )
+            )
+    return sections
+
+
+def _local_fallback(
+    posts: list[Post],
+    *,
+    digest_type: str,
+    period_label: str,
+    stats: DigestStats,
+    config: dict,
+) -> DigestDocument:
+    filtered_posts = [post for post in posts if not _is_low_signal_post(post)] or posts
+    max_sections = 4 if digest_type == "morning" else 7
+    limit_per_folder = 2 if digest_type == "morning" else 4
+    sections = _fallback_sections(filtered_posts, config, limit_per_folder=limit_per_folder)[:max_sections]
+    must_read = _pick_must_read_items(sections, max_items=3 if digest_type == "morning" else 4)
+    if not must_read and digest_type in {"morning", "editorial", "interval"}:
+        must_read = [_post_to_item(post, config, kind="must_read") for post in filtered_posts[: min(4, len(filtered_posts))]]
+
+    lead = _lead_from_sections(sections)[:6]
+    low_signal = []
+    if len(filtered_posts) <= 4:
+        low_signal.append("Окно было тихим: сильных новых сигналов немного.")
+
+    executive_summary = []
+    themes = _extract_themes(filtered_posts)
+    quiet_folders = _quiet_folders(config, sections)
+    new_glance = _build_new_glance(filtered_posts, sections, must_read)
+    watchpoints = []
+    if digest_type == "editorial":
+        executive_summary = lead[:3]
+        watchpoints = [
+            f"Следить за развитием темы из папки {section.folder.lower()}."
+            for section in sections[:3]
+        ]
+
+    return DigestDocument(
+        digest_type=digest_type,
+        title=_default_title(digest_type),
+        period_label=period_label,
+        lead=lead or ["Новых сильных сигналов мало."],
+        new_glance=new_glance,
+        must_read=must_read,
+        sections=sections,
+        low_signal=low_signal,
+        model_meta=ModelMeta(
+            model_id="local",
+            tier=MODEL_EDITORIAL if digest_type == "editorial" else MODEL,
+            local_fallback=True,
+        ),
+        stats=stats,
+        executive_summary=executive_summary,
+        themes=themes,
+        quiet_folders=quiet_folders,
+        watchpoints=watchpoints,
+    )
+
+
+async def summarize(
+    posts: list[Post],
+    *,
+    config: dict,
+    digest_type: str,
+    period_start: datetime,
+    period_end: datetime,
+    stats: DigestStats,
+) -> DigestDocument:
+    """
+    Produce one validated structured digest document for any digest type.
+    """
+    context, period_label = _build_llm_context(
+        posts,
+        config,
+        digest_type,
+        period_start,
+        period_end,
+        stats,
+    )
+    model = MODEL_EDITORIAL if digest_type == "editorial" else MODEL
+    system = _system_prompt(digest_type)
+    user = _user_prompt(context)
+    retry_note = (
+        "\n\nНапоминание: ты уже получил полный контекст. "
+        "Запрещено задавать вопросы, обсуждать нехватку данных, "
+        "возвращать markdown fences или что-либо кроме JSON."
+    )
+
+    async with aiohttp.ClientSession() as session:
+        for attempt in range(2):
+            try:
+                completion = await call_chat_completion(
+                    session,
+                    url=OMNIROUTE_URL,
+                    api_key=OMNIROUTE_API_KEY,
+                    payload={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": user + (retry_note if attempt else "")},
+                        ],
+                        "max_tokens": 2200 if digest_type == "editorial" else 1600,
+                        "temperature": 0.2,
+                        "stream": False,
+                    },
+                    timeout_seconds=120,
+                    default_model=model,
+                )
+            except Exception as exc:
+                logger.warning("Digest LLM call failed on attempt %s: %s", attempt + 1, exc)
+                continue
+
+            raw_text = completion.text.strip()
+            if not raw_text:
+                logger.warning("Empty digest response on attempt %s", attempt + 1)
+                continue
+            if _has_retry_markers(raw_text):
+                logger.warning("Digest response contained retry markers on attempt %s", attempt + 1)
+                continue
+
+            try:
+                payload = extract_json_payload(raw_text)
+                return _validate_document_payload(
+                    payload,
+                    digest_type=digest_type,
+                    period_label=period_label,
+                    stats=stats,
+                    model_meta=ModelMeta(
+                        model_id=completion.model_id,
+                        tier=model,
+                        prompt_tokens=completion.prompt_tokens,
+                        completion_tokens=completion.completion_tokens,
+                        provider_fallback=completion.provider_fallback,
+                        local_fallback=False,
+                    ),
+                    config=config,
+                )
+            except Exception as exc:
+                logger.warning("Digest validation failed on attempt %s: %s", attempt + 1, exc)
+
+    logger.error("Falling back to deterministic local digest for %s", digest_type)
+    return _local_fallback(
+        posts,
+        digest_type=digest_type,
+        period_label=period_label,
+        stats=stats,
+        config=config,
+    )

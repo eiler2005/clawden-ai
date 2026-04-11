@@ -78,6 +78,15 @@ Messages arrive via Telegram → routed through OpenClaw gateway → Беньк�
 │  │    obsidian/   ←  /opt/obsidian-vault        │                      │
 │  └──────────────────────────────────────────────┘                      │
 │                                                                         │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  telethon-digest  (Docker)                  │                      │
+│  │  /opt/telethon-digest                       │                      │
+│  │                                              │                      │
+│  │  Telethon user session → channel folders    │                      │
+│  │  OmniRoute medium → Bot API topic post      │                      │
+│  │  schedule: 08/09/12/15/19/21 Europe/Moscow  │                      │
+│  └──────────────────────────────────────────────┘                      │
+│                                                                         │
 │  /opt/obsidian-vault/   ← Syncthing bidirectional sync with Mac        │
 └─────────────────────────────────────────────────────────────────────────┘
         │              │ (primary)         │ (routing)         │
@@ -151,6 +160,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 ## Features
 
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
+- **Telegram channel digest** — Telethon reads subscribed channels and posts scheduled summaries to the `telegram-digest` topic
 - **Voice messages** — Whisper transcription baked into container
 - **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
 - **Three-layer memory** — live workspace → raw decision log → LightRAG knowledge graph
@@ -171,7 +181,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 | Routing providers | Kiro (Claude, AWS Builder ID) · OpenRouter hub · Gemini |
 | Knowledge graph | [LightRAG](https://github.com/HKUDS/LightRAG) + Gemini embeddings |
 | Voice transcription | Whisper (ffmpeg, baked into image) |
-| Interface | Telegram Bot API |
+| Interface | Telegram Bot API + Telethon MTProto digest reader/poster |
 | Reverse proxy | Caddy 2 (mTLS client cert auth) |
 | Notes sync | Obsidian ↔ [Syncthing](https://syncthing.net) (bidirectional) |
 | Host | Hetzner CX23, Ubuntu 24.04 |
@@ -245,6 +255,7 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 .
 ├── artifacts/openclaw/
 │   ├── openclaw.json               config template (all secrets as <placeholders>)
+│   ├── telegram-surfaces.redacted.json  Telegram topology and memory/RAG policy draft
 │   ├── caddy.redacted.Caddyfile    reverse proxy config template
 │   ├── docker-compose.redacted.yml compose template
 │   ├── env.redacted.example        env vars template
@@ -252,6 +263,13 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 ├── artifacts/omniroute/
 │   ├── docker-compose.override.yml compose override template (adds OmniRoute service)
 │   └── omniroute.env.example       env template with secret generation instructions
+├── artifacts/telethon-digest/
+│   ├── docker-compose.yml          standalone digest compose template
+│   ├── Dockerfile                  Python service image
+│   ├── *.py                        Telethon reader, scorer, summarizer, poster
+│   ├── config.example.json         redacted folder config template
+│   ├── sync-openclaw-cron-jobs.sh  server-side OpenClaw Cron Jobs sync helper
+│   └── telethon.env.example        redacted runtime env template
 ├── docs/
 │   ├── 01-server-state.md          current server snapshot (services, ports, images)
 │   ├── 02-openclaw-installation.md deployment decisions and auth setup
@@ -261,7 +279,9 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── 08-git-and-redaction-policy.md   git safety rules, secret handling
 │   ├── 09-workspace-setup.md       bot personalisation guide
 │   ├── 10-memory-architecture.md   three-layer memory system design
-│   └── 11-lightrag-setup.md        LightRAG deployment and ingestion guide
+│   ├── 11-lightrag-setup.md        LightRAG deployment and ingestion guide
+│   ├── 12-telegram-channel-architecture.md  Telegram topology, permissions, RAG gates
+│   └── 13-ai-assistant-architecture.md      model routing and assistant behavior
 ├── scripts/
 │   ├── deploy-workspace.sh         rsync workspace/ to server
 │   ├── setup-lightrag.sh           provision LightRAG on server
@@ -274,6 +294,7 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── AGENTS.md                   session protocol, memory rules, boot sequence
 │   ├── BOOT.md                     8-step startup checklist
 │   ├── TOOLS.md                    available tools + lightrag_query reference
+│   ├── TELEGRAM_POLICY.md          Telegram runtime policy for surfaces and memory gates
 │   ├── HEARTBEAT.md                periodic maintenance tasks
 │   ├── INDEX.md                    master memory catalog
 │   ├── memory/INDEX.md             daily note index (bot-managed)
@@ -325,6 +346,13 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '/opt/lightrag/scripts/lightrag-ingest.sh'
 
 # Check Obsidian vault sync status (Syncthing)
 open http://127.0.0.1:8384
+
+# Telethon Digest logs
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/telethon-digest && sudo docker compose logs --tail=100 telethon-digest'
+
+# OpenClaw Cron Jobs
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.
@@ -351,7 +379,9 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 4. [`docs/03-operations.md`](docs/03-operations.md) — day-to-day ops commands
 5. [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) — memory system design
 6. [`docs/11-lightrag-setup.md`](docs/11-lightrag-setup.md) — LightRAG knowledge graph
-7. [`docs/08-git-and-redaction-policy.md`](docs/08-git-and-redaction-policy.md) — git safety rules
+7. [`docs/12-telegram-channel-architecture.md`](docs/12-telegram-channel-architecture.md) — Telegram topology and ingestion policy
+8. [`docs/13-ai-assistant-architecture.md`](docs/13-ai-assistant-architecture.md) — assistant model routing and behavior
+9. [`docs/08-git-and-redaction-policy.md`](docs/08-git-and-redaction-policy.md) — git safety rules
 
 ---
 

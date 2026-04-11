@@ -1,0 +1,37 @@
+services:
+  telethon-digest:
+    container_name: telethon-digest
+    build: .
+    restart: unless-stopped
+    env_file: telethon.env
+    volumes:
+      - telethon-sessions:/app/sessions
+      - telethon-state:/app/state
+      - ./config.json:/app/config.json
+      - "/opt/obsidian-vault/Telegram Digest:/app/obsidian/Telegram Digest"
+    networks:
+      - openclaw_default
+
+  telethon-digest-cron-bridge:
+    container_name: telethon-digest-cron-bridge
+    build: .
+    restart: unless-stopped
+    env_file: telethon.env
+    command: ["python", "cron_bridge.py"]
+    volumes:
+      - telethon-sessions:/app/sessions
+      - telethon-state:/app/state
+      - ./config.json:/app/config.json
+      - "/opt/obsidian-vault/Telegram Digest:/app/obsidian/Telegram Digest"
+    networks:
+      - openclaw_default
+
+networks:
+  openclaw_default:
+    external: true
+
+volumes:
+  telethon-sessions:
+    name: telethon-sessions
+  telethon-state:
+    name: telethon-state

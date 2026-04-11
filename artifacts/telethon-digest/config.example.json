@@ -1,0 +1,69 @@
+{
+  "read_batch_size": 10,
+  "read_batch_delay_sec": 1.5,
+  "lookahead_hours": 4,
+  "min_score": 2,
+  "top_posts_for_llm": 42,
+  "schedule_hours": [8, 9, 12, 15, 19, 21],
+  "digest_types": {
+    "8":  "morning",
+    "9":  "interval",
+    "12": "interval",
+    "15": "interval",
+    "19": "interval",
+    "21": "editorial"
+  },
+  "timezone": "Europe/Moscow",
+  "pin_boost": 4,
+  "dedup_enabled": true,
+  "dedup_method": "llm",
+  "channel_position_boost": {"top_1_4": 3, "top_5_8": 2, "top_9_12": 1, "other": 0},
+  "folder_tiers": {
+    "A": {"folders": ["news", "fintech", "investing", "startups", "growth.me", "evolution", "eb1", "work", "гребенюк"], "priority": 5},
+    "B": {"folders": ["faang", "Fashion", "coffee", "property", "personal"], "priority": 3},
+    "C": {"priority": 1}
+  },
+  "folder_links": {
+    "news": null,
+    "fintech": null
+  },
+  "persistence": {
+    "enabled": true,
+    "obsidian_root": "Telegram Digest",
+    "persist_digest_types": ["interval", "editorial"],
+    "curation_enabled": true,
+    "immediate_lightrag_ingest": true
+  },
+  "system_folders": ["All Chats", "Личные", "Новые", "Archived Chats", "Saved Messages", "Ben'ka_Bot"],
+  "read_only": true,
+  "require_explicit_allowlist": true,
+  "read_broadcast_channels_only": true,
+  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "work", "eb1", "гребенюк", "personal", "faang"],
+  "allowed_channel_ids": [],
+  "excluded_folder_names": [],
+  "excluded_channel_ids": [],
+  "folders": [
+    {
+      "name": "VIP",
+      "priority": 3,
+      "channels": [
+        {"id": -1001234567890, "name": "Example Channel A"},
+        {"id": -1001234567891, "name": "Example Channel B"}
+      ]
+    },
+    {
+      "name": "Finance",
+      "priority": 2,
+      "channels": [
+        {"id": -1001234567892, "name": "Example Finance Channel"}
+      ]
+    },
+    {
+      "name": "Tech",
+      "priority": 1,
+      "channels": [
+        {"id": -1001234567893, "name": "Example Tech Channel"}
+      ]
+    }
+  ]
+}

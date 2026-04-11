@@ -8,6 +8,16 @@
     "trustedProxies": ["<docker-bridge-gateway-ip>"],
     "allowRealIpFallback": false
   },
+  "cron": {
+    "enabled": true,
+    "store": "~/.openclaw/cron/jobs.json",
+    "maxConcurrentRuns": 1,
+    "sessionRetention": "24h",
+    "runLog": {
+      "maxBytes": "2mb",
+      "keepLines": 2000
+    }
+  },
   "tools": {
     "profile": "messaging",
     "exec": {
@@ -58,7 +68,12 @@
     "defaults": {
       "workspace": "/home/node/.openclaw/workspace",
       "model": {
-        "primary": "openai-codex/gpt-5.4"
+        "primary": "openai-codex/gpt-5.4",
+        "fallbacks": [
+          "omniroute/smart",
+          "omniroute/medium",
+          "omniroute/light"
+        ]
       }
     }
   },
@@ -73,9 +88,17 @@
         "*": {
           "requireMention": true
         },
-        "<supergroup-chat-id>": {
+        "<ops-supergroup-chat-id>": {
           "requireMention": false,
           "groupPolicy": "open"
+        },
+        "<family-chat-id>": {
+          "requireMention": true,
+          "groupPolicy": "allowlist"
+        },
+        "<sandbox-chat-id>": {
+          "requireMention": false,
+          "groupPolicy": "allowlist"
         }
       },
       "groupPolicy": "allowlist",

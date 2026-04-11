@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OPENCLAW_CRON_STORE="${OPENCLAW_CRON_STORE:-/opt/openclaw/config/cron/jobs.json}"
+OPENCLAW_CRON_AGENT="${OPENCLAW_CRON_AGENT:-main}"
+OPENCLAW_CRON_TZ="${OPENCLAW_CRON_TZ:-Europe/Moscow}"
+TELETHON_ENV_FILE="${TELETHON_ENV_FILE:-/opt/telethon-digest/telethon.env}"
+DIGEST_CRON_BRIDGE_URL="${DIGEST_CRON_BRIDGE_URL:-http://telethon-digest-cron-bridge:8091/trigger}"
+declare -a OPENCLAW_CMD=()
+
+DIGEST_CRON_BRIDGE_TOKEN="${DIGEST_CRON_BRIDGE_TOKEN:-}"
+if [[ -z "$DIGEST_CRON_BRIDGE_TOKEN" && -r "$TELETHON_ENV_FILE" ]]; then
+  DIGEST_CRON_BRIDGE_TOKEN="$(awk -F= '/^DIGEST_CRON_BRIDGE_TOKEN=/{print substr($0, length($1)+2)}' "$TELETHON_ENV_FILE" | tail -n1)"
+fi
+if [[ -z "$DIGEST_CRON_BRIDGE_TOKEN" && -f "$TELETHON_ENV_FILE" ]] && command -v sudo >/dev/null 2>&1; then
+  DIGEST_CRON_BRIDGE_TOKEN="$(sudo awk -F= '/^DIGEST_CRON_BRIDGE_TOKEN=/{print substr($0, length($1)+2)}' "$TELETHON_ENV_FILE" | tail -n1)"
+fi
+if [[ -z "$DIGEST_CRON_BRIDGE_TOKEN" ]]; then
+  echo "DIGEST_CRON_BRIDGE_TOKEN is missing. Set it in $TELETHON_ENV_FILE or the environment." >&2
+  exit 1
+fi
+
+if [[ -n "${OPENCLAW_BIN:-}" ]]; then
+  OPENCLAW_CMD=("$OPENCLAW_BIN")
+elif command -v openclaw >/dev/null 2>&1; then
+  OPENCLAW_CMD=(openclaw)
+else
+  if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'openclaw-openclaw-gateway-1'; then
+    OPENCLAW_CMD=(docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw)
+  else
+    echo "openclaw CLI not found in PATH and gateway container fallback is unavailable." >&2
+    exit 1
+  fi
+fi
+
+run_openclaw() {
+  "${OPENCLAW_CMD[@]}" "$@"
+}
+
+read_existing_job_ids() {
+  local raw_json=""
+  if [[ -r "$OPENCLAW_CRON_STORE" ]]; then
+    raw_json="$(cat "$OPENCLAW_CRON_STORE")"
+  elif command -v sudo >/dev/null 2>&1; then
+    raw_json="$(sudo cat "$OPENCLAW_CRON_STORE" 2>/dev/null || true)"
+  fi
+
+  python3 - <<'PY' <<<"$raw_json"
+import json
+import sys
+
+managed_names = {
+    "Telethon Digest · 08:00 Morning brief",
+    "Telethon Digest · 09:00 Regular digest",
+    "Telethon Digest · 12:00 Regular digest",
+    "Telethon Digest · 15:00 Regular digest",
+    "Telethon Digest · 19:00 Regular digest",
+    "Telethon Digest · 21:00 Evening editorial",
+}
+raw = sys.stdin.read().strip()
+if not raw:
+    raise SystemExit(0)
+try:
+    data = json.loads(raw)
+except Exception:
+    raise SystemExit(0)
+jobs = data.get("jobs", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+for job in jobs:
+    if isinstance(job, dict) and job.get("name") in managed_names and job.get("jobId"):
+        print(job["jobId"])
+PY
+}
+
+remove_old_jobs() {
+  while IFS= read -r job_id; do
+    [[ -n "$job_id" ]] || continue
+    run_openclaw cron remove "$job_id" >/dev/null
+  done < <(read_existing_job_ids)
+}
+
+add_job() {
+  local name="$1"
+  local cron_expr="$2"
+  local digest_type="$3"
+  local description="$4"
+  local message
+
+  printf -v message '%s' "Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
+
+Rules:
+- Work only on this task.
+- Use exec for exactly one command.
+- Do not modify files.
+- Do not ask clarifying questions.
+- Keep the reply short and factual.
+
+Command:
+python3 - <<'PY'
+import json
+import urllib.request
+
+url = ${DIGEST_CRON_BRIDGE_URL@Q}
+token = ${DIGEST_CRON_BRIDGE_TOKEN@Q}
+payload = {\"digest_type\": ${digest_type@Q}}
+req = urllib.request.Request(
+    url,
+    data=json.dumps(payload).encode(\"utf-8\"),
+    headers={
+        \"Authorization\": f\"Bearer {token}\",
+        \"Content-Type\": \"application/json\",
+    },
+    method=\"POST\",
+)
+with urllib.request.urlopen(req, timeout=3600) as resp:
+    print(resp.read().decode(\"utf-8\"))
+PY
+
+Report:
+- digest type
+- bridge HTTP result
+- whether Telegram posting appears successful from the bridge response
+- first actionable error if the run failed"
+
+  run_openclaw cron add \
+    --name "$name" \
+    --description "$description" \
+    --cron "$cron_expr" \
+    --tz "$OPENCLAW_CRON_TZ" \
+    --exact \
+    --session isolated \
+    --agent "$OPENCLAW_CRON_AGENT" \
+    --tools exec,read \
+    --light-context \
+    --message "$message" \
+    --no-deliver
+}
+
+remove_old_jobs
+
+add_job "Telethon Digest · 08:00 Morning brief" "0 8 * * *" "morning" "Morning brief for Telegram Digest"
+add_job "Telethon Digest · 09:00 Regular digest" "0 9 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 12:00 Regular digest" "0 12 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 15:00 Regular digest" "0 15 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 19:00 Regular digest" "0 19 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 21:00 Evening editorial" "0 21 * * *" "editorial" "Evening editorial digest"
+
+echo "OpenClaw cron jobs synced for Telethon Digest."
