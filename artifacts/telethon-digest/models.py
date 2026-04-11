@@ -66,6 +66,8 @@ class DigestStats:
     new_posts_seen: int
     posts_selected: int
     active_channels_seen: int = 0
+    folder_message_counts: dict[str, int] = field(default_factory=dict)
+    folder_channel_counts: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

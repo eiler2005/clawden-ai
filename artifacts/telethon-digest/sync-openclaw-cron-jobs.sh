@@ -6,6 +6,7 @@ OPENCLAW_CRON_AGENT="${OPENCLAW_CRON_AGENT:-main}"
 OPENCLAW_CRON_TZ="${OPENCLAW_CRON_TZ:-Europe/Moscow}"
 TELETHON_ENV_FILE="${TELETHON_ENV_FILE:-/opt/telethon-digest/telethon.env}"
 DIGEST_CRON_BRIDGE_URL="${DIGEST_CRON_BRIDGE_URL:-http://telethon-digest-cron-bridge:8091/trigger}"
+DIGEST_CRON_TIMEOUT_SECONDS="${DIGEST_CRON_TIMEOUT_SECONDS:-1800}"
 declare -a OPENCLAW_CMD=()
 
 DIGEST_CRON_BRIDGE_TOKEN="${DIGEST_CRON_BRIDGE_TOKEN:-}"
@@ -45,8 +46,9 @@ read_existing_job_ids() {
     raw_json="$(sudo cat "$OPENCLAW_CRON_STORE" 2>/dev/null || true)"
   fi
 
-  python3 - <<'PY' <<<"$raw_json"
+  RAW_JSON="$raw_json" python3 - <<'PY'
 import json
+import os
 import sys
 
 managed_names = {
@@ -57,7 +59,7 @@ managed_names = {
     "Telethon Digest · 19:00 Regular digest",
     "Telethon Digest · 21:00 Evening editorial",
 }
-raw = sys.stdin.read().strip()
+raw = os.environ.get("RAW_JSON", "").strip()
 if not raw:
     raise SystemExit(0)
 try:
@@ -85,7 +87,7 @@ add_job() {
   local description="$4"
   local message
 
-  printf -v message '%s' "Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
+  printf -v message '%s' "/compact Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
 
 Rules:
 - Work only on this task.
@@ -119,7 +121,9 @@ Report:
 - digest type
 - bridge HTTP result
 - whether Telegram posting appears successful from the bridge response
-- first actionable error if the run failed"
+- first actionable error if the run failed
+
+If the bridge returns 409 digest_already_running, report that another digest is still in progress instead of calling it a hang."
 
   run_openclaw cron add \
     --name "$name" \
@@ -131,6 +135,7 @@ Report:
     --agent "$OPENCLAW_CRON_AGENT" \
     --tools exec,read \
     --light-context \
+    --timeout-seconds "$DIGEST_CRON_TIMEOUT_SECONDS" \
     --message "$message" \
     --no-deliver
 }

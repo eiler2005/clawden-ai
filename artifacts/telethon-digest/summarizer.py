@@ -179,7 +179,23 @@ _PULSE_VERBISH_RE = re.compile(
     r"выпустила|запустил|запустила|приводнился|приводнилась|заявил|заявила|обсуждают|"
     r"усиливает|вышел|вышла|показал|показала|собрала|собрал|разбирают|жалуются|"
     r"готовит|готовят|продвигает|получила|перешли|передали|взяла|получают|растёт|"
+    r"объявил|объявила|объявили|смещается|снижается|снизилась|растет|запретил|запретила|"
+    r"открывает|открыла|поднял|подняла|вернул|вернула|перешла|перешел|ускоряет|"
     r"accelerates|launched|released|announced|discussed|discusses|arrived)\b",
+    re.I,
+)
+_PULSE_GENERIC_FACT_MARKERS = (
+    "политическая борьба и сигналы",
+    "платежи, токенизация, сделки",
+    "внутренняя и цифровая повестка",
+    "рынок креатива и вакансии",
+    "open-source инструменты и агенты",
+    "бенчмарки, хаки, уязвимости",
+    "доступ, ограничения, обход",
+    "переговоры на фоне напряженности",
+)
+_PULSE_GARBAGE_RE = re.compile(
+    r"\b(allowed|absolut[eа]|абсолюте|call|and|white|белого|белый|версию)\b",
     re.I,
 )
 
@@ -456,6 +472,58 @@ def _normalize_pulse_signature(line: str) -> str:
     return " ".join(tokens[:8])
 
 
+def _is_fact_like_pulse(text: str) -> bool:
+    cleaned = re.sub(r"\s+", " ", text or "").strip(" •-")
+    if len(cleaned) < 18 or len(cleaned) > 170:
+        return False
+    if _PULSE_BAG_RE.match(cleaned):
+        return False
+    if _PULSE_SKIP_RE.search(cleaned) or _PULSE_GARBAGE_RE.search(cleaned):
+        return False
+    lowered = cleaned.casefold()
+    if any(marker in lowered for marker in _PULSE_GENERIC_FACT_MARKERS):
+        return False
+    if "," in cleaned and not (_PULSE_VERBISH_RE.search(cleaned) or re.search(r"\d", cleaned)):
+        return False
+    if not (_PULSE_VERBISH_RE.search(cleaned) or re.search(r"\d", cleaned)):
+        return False
+    return len(cleaned.split()) >= 4
+
+
+def _sanitize_theme_line(line: str) -> str:
+    cleaned = _clean_text(line, max_len=220).lstrip("• ").strip()
+    if not cleaned:
+        return ""
+    parts = re.split(r"\s+[—-]\s+", cleaned, maxsplit=1)
+    if len(parts) != 2:
+        return ""
+    theme, fact = parts[0].strip(), parts[1].strip()
+    if not theme or not fact or len(theme) > 42:
+        return ""
+    if _PULSE_GARBAGE_RE.search(theme):
+        return ""
+    if not _is_fact_like_pulse(fact):
+        return ""
+    return f"{theme} — {fact}"
+
+
+def _sanitize_theme_lines(lines: list[str], max_items: int = 6) -> list[str]:
+    cleaned_lines: list[str] = []
+    seen_signatures: set[str] = set()
+    for line in lines:
+        cleaned = _sanitize_theme_line(line)
+        if not cleaned:
+            continue
+        signature = _normalize_pulse_signature(cleaned)
+        if not signature or signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        cleaned_lines.append(cleaned)
+        if len(cleaned_lines) >= max_items:
+            break
+    return cleaned_lines
+
+
 def _theme_context_terms(posts: list[Post], blocked_terms: set[str], max_terms: int = 3) -> list[str]:
     term_posts: dict[str, set[tuple[int, int]]] = defaultdict(set)
     term_channels: dict[str, set[int]] = defaultdict(set)
@@ -654,16 +722,11 @@ def _extract_themes(posts: list[Post], max_items: int = 6) -> list[str]:
 
         fact_line = _pulse_fact_from_posts(cluster_posts, label_display)
         if not fact_line:
-            _, hint_context = _pulse_hint(cluster_posts)
-            if hint_context:
-                fact_line = hint_context
-            else:
-                descriptor_terms = _theme_context_terms(cluster_posts, token_set, max_terms=2)
-                if not descriptor_terms:
-                    continue
-                fact_line = ", ".join(descriptor_terms)
+            continue
 
-        line = f"{label_display} — {fact_line}"
+        line = _sanitize_theme_line(f"{label_display} — {fact_line}")
+        if not line:
+            continue
         signature = _normalize_pulse_signature(line)
         if not signature or signature in selected_signatures:
             continue
@@ -675,21 +738,30 @@ def _extract_themes(posts: list[Post], max_items: int = 6) -> list[str]:
         if len(selected) >= max_items:
             break
 
-    return selected
+    return _sanitize_theme_lines(selected, max_items=max_items)
 
 
-def _quiet_folders(config: dict, sections: list[DigestSection], max_items: int = 5) -> list[str]:
+def _quiet_folders(config: dict, sections: list[DigestSection], stats: DigestStats, max_items: int = 5) -> list[str]:
     shown = {section.folder.casefold() for section in sections}
     candidates = []
-    for folder in config.get("allowed_folder_names", []):
+    active_folders = stats.folder_message_counts or {}
+    for folder, message_count in active_folders.items():
         if folder.casefold() in shown:
             continue
         tier = _folder_tier(folder, config)
         if tier not in {"A", "B"} and folder not in {"personal", "work"}:
             continue
-        candidates.append((0 if folder in {"work", "personal", "eb1", "гребенюк"} else 1, _tier_rank(tier), folder))
-    candidates.sort(key=lambda item: (item[0], item[1], item[2].lower()))
-    return [folder for _, _, folder in candidates[:max_items]]
+        candidates.append(
+            (
+                0 if folder in {"work", "personal", "eb1", "гребенюк"} else 1,
+                _tier_rank(tier),
+                -message_count,
+                folder.lower(),
+                folder,
+            )
+        )
+    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+    return [folder for *_, folder in candidates[:max_items]]
 
 
 def _lead_from_sections(sections: list[DigestSection], max_items: int = 6) -> list[str]:
@@ -853,6 +925,22 @@ def _build_llm_context(
             "new_posts_seen": stats.new_posts_seen,
             "posts_selected": stats.posts_selected,
         },
+        "active_folders": [
+            {
+                "name": folder,
+                "messages": stats.folder_message_counts.get(folder, 0),
+                "channels": stats.folder_channel_counts.get(folder, 0),
+                "tier": _folder_tier(folder, config),
+            }
+            for folder in sorted(
+                stats.folder_message_counts,
+                key=lambda name: (
+                    _tier_rank(_folder_tier(name, config)),
+                    -stats.folder_message_counts.get(name, 0),
+                    name.lower(),
+                ),
+            )
+        ],
         "allowed_folder_names": config.get("allowed_folder_names", []),
         "system_folders": config.get("system_folders", []),
         "folder_tiers": config.get("folder_tiers", {}),
@@ -877,7 +965,8 @@ def _system_prompt(digest_type: str) -> str:
         "4. Не пиши «два поста», «три поста», не пересказывай экспорт каналов.\n"
         "5. Пиши как редактор компактной новостной сводки: короткие сюжетные линии, чистый язык, минимум шума.\n"
         "6. В lead делай storyline bullets, а не raw excerpts и не channel-first narration.\n"
-        "7. В themes делай 4-6 строк формата «Тема — что происходит / почему это линия окна», а не keyword cloud.\n"
+        "7. В themes делай 4-6 строк формата «Тема — конкретный факт / развитие». "
+        "Никаких abstract labels, keyword cloud, bags of nouns или строк без проверяемого сюжета.\n"
         "8. В must_read верни 2-4 источника, которые действительно стоит открыть первыми.\n"
         "9. Sections — это радар по папкам, а не второй полный фид.\n"
         "10. Не копируй посты целиком, не вставляй внешние ссылки, raw URL или служебный мусор.\n"
@@ -1053,6 +1142,7 @@ def _validate_document_payload(
     stats: DigestStats,
     model_meta: ModelMeta,
     config: dict,
+    posts: list[Post],
 ) -> DigestDocument:
     if not isinstance(payload, dict):
         raise ValueError("Digest response is not an object")
@@ -1068,8 +1158,10 @@ def _validate_document_payload(
     low_signal = _require_string_list(payload.get("low_signal", []), "low_signal", max_items=6)
 
     executive_summary = []
-    themes = _require_string_list(payload.get("themes", []), "themes", max_items=8)
-    quiet_folders = _require_string_list(payload.get("quiet_folders", []), "quiet_folders", max_items=6)
+    themes = _sanitize_theme_lines(_require_string_list(payload.get("themes", []), "themes", max_items=8), max_items=8)
+    if not themes:
+        themes = _extract_themes(posts, max_items=6)
+    quiet_folders = _quiet_folders(config, sections, stats)
     watchpoints = []
     if digest_type == "editorial":
         executive_summary = _require_string_list(payload.get("executive_summary", []), "executive_summary", max_items=6)
@@ -1231,7 +1323,7 @@ def _local_fallback(
 
     executive_summary = []
     themes = _extract_themes(filtered_posts)
-    quiet_folders = _quiet_folders(config, sections)
+    quiet_folders = _quiet_folders(config, sections, stats)
     new_glance = _build_new_glance(filtered_posts, sections, must_read)
     watchpoints = []
     if digest_type == "editorial":
@@ -1340,6 +1432,7 @@ async def summarize(
                         local_fallback=False,
                     ),
                     config=config,
+                    posts=posts,
                 )
             except Exception as exc:
                 logger.warning("Digest validation failed on attempt %s: %s", attempt + 1, exc)

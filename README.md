@@ -353,6 +353,10 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/telethon-digest && sudo docker co
 # OpenClaw Cron Jobs
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+
+# Telethon Digest cron bridge health/status
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8091/health && echo && curl -s http://127.0.0.1:8091/status'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.

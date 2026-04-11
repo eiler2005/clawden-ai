@@ -226,6 +226,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - output target: `telegram-digest` topic in `Benka_Clawbot_SuperGroup`
 - schedule: OpenClaw Cron Jobs at 08:00, 09:00, 12:00, 15:00, 19:00, 21:00 Moscow time
 - read scope: application-enforced allowlist, `read_only=true`, `read_broadcast_channels_only=true`
-- current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `faang`
+- current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `work`, `eb1`, `гребенюк`, `personal`, `faang`
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
+- bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
 - status: running as `telethon-digest`; job timing managed by OpenClaw Gateway cron store

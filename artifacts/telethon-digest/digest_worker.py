@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -187,6 +188,11 @@ async def run_digest(config: dict | None = None):
         new_posts_seen=len(all_posts),
         posts_selected=len(top_posts),
         active_channels_seen=len({post.channel_id for post in all_posts}),
+        folder_message_counts=dict(Counter(post.folder_name for post in all_posts)),
+        folder_channel_counts={
+            folder_name: len(channel_ids)
+            for folder_name, channel_ids in _folder_channel_sets(all_posts).items()
+        },
     )
 
     # 5. Summarize into one structured digest document
@@ -221,6 +227,13 @@ async def run_digest(config: dict | None = None):
     state_store.set_last_run()
 
     logger.info("Digest cycle complete")
+
+
+def _folder_channel_sets(posts):
+    by_folder = defaultdict(set)
+    for post in posts:
+        by_folder[post.folder_name].add(post.channel_id)
+    return by_folder
 
 
 def _job_listener(event):

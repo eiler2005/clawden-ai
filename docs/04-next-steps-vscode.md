@@ -78,3 +78,65 @@ Recommended next tracked additions:
 - add a documented smoke test for the browser and WebSocket flow
 - add a deterministic script to refresh the copied `control-ui` assets when the image changes
 - replace placeholder host instructions with environment-variable driven scripts
+- add an async ingestion queue between source readers and downstream processing so long Telegram/email
+  reads do not block digest generation or fail on bridge/request timeouts
+- keep the queue design boring and standard: producer writes normalized source events, workers consume
+  them for enrichment/dedup/summarization, and publishers emit final digests separately
+- design it as a shared ingestion layer for Telegram, work email, and future signal feeds instead of
+  building one-off retry logic per source
+
+## 8. Delegation brief for another LLM
+
+Use this prompt as-is when delegating the async ingestion work:
+
+```text
+Нужно спроектировать и реализовать v1 общего async ingestion слоя для Benka/OpenClaw.
+
+Контекст:
+- Сейчас Telegram Digest работает в одном sync path: read -> score -> dedup -> summarize -> publish
+- Из-за этого длинные reads и provider timeouts давят на bridge/cron response path
+- В будущем такие же проблемы появятся для Work Email и других signal sources
+
+Цель:
+- Вынести ingest из sync request path
+- Сделать общий pipeline для Telegram, Work Email и будущих signal feeds
+- Оставить решение простым и стандартным
+
+Выбранный стек:
+- Redis Streams
+- Python workers
+
+Архитектура:
+- producers enqueue normalized events
+- workers consume, enrich, dedup, classify, summarize
+- publishers emit digest/messages separately
+- cron/bridge в будущем должен enqueue-ить задачу и быстро отвечать, а не ждать весь digest
+
+Минимальная модель события:
+- source_type
+- source_id
+- event_id
+- occurred_at
+- payload_ref или normalized payload
+- dedup_key
+- ingestion_state
+
+Нужно продумать:
+- idempotency
+- checkpointing по источникам
+- retry / dead-letter handling
+- separation between ingest, summarize, publish
+- как без боли подключить Telegram Digest и Work Email первыми
+
+Ограничения:
+- не строить тяжёлую платформу
+- не делать bespoke retry logic для каждого источника
+- prefer boring operations and explicit boundaries
+
+На выходе дай:
+- implementation plan
+- stream/key naming
+- worker responsibilities
+- failure/retry model
+- rollout steps for Telegram first, then Work Email
+```

@@ -291,6 +291,46 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 - Telethon auto-retries on `FloodWaitError` internally.
 - Full read of 200 channels: ~30–60 s (well within the longest regular interval).
 
+### Backlog: async ingestion bus
+
+Current digest runs still couple source reading, scoring, LLM summarization, and publication
+inside one synchronous execution path. This is workable for the current Telegram setup, but it
+creates a fragile boundary around long reads, provider timeouts, and cron-trigger response times.
+
+Current pulse rendering has a related failure mode at the presentation layer: `poster.py` hides the
+entire `Пульс дня` block when `document.themes` is empty, while `summarizer.py` can legitimately
+sanitize all candidate themes down to `[]`. That case should be treated as a content-quality
+fallback, not as a reason to remove the section entirely.
+
+Recommended next step:
+
+- introduce a small async ingestion layer between source readers and downstream digest generation
+- use `Redis Streams` as the preferred v1 queue: boring, durable enough, easy to operate, and a
+  good fit for producer/worker/publisher flow without adding a heavy platform
+- keep it intentionally simple and standard: source producers, durable queue, idempotent workers,
+  and separate publishers
+- normalize inbound events so the same pipeline can later ingest Telegram posts, work email
+  summaries, and other signal feeds without bespoke retry logic per source
+- move slow operations out of the request/cron critical path; the trigger should enqueue work and
+  return quickly, while workers continue enrichment, deduplication, summarization, and posting
+- keep the architectural boundary explicit:
+  - producers enqueue normalized events
+  - workers read source windows, normalize, persist enqueue checkpoints, enrich, deduplicate,
+    classify, and summarize
+  - publishers emit digest posts and other derived outputs
+- define a minimum shared event model for all sources:
+  - `source_type`
+  - `source_id`
+  - `event_id`
+  - `occurred_at`
+  - `payload_ref` or normalized payload
+  - `dedup_key`
+  - `ingestion_state`
+- target this shared layer at:
+  - Telegram Digest
+  - Work Email
+  - future signal feeds
+
 ### Scoring
 
 ```

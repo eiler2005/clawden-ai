@@ -148,9 +148,38 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
     folder_hard_cap = max(folder_soft_cap + 1, min(9, top_n // 4))
     primary_target = max(1, int(top_n * 0.7))
 
+    # Coverage pass: keep at least one non-noise representative from each active
+    # priority folder so important scopes do not disappear from the digest.
+    best_per_folder: dict[str, Post] = {}
+    for post in filtered:
+        best_per_folder.setdefault(post.folder_name, post)
+
+    folder_representatives = sorted(
+        best_per_folder.values(),
+        key=lambda post: (
+            _tier_priority(post.folder_name, config) >= 5 and 0 or 1,
+            _tier_priority(post.folder_name, config) >= 3 and 0 or 1,
+            -post.score,
+            post.folder_name.lower(),
+        ),
+    )
+
+    coverage_limit = min(max(6, top_n // 2), top_n)
+    for post in folder_representatives:
+        tier_priority = _tier_priority(post.folder_name, config)
+        if tier_priority < 3:
+            continue
+        if len(selected) >= coverage_limit:
+            break
+        selected.append(post)
+        channel_counts[post.channel_id] += 1
+        folder_counts[post.folder_name] += 1
+
     for post in filtered:
         if len(selected) >= primary_target:
             break
+        if post in selected:
+            continue
         if channel_counts[post.channel_id] >= 1:
             continue
         if folder_counts[post.folder_name] >= folder_soft_cap:

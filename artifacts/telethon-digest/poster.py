@@ -197,9 +197,9 @@ def _story_count(document: DigestDocument) -> int:
 
 
 def _render_themes(document: DigestDocument) -> list[str]:
-    if not document.themes:
-        return []
     title = "Пульс дня"
+    if not document.themes:
+        return ["", f"<b>{title}</b>", "• Сильных сквозных тем за окно не выделилось."]
     return ["", f"<b>{title}</b>", *[f"• {escape(item)}" for item in document.themes]]
 
 
@@ -220,8 +220,18 @@ def _render_footer(document: DigestDocument) -> list[str]:
         ),
     ]
     if document.quiet_folders:
-        quiet = ", ".join(f"<b>{escape(folder)}</b>" for folder in document.quiet_folders)
-        lines.append(f"• В финальный обзор не вошли папки: {quiet}.")
+        quiet_parts = []
+        for folder in document.quiet_folders:
+            messages = document.stats.folder_message_counts.get(folder, 0)
+            channels = document.stats.folder_channel_counts.get(folder, 0)
+            if messages > 0:
+                quiet_parts.append(
+                    f"<b>{escape(folder)}</b> "
+                    f"({channels} {_pluralize(channels, 'канал', 'канала', 'каналов')} / "
+                    f"{messages} {_pluralize(messages, 'сообщение', 'сообщения', 'сообщений')})"
+                )
+        if quiet_parts:
+            lines.append(f"• Активные папки вне финального обзора: {', '.join(quiet_parts)}.")
     return lines
 
 

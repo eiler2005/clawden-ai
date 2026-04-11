@@ -662,12 +662,27 @@ HTTP trigger from the gateway container to `telethon-digest-cron-bridge` inside
 explicit `DIGEST_TYPE_OVERRIDE`, which keeps the run type stable even if the
 gateway retries a job later than the scheduled hour.
 
+The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
+default) so the cron run can wait for the digest to finish instead of reporting
+the bridge as "hung" while the worker is still processing a large window.
+
 **Important:** the target OpenClaw agent must be allowed to use `exec` and must
 have access to `/opt/telethon-digest`. The sync script defaults to agent `main`,
 but you can override it with `OPENCLAW_CRON_AGENT=ops` before deploy if your
 server uses a dedicated ops agent. The sync script reads existing jobs from
 `/opt/openclaw/config/cron/jobs.json` by default; override with
 `OPENCLAW_CRON_STORE=...` if your gateway uses a custom cron store path.
+
+**Bridge diagnostics:**
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8091/health && echo && curl -s http://127.0.0.1:8091/status'
+```
+
+- `GET /health` — quick liveness + last run snapshot
+- `GET /status` — current or last run payload with timestamps, digest type, exit code, and tail
+- `POST /trigger` — synchronous run; returns `409 digest_already_running` if another digest is still in flight
 
 ### One-time Telethon authorization
 
@@ -695,7 +710,7 @@ Read scope config (`config.json` — not committed):
   "read_only": true,
   "require_explicit_allowlist": true,
   "read_broadcast_channels_only": true,
-  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "faang"]
+  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "work", "eb1", "гребенюк", "personal", "faang"]
 }
 ```
 
