@@ -30,6 +30,7 @@ LIVE > RAW > DERIVED
 | `BOOT.md` | Session startup checklist | YES |
 | `TOOLS.md` | Available tools including lightrag_query | YES |
 | `HEARTBEAT.md` | Periodic task instruction | on heartbeat only |
+| `TELEGRAM_POLICY.md` | Telegram surface roles, permissions assumptions, memory/RAG gates | when handling Telegram policy/routing |
 
 ---
 

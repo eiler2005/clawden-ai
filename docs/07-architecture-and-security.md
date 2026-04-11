@@ -247,12 +247,18 @@ Telegram is configured with layered access control:
 | `channels.telegram.allowFrom` | `[<owner-id>]` | Only owner can DM the bot; actual ID in `LOCAL_ACCESS.md` |
 | `channels.telegram.groupAllowFrom` | `[<owner-id>]` | Explicit user allowlist for group triggers |
 | `channels.telegram.groups."*".requireMention` | `true` | All groups require @mention by default |
-| `channels.telegram.groups.<supergroup-id>.requireMention` | `false` | Target group reads all messages (forum supergroup with topics) |
-| `channels.telegram.groups.<supergroup-id>.groupPolicy` | `"open"` | Any member of the target group can trigger the bot |
+| `channels.telegram.groups.<ops-supergroup-id>.requireMention` | `false` | Operational forum hub can run without mentions, with topic-level runtime policy |
+| `channels.telegram.groups.<ops-supergroup-id>.groupPolicy` | `"open"` | Any member of the ops hub can trigger the bot inside approved operational topics |
+| `channels.telegram.groups.<family-chat-id>.requireMention` | `true` | Family domain stays conservative by default |
+| `channels.telegram.groups.<sandbox-chat-id>.requireMention` | `false` | Sandbox can be relaxed because production memory writes are disabled there |
 
-The target group ID is kept in `LOCAL_ACCESS.md` (not committed).
+Real chat IDs and topic IDs are kept in `LOCAL_ACCESS.md` (not committed). The full Telegram
+surface policy lives in `docs/12-telegram-channel-architecture.md`; the redacted implementation
+draft lives in `artifacts/openclaw/telegram-surfaces.redacted.json`.
 
-Bot prerequisites: admin role in group, Privacy Mode disabled via BotFather `/setprivacy`.
+Bot prerequisites: admin role in groups that need posting/topic access. If the ops supergroup must
+work without mentions, Telegram BotFather privacy mode has to be disabled for the bot; because that
+setting is bot-wide, OpenClaw group allowlists and runtime chat/topic filters are mandatory.
 
 ### Settings NOT applied
 

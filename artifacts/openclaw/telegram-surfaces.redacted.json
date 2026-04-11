@@ -1,0 +1,391 @@
+{
+  "version": "2026-04-10",
+  "policy": "telegram_surfaces",
+  "principles": [
+    "least_privilege",
+    "separation_of_concerns",
+    "memory_hygiene",
+    "human_approval_for_sensitive_actions",
+    "work_family_ops_sandbox_separation"
+  ],
+  "telegram_runtime_defaults": {
+    "dmPolicy": "allowlist",
+    "allowFrom": ["<owner-telegram-user-id>"],
+    "groupPolicy": "allowlist",
+    "groupAllowFrom": ["<owner-telegram-user-id>"],
+    "groups": {
+      "*": {
+        "requireMention": true,
+        "readWholeStream": false
+      },
+      "<ops-supergroup-chat-id>": {
+        "requireMention": false,
+        "readWholeStream": true,
+        "groupPolicy": "open",
+        "topicPolicyRequired": true
+      },
+      "<family-chat-id>": {
+        "requireMention": true,
+        "readWholeStream": false,
+        "groupPolicy": "allowlist"
+      },
+      "<sandbox-chat-id>": {
+        "requireMention": false,
+        "readWholeStream": true,
+        "groupPolicy": "allowlist",
+        "memoryWrites": "disabled"
+      }
+    }
+  },
+  "surfaces": [
+    {
+      "name": "Benka_Clawbot_base",
+      "chat_id": "<owner-dm-peer-id>",
+      "purpose": "Primary owner DM and most privileged human control channel.",
+      "type": "dm",
+      "bot_mode": "control",
+      "category": ["control"],
+      "permissions": {
+        "read_messages": "allow",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "not_applicable",
+        "delete_messages": "not_applicable",
+        "manage_topics": "not_applicable",
+        "invite_users": "not_applicable",
+        "full_admin": "not_applicable",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": true
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG", "DERIVED", "CURATED", "LONG_TERM"],
+        "long_term_requires_explicit_or_policy_gate": true,
+        "family_memory_requires_explicit_approval": true
+      },
+      "ingestion_policy": {
+        "default_action": "respond_without_persistent_memory",
+        "can_queue_approvals": true,
+        "can_create_tasks": true,
+        "can_promote_to_knowledge": "with_confirmation_or_explicit_command"
+      }
+    },
+    {
+      "name": "Benka_Clawbot_SuperGroup",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "purpose": "Operational control hub with forum topics for inbox, approvals, tasks, alerts, system logs, rag-log, work-email, and telegram-digest.",
+      "type": "supergroup_forum",
+      "bot_mode": "control",
+      "category": ["control", "publish", "operations"],
+      "topics": {
+        "inbox": "<topic-id-inbox>",
+        "approvals": "<topic-id-approvals>",
+        "tasks": "<topic-id-tasks>",
+        "signals": "<topic-id-signals>",
+        "system": "<topic-id-system>",
+        "rag-log": "<topic-id-rag-log>",
+        "work-email": "<topic-id-work-email>",
+        "telegram-digest": "<topic-id-telegram-digest>"
+      },
+      "permissions": {
+        "read_messages": "allow",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "optional",
+        "delete_messages": "deny",
+        "manage_topics": "optional",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": false,
+        "read_whole_stream_by_default": "ops_topics_only"
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG", "DERIVED", "RAW"],
+        "raw_requires_redaction": true,
+        "curated_requires_knowledge_promotion": true
+      },
+      "ingestion_policy": {
+        "default_action": "operational_response_or_compact_log",
+        "approvals_topic_required_for_sensitive_actions": true,
+        "rag_log_must_not_include_raw_sensitive_payloads": true
+      }
+    },
+    {
+      "name": "Work Email",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<topic-id-work-email>",
+      "purpose": "Processed summaries and triage signals from work email.",
+      "type": "supergroup_topic",
+      "bot_mode": "digest",
+      "category": ["publish", "derived_ingestion"],
+      "permissions": {
+        "read_messages": "deny",
+        "post_messages": "allow",
+        "reply_to_messages": "optional",
+        "pin_messages": "deny",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": false
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG", "DERIVED"],
+        "store_full_raw_email": false,
+        "rag_index_full_email": false
+      },
+      "ingestion_policy": {
+        "default_action": "summarize_and_classify",
+        "signals_threshold": 0.75,
+        "external_reply_requires_approval": true,
+        "persistent_storage_requires_sensitivity_gate": true
+      }
+    },
+    {
+      "name": "Telegram Digest",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<topic-id-telegram-digest>",
+      "purpose": "Summaries from selected Telegram channels and chats.",
+      "type": "supergroup_topic",
+      "bot_mode": "digest",
+      "category": ["publish"],
+      "permissions": {
+        "read_messages": "deny",
+        "post_messages": "allow",
+        "reply_to_messages": "optional",
+        "pin_messages": "deny",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": false
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "DERIVED"],
+        "store_source_chatter": false,
+        "rag_index_digest": "selective_only"
+      },
+      "ingestion_policy": {
+        "default_action": "summarize_selected_sources",
+        "ignore_low_importance_chatter_below": 0.35,
+        "rag_requires_promotion": true
+      }
+    },
+    {
+      "name": "Signals",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<topic-id-signals>",
+      "purpose": "Important and time-sensitive alerts from email and Telegram.",
+      "type": "supergroup_topic",
+      "bot_mode": "alert",
+      "category": ["publish", "alert"],
+      "permissions": {
+        "read_messages": "deny",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "optional",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": false
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG", "DERIVED"],
+        "store_compact_alert_record": true,
+        "store_raw_payload": false
+      },
+      "ingestion_policy": {
+        "default_action": "publish_alert_if_important_and_time_sensitive",
+        "importance_threshold": 0.75,
+        "dm_mirror_threshold": 0.9,
+        "external_action_requires_approval": true
+      }
+    },
+    {
+      "name": "Family",
+      "chat_id": "<family-chat-id>",
+      "purpose": "Separate family domain. Must not mix with work or operations.",
+      "type": "private_group_or_supergroup",
+      "bot_mode": "family",
+      "category": ["ingestion", "family"],
+      "permissions": {
+        "read_messages": "optional",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "deny",
+        "delete_messages": "deny",
+        "manage_topics": "deny",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": true,
+        "read_whole_stream_by_default": false
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "DERIVED", "LONG_TERM"],
+        "long_term_requires_explicit_approval": true,
+        "rag_index_family_content": false,
+        "store_raw_family_content": false
+      },
+      "ingestion_policy": {
+        "default_action": "respond_only",
+        "stable_fact_requires_confirmation": true,
+        "cross_post_to_work_or_ops": "deny"
+      }
+    },
+    {
+      "name": "Knowledge",
+      "chat_id": "<knowledge-channel-id>",
+      "purpose": "Finalized structured knowledge items, summaries, decisions, curated insights.",
+      "type": "private_channel",
+      "bot_mode": "knowledge",
+      "category": ["knowledge"],
+      "permissions": {
+        "read_messages": "allow",
+        "post_messages": "allow",
+        "reply_to_messages": "optional",
+        "pin_messages": "optional",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": true
+      },
+      "memory_policy": {
+        "auto_ingestion": "schema_and_sensitivity_gated",
+        "allowed_classes": ["CURATED", "LONG_TERM"],
+        "obsidian_sync": true,
+        "rag_index": true
+      },
+      "ingestion_policy": {
+        "required_fields": ["title", "domain", "source", "date", "summary", "sensitivity"],
+        "classification_confidence_min": 0.7,
+        "high_sensitivity_requires_approval": true
+      }
+    },
+    {
+      "name": "Ideas",
+      "chat_id": "<ideas-chat-id>",
+      "purpose": "Quick capture of thoughts, links, raw ideas, and future project notes.",
+      "type": "private_group_or_channel",
+      "bot_mode": "idea_capture",
+      "category": ["capture"],
+      "permissions": {
+        "read_messages": "allow",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "deny",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "optional",
+        "read_whole_stream_by_default": "owner_only_surface"
+      },
+      "memory_policy": {
+        "auto_ingestion": "light_classification_only",
+        "allowed_classes": ["RAW", "DERIVED"],
+        "rag_index": false,
+        "obsidian_sync": false,
+        "promotion_required_for_curated": true
+      },
+      "ingestion_policy": {
+        "default_action": "capture_tag_and_queue",
+        "promotion_to_knowledge_requires_approval": true,
+        "ignore_low_information_fragments_below": 0.35
+      }
+    },
+    {
+      "name": "Sandbox / Lab",
+      "chat_id": "<sandbox-chat-id>",
+      "purpose": "Safe place for testing prompts, tools, integrations, and Telegram behavior.",
+      "type": "sandbox_group",
+      "bot_mode": "sandbox",
+      "category": ["testing"],
+      "permissions": {
+        "read_messages": "allow",
+        "post_messages": "allow",
+        "reply_to_messages": "allow",
+        "pin_messages": "optional",
+        "delete_messages": "optional",
+        "manage_topics": "optional",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "optional",
+        "read_whole_stream_by_default": "optional"
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG"],
+        "production_memory_writes": false,
+        "rag_index": false,
+        "obsidian_sync": false
+      },
+      "ingestion_policy": {
+        "default_action": "test_only",
+        "promotion_to_production_requires_explicit_copy": true,
+        "production_workflow_requires_approval": true
+      }
+    }
+  ],
+  "memory_classes": {
+    "LIVE": {
+      "retention": "session_or_task_lifetime",
+      "rag_index": false,
+      "obsidian_sync": false
+    },
+    "OPLOG": {
+      "retention": "14_to_30_days_compacted",
+      "rag_index": "incident_summaries_only",
+      "obsidian_sync": false
+    },
+    "RAW": {
+      "retention": "30_to_90_days_unless_promoted",
+      "rag_index": "redacted_decisions_and_root_causes_only",
+      "obsidian_sync": false
+    },
+    "DERIVED": {
+      "retention": "30_to_180_days",
+      "rag_index": "selective",
+      "obsidian_sync": "optional"
+    },
+    "CURATED": {
+      "retention": "durable",
+      "rag_index": true,
+      "obsidian_sync": true
+    },
+    "LONG_TERM": {
+      "retention": "until_revoked",
+      "rag_index": "selective",
+      "obsidian_sync": "optional"
+    }
+  },
+  "ingestion_thresholds": {
+    "classification_confidence_min_for_memory": 0.7,
+    "ignore_importance_below": 0.35,
+    "derived_candidate_importance_min": 0.65,
+    "curated_candidate_importance_min": 0.85,
+    "high_sensitivity_min": 0.7,
+    "signals_importance_min": 0.75,
+    "dm_mirror_importance_min": 0.9
+  },
+  "approval_required_for": [
+    "destructive_actions",
+    "external_sends_or_replies",
+    "deploys_restarts_and_config_changes",
+    "credential_changes",
+    "high_sensitivity_memory_writes",
+    "family_long_term_memory",
+    "cross_domain_copy_between_work_family_personal_ops",
+    "promotion_from_sandbox_to_production"
+  ]
+}

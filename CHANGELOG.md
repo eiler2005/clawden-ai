@@ -8,7 +8,71 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Pending
-- None
+- Monitor the first scheduled Telethon Digest daemon run after deployment.
+
+## [2026-04-10] — telethon-digest: Telegram channel digest service
+
+### Added
+- **`telethon-digest` Docker service**: reads 150–200 Telegram channels via Telethon MTProto,
+  scores posts by folder priority × pin boost, summarizes via OmniRoute `medium`, posts 4× daily
+  (08:00/12:00/16:00/20:00 МСК) to `telegram-digest` topic in `Benka_Clawbot_SuperGroup`.
+- Service files prepared for `/opt/telethon-digest/`:
+  `auth.py`, `digest_worker.py`, `reader.py`, `scorer.py`, `link_builder.py`,
+  `summarizer.py`, `poster.py`, `state_store.py`, `sync_channels.py`, `Dockerfile`, `requirements.txt`.
+- `artifacts/telethon-digest/` added to repo with all Python modules, standalone `docker-compose.yml`,
+  `config.example.json`, and `telethon.env.example` (redacted).
+- Standalone Compose project uses the external `openclaw_default` network plus `telethon-sessions`
+  and `telethon-state` named Docker volumes.
+- Local gitignored secret source created at `secrets/telethon-digest/telethon.env`.
+- Telethon user session authorized and stored in the `telethon-sessions` Docker volume.
+- Telegram folders synced into server `config.json`: 18 folders, 499 dialogs, 426 broadcast channels.
+- Read scope locked down with explicit allowlist and `read_broadcast_channels_only=true`.
+- Local gitignored catalog copy created at `secrets/telethon-digest/config.local.json`.
+- `docs/13-ai-assistant-architecture.md` updated with Telegram Channel Digest section.
+- `docs/14-telethon-digest-handoff.md` added as the continuation/runbook source for future LLMs.
+
+### Fixed
+- Telethon Digest summarizer now handles OmniRoute `text/event-stream` responses as well as JSON
+  chat completions, and falls back locally if the LLM refuses summarization.
+
+### Verified
+- Full smoke test read the allowlisted channels, selected top posts, and posted digest chunks to the
+  `telegram-digest` topic through the OpenClaw Telegram bot.
+- Synthetic OmniRoute summarization smoke test passes after the SSE parser fix.
+- Daemon started successfully; APScheduler next run is managed inside the `telethon-digest` container.
+
+## [2026-04-10]
+
+### Fixed
+- OpenAI Codex rate-limit failover: added `agents.defaults.model.fallbacks` in `openclaw.json` so
+  when Codex hits its usage cap the gateway automatically retries `omniroute/smart` → `omniroute/medium`
+  → `omniroute/light` instead of surfacing the error to the user. Config hot-reloaded on the live server.
+- OmniRoute combo model IDs corrected: `smart` now uses `kiro/claude-sonnet-4.5` (was `claude-sonnet-4-5`
+  with dashes), `medium` and `light` now use `kiro/claude-haiku-4.5` (was `claude-3-5-haiku-20241022`).
+  All three tiers verified working.
+
+### Added
+- `docs/13-ai-assistant-architecture.md`: comprehensive description of AI assistant design principles,
+  model routing (primary + OmniRoute fallback tiers), Telegram surface interaction model, memory
+  classes, LightRAG integration rules, approval gates, and anti-patterns.
+- AGENTS.md updated on server: model-selection and fallback sections updated; response footer instruction
+  added (`_model · ctx% · memory_` at end of every Telegram reply).
+- Daily memory file `memory/2026-04-10.md` created on server with today's decisions and open items.
+
+### Added
+- Telegram channel architecture policy:
+  - final / minimal / safe-first topology for DM, ops supergroup topics, work email, Telegram digest, signals, family, knowledge, ideas, and sandbox
+  - least-privilege permission matrix for each Telegram surface
+  - OpenClaw behavior modes and approval boundaries
+  - conservative memory and RAG/Obsidian ingestion gates
+  - redacted implementation draft in `artifacts/openclaw/telegram-surfaces.redacted.json`
+  - runtime policy file in `workspace/TELEGRAM_POLICY.md`
+- Telegram policy deployed to the live server:
+  - `workspace/TELEGRAM_POLICY.md` deployed to `/opt/openclaw/workspace/`
+  - ops forum topics created in the live supergroup: `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `work-email`, `telegram-digest`
+  - server-local topic map written to `/opt/openclaw/config/telegram-topic-map.json`
+  - server-local live surface policy written to `/opt/openclaw/config/telegram-surfaces.policy.json`
+  - full redacted architecture document copied into server workspace `raw/` for LightRAG indexing
 
 ### Fixed
 - LightRAG indexing repaired on the live server:
