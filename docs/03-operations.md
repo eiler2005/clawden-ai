@@ -910,3 +910,50 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   docker exec integration-bus-redis redis-cli XTRIM ingest:jobs:telegram MAXLEN 1000
 '
 ```
+
+### Check ingest:rag:queue (LightRAG upload queue)
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  echo "=== RAG queue total ==="
+  docker exec integration-bus-redis redis-cli XLEN ingest:rag:queue
+  echo "=== Pending (in-flight) ==="
+  docker exec integration-bus-redis redis-cli XPENDING ingest:rag:queue rag-workers - + 10
+'
+```
+
+### Manually enqueue a file for LightRAG ingest
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:rag:queue "*" \
+    source manual \
+    file_path "/app/obsidian/Telegram Digest/Derived/2026-04-11/interval-0800-1200.md" \
+    file_name "interval-0800-1200.md" \
+    enqueued_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+'
+```
+
+### LightRAG WebUI (SSH tunnel)
+
+```bash
+ssh -i ~/.ssh/id_rsa -L 9621:127.0.0.1:8020 "$OPENCLAW_HOST" -N &
+# → open http://127.0.0.1:9621
+kill %1  # close tunnel when done
+```
+
+### LightRAG health and document status
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf http://127.0.0.1:8020/health | python3 -m json.tool
+'
+```
+
+### Trigger LightRAG reprocess of failed documents
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  curl -sf -X POST http://127.0.0.1:8020/documents/reprocess_failed
+'
+```

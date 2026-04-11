@@ -182,18 +182,50 @@ Cold-start limit: ~5–8KB context. Do not load `raw/` at startup.
 
 Only structured, curated content:
 
-- Obsidian vault markdown (synced from Mac via Syncthing)
+- **Telegram Digest derived notes** — scored, summarised digests written by `persistence.py`
+  to `/app/obsidian/Telegram Digest/Derived/YYYY-MM-DD/` → uploaded via `ingest:rag:queue`
+- **Telegram Digest curated notes** — high-signal items extracted by OmniRoute medium;
+  written to `/app/obsidian/Telegram Digest/Curated/` → uploaded via `ingest:rag:queue`
+- Obsidian vault markdown (synced from Mac via Syncthing) — picked up by the 30-min cron ingest script
 - Promoted Ideas with full structure
 - `CURATED` knowledge items with required fields
 - Redacted root-cause / `#canon` decision records
 
 ### What does NOT go in
 
-- Raw Telegram chat
+- Raw Telegram chat or full post text
 - Full email bodies
 - Operational logs
 - Credentials or sensitive data
 - Sandbox content
+
+### Ingestion paths
+
+Two paths feed LightRAG; neither blocks the main pipeline:
+
+| Path | Trigger | Latency |
+|------|---------|---------|
+| **Integration bus** (`ingest:rag:queue`) | `persistence.py` XADD after each digest | seconds (RAG consumer loop) |
+| **Cron ingest script** | `/opt/lightrag/scripts/lightrag-ingest.sh` every 30 min | up to 30 min |
+
+The bus path covers fresh digest notes immediately. The cron path covers the full
+Obsidian vault (reading notes, project wiki, personal knowledge) on its own schedule.
+
+### Integration bus → LightRAG flow
+
+```
+persistence.py
+  └── _enqueue_lightrag_uploads([derived_path, curated_paths...])
+        └── XADD ingest:rag:queue {source, file_path, file_name}
+              ↓ async
+        cron-bridge rag-consumer thread
+              └── _upload_file_to_lightrag_sync(file_path, file_name)
+                    ├── httpx POST lightrag:9621/documents/upload  → 200 OK
+                    └── httpx POST lightrag:9621/documents/reprocess_failed
+```
+
+Fallback: if `REDIS_URL` is unset or Redis unreachable, `persistence.py` falls back to
+calling LightRAG directly (original synchronous path).
 
 ### Query
 
@@ -204,6 +236,17 @@ POST http://lightrag:9621/query
 
 Results are `DERIVED`-level — not authoritative for current system state.
 Use live checks (`docker ps`, `curl`) for current state, not LightRAG.
+
+### WebUI
+
+LightRAG has a built-in WebUI. Access via SSH tunnel:
+
+```bash
+ssh -i ~/.ssh/id_rsa -L 9621:127.0.0.1:8020 deploy@<server-host> -N
+# → http://127.0.0.1:9621
+```
+
+The UI shows the knowledge graph, documents list, and allows ad-hoc queries.
 
 ### URL note
 
@@ -291,11 +334,11 @@ OpenClaw Cron Jobs (08:00/09:00/12:00/15:00/19:00/21:00 МСК)
                        │  ingest:events:telegram ─────────────────────┼──► telethon-event-listener (future)
  Telethon listener ────┤    (individual messages, real-time)         │    → enrich → classify → alert/rag
                        │                                              │
-                       │  ingest:rag:queue ───────────────────────────┼──► lightrag-indexer (future)
-                       │                                              │
+                       │  ingest:rag:queue ───────────────────────────┼──► cron-bridge rag-consumer
+ persistence.py ───────┤    {source, file_path, file_name}           │    → httpx /documents/upload
+                       │                                              │    + /reprocess_failed
                        │  dlq:failed ─────────────────────────────────┼──► monitoring / retry
                        └──────────────────────────────────────────────┘
-```
 
 Stream naming:
 - `ingest:jobs:{source}` — batch job triggers (telegram, email)
@@ -324,13 +367,17 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 
 ### Integration bus status
 
-**Implemented (v1):** Redis Streams async ingestion bus is live.
+**Implemented:**
 
-- `cron_bridge.py` enqueues jobs to `ingest:jobs:telegram` and returns HTTP 202 immediately.
-- Consumer loop runs as a background thread in the same container; calls `digest_worker.py --now`.
-- Failed pipelines are written to `dlq:failed` stream.
-- `integration-bus-redis` (Redis 7 Alpine) runs as a standalone Docker Compose project at
-  `/opt/integration-bus/`, joined to `openclaw_default` network.
+| Stream | Status | Worker |
+|--------|--------|--------|
+| `ingest:jobs:telegram` | ✅ Live | `digest-consumer` thread → `digest_worker.py` |
+| `ingest:rag:queue` | ✅ Live | `rag-consumer` thread → LightRAG `/documents/upload` |
+| `ingest:jobs:email` | Planned | email-worker (v2) |
+| `ingest:events:telegram` | Planned | real-time Telethon listener (v2) |
+
+Both consumer threads run in the same `telethon-digest-cron-bridge` container.
+`integration-bus-redis` (Redis 7 Alpine) is a standalone project at `/opt/integration-bus/`.
 
 **Known failure mode (poster.py):** `poster.py` hides the entire `Пульс дня` block when
 `document.themes` is empty, but `summarizer.py` can legitimately sanitize all candidate
@@ -341,7 +388,6 @@ to hide the section.
 
 - `ingest:events:telegram` — real-time Telethon listener for private groups and signal channels
 - `ingest:jobs:email` — Work Email digest producer
-- `ingest:rag:queue` — LightRAG indexer worker consuming enriched items
 - Per-item pipeline: individual posts as events (vs. current whole-digest-as-job)
 - Monitoring/metrics for Redis streams (XLEN, DLQ alerts)
 

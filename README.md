@@ -351,6 +351,7 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 | Source | Stream | Status |
 |--------|--------|--------|
 | Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 6× daily |
+| LightRAG async ingest | `ingest:rag:queue` | ✅ Live — digest notes pushed after each run, RAG consumer uploads immediately |
 
 ### Planned sources (v2)
 
@@ -358,7 +359,6 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 |--------|--------|-------|
 | Work email digest | `ingest:jobs:email` | Daily summary, no raw bodies stored |
 | Signal feeds | `ingest:events:telegram` | Real-time Telethon listener for priority channels / private groups |
-| LightRAG direct ingest | `ingest:rag:queue` | Any worker can push items to index without calling LightRAG synchronously |
 | Web feeds / webhooks | `ingest:events:web` | RSS, webhooks, site monitoring |
 
 All future producers plug into the same Redis Streams. Workers are independent Python services
