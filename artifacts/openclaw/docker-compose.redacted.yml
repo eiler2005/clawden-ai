@@ -5,6 +5,7 @@ services:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
@@ -34,6 +35,7 @@ services:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
       BROWSER: echo
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:

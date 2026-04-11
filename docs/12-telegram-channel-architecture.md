@@ -16,6 +16,7 @@ clean operational channels, conservative memory, and a path from noisy inputs to
 |---|---|---|---|---|---|---|
 | `Benka_Clawbot_base` | Keep as the primary DM | DM | Most privileged owner control channel | Denis only | Responds directly, can ask approvals, can create tasks, can propose memory writes. Does not silently execute destructive/sensitive actions. | Control |
 | `Benka_Clawbot_SuperGroup` | Keep as a private forum supergroup with topics | Supergroup/forum | Operational control hub | Denis, optionally trusted operators later | Handles approvals, task status, alerts, system logs, RAG logs. Reads only operational topics by policy. | Control / publish |
+| `Inbox Email` | Topic in the supergroup for personal AgentMail inbox | Topic | Near-real-time inbox feed + scheduled recap | Denis | Posts 5-minute mini-batches and scheduled digests. Does not publish raw full emails. | Publish / derived ingestion |
 | `Work Email` | Start as a topic in the supergroup; split into private channel if volume grows | Topic | Processed work email summaries and triage | Denis | Posts summaries, priority labels, proposed actions. Does not publish raw full emails by default. | Publish / derived ingestion |
 | `Telegram Digest` | Start as a topic in the supergroup; split into private channel if it becomes noisy | Topic | Summaries from selected Telegram sources | Denis | Posts daily/periodic digests only. Source chats are separate allowlisted inputs, not the digest surface itself. | Publish |
 | `Signals` | Topic in the supergroup, optionally mirrored to DM for critical items | Topic | Time-sensitive alerts from email and Telegram | Denis | Speaks proactively only for high-importance, time-sensitive signals. Can pin critical alerts if allowed. | Alert / publish |
@@ -36,6 +37,7 @@ Use a single operational forum supergroup with these topics:
 | `alerts` / `signals` | Important time-sensitive notifications | Derived alert summary; short retention |
 | `system` | Deploys, restarts, health, incidents | Operational log; promote root causes to raw if meaningful |
 | `rag-log` | RAG ingestion decisions and failures | Operational log; no raw content unless curated |
+| `inbox-email` | Personal inbox mini-batches + scheduled digests | Summaries only; no raw email bodies by default |
 | `work-email` | Processed work email summaries | Summaries only; no raw email bodies by default |
 | `telegram-digest` | Digest output from selected channels/chats | Digest summaries only |
 
@@ -66,6 +68,7 @@ Legend:
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | `Benka_Clawbot_base` | ALLOW | ALLOW | ALLOW | N/A | N/A | N/A | N/A | N/A | N/A | ALLOW | DENY | ALLOW |
 | `Benka_Clawbot_SuperGroup` | ALLOW | ALLOW | ALLOW | OPTIONAL | DENY | OPTIONAL | DENY | DENY | OPTIONAL | OPTIONAL | DENY | ALLOW |
+| `Inbox Email` | DENY | ALLOW | OPTIONAL | DENY | DENY | N/A | DENY | DENY | N/A | DENY | DENY | ALLOW |
 | `Work Email` | DENY | ALLOW | OPTIONAL | DENY | DENY | N/A | DENY | DENY | N/A | DENY | DENY | ALLOW |
 | `Telegram Digest` | DENY | ALLOW | OPTIONAL | DENY | DENY | N/A | DENY | DENY | N/A | DENY | DENY | OPTIONAL |
 | `Signals` | DENY | ALLOW | ALLOW | OPTIONAL | DENY | N/A | DENY | DENY | N/A | DENY | DENY | ALLOW |
@@ -93,7 +96,7 @@ Legend:
 | Mode | Surfaces | Proactivity | Can speak unasked? | Summarize | Classify | Write memory | Trigger workflows | Approval |
 |---|---|---|---|---|---|---|---|---|
 | Control mode | DM, supergroup `inbox`, `approvals`, `tasks`, `system` | Medium | Yes, for task status and approval requests | Yes | Yes | Only decisions/facts by policy | Yes | Required for destructive/sensitive actions |
-| Digest mode | `Work Email`, `Telegram Digest` | Low/medium | Yes, on schedule or batch completion | Yes | Yes | Derived summaries only after gates | Yes, non-destructive triage only | Required for sending/replying externally |
+| Digest mode | `Inbox Email`, `Work Email`, `Telegram Digest` | Low/medium | Yes, on schedule or batch completion | Yes | Yes | Derived summaries only after gates | Yes, non-destructive triage only | Required for sending/replying externally |
 | Alert mode | `Signals`, DM mirror for critical | High but narrow | Yes, only for important time-sensitive items | Briefly | Yes | Store compact alert record only | Yes, notification/escalation | Required for external action |
 | Family mode | `Family` | Low | Only when mentioned/replied to by default | Only on request | Minimal | No long-term writes without explicit approval | No, except reminders explicitly requested | Required for any memory/action |
 | Knowledge mode | `Knowledge` | Low | Yes, to acknowledge ingestion or schema issues | Yes | Yes | Yes, curated only | Yes, Obsidian/RAG write path | Optional if item is explicitly posted to Knowledge; required if sensitive |
@@ -116,13 +119,14 @@ Legend:
 | `LIVE` / ephemeral | Current conversation context, temporary task state, non-decision chat | DM, ops topics, sandbox, transient tool output | Session or task lifetime | No | No | No |
 | `OPLOG` | Task status, alert delivered, approval result, ingestion job result | Supergroup ops topics, system tools | 14-30 days compacted | Usually no; incident summaries only | No | No, unless sensitive payload included |
 | `RAW` | Raw captured ideas, candidate snippets, redacted decision threads, explicit `#canon` threads | Ideas, DM explicit capture, ops decisions, Knowledge rejects | 30-90 days unless promoted; raw decision records can be durable | No by default; only redacted decision records | No by default | Yes for sensitive/family/work raw content |
-| `DERIVED` | Summaries, labels, extracted tasks, digests, non-sensitive decisions | Work Email, Telegram Digest, Signals, ops topics | 30-180 days depending domain | Selective | Optional | Required for sensitive/high-impact items |
+| `DERIVED` | Summaries, labels, extracted tasks, digests, non-sensitive decisions | Inbox Email, Work Email, Telegram Digest, Signals, ops topics | 30-180 days depending domain | Selective | Optional | Required for sensitive/high-impact items |
 | `CURATED` | Structured knowledge notes, final decisions, reusable insights, project facts | Knowledge channel, explicit DM command, reviewed Ideas | Durable | Yes | Yes | Required unless explicitly posted into Knowledge and non-sensitive |
 | `LONG_TERM` / profile / preferences | Stable facts about Denis, preferences, durable personal context | DM explicit, Knowledge explicit, rare family explicit | Durable until revoked | Yes if useful; otherwise workspace memory only | Optional | Always for family; usually yes for personal profile |
 
 ### Strict Source Rules
 
 - Telegram messages are not memory by default.
+- Inbox email full bodies are not indexed by default. Store compact summaries and metadata only.
 - Work email full bodies are not indexed by default. Store compact summaries and links/references.
 - Family content is never auto-ingested into long-term memory. Stable family facts require explicit
   user approval such as "запомни".
@@ -184,7 +188,7 @@ Legend:
 
 | Source | Example | Result |
 |---|---|---|
-| Email | "Vendor changed deadline to Friday" | Work Email summary + Signals if time-sensitive; no raw email body |
+| Email | "Vendor changed deadline to Friday" | Inbox Email or Work Email summary + Signals if time-sensitive; no raw email body |
 | Email | Newsletter / promo | Ignore or weekly digest only |
 | Telegram source | 50-channel chatter | Summarize only top items above threshold; no raw chatter |
 | Family | "Pick up groceries" | No memory; optional reminder if asked |
@@ -204,7 +208,9 @@ Telegram surfaces:
 - Benka_Clawbot_base: owner DM. Most privileged human control channel. Use for direct work,
   approvals, sensitive confirmations, and personal commands.
 - Benka_Clawbot_SuperGroup: private operational forum supergroup. Use only for operations:
-  inbox, approvals, tasks, alerts/signals, system, rag-log, work-email, telegram-digest.
+  inbox, approvals, tasks, alerts/signals, system, rag-log, inbox-email, work-email, telegram-digest.
+- Inbox Email: publish processed summaries from the personal AgentMail inbox. Do not publish or
+  store full raw emails.
 - Work Email: publish processed work email summaries only. Do not publish or store full raw emails
   unless Denis explicitly asks and approves.
 - Telegram Digest: publish summaries from selected Telegram sources. Do not treat digest output as
@@ -342,7 +348,7 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 1. Create real Telegram surfaces:
    `Benka_Clawbot_SuperGroup`, `Knowledge`, `Ideas`, `Family`, `Sandbox / Lab`.
 2. Enable forum topics in the supergroup and create:
-   `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `work-email`,
+   `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `inbox-email`, `work-email`,
    `telegram-digest`.
 3. Decide BotFather privacy mode explicitly. It is bot-wide, not per-group. If the operational
    supergroup needs mention-free whole-stream topic routing, disable privacy mode and rely on
@@ -381,7 +387,7 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 
 - DM: `Benka_Clawbot_base`
 - Ops forum supergroup: `Benka_Clawbot_SuperGroup`
-  with `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `work-email`,
+  with `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `inbox-email`, `work-email`,
   `telegram-digest`
 - Separate group: `Family`
 - Separate private channel: `Knowledge`
@@ -392,7 +398,7 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 
 - DM: `Benka_Clawbot_base`
 - One forum supergroup:
-  `inbox`, `approvals`, `tasks`, `signals`, `work-email`, `telegram-digest`, `rag-log`
+  `inbox`, `approvals`, `tasks`, `signals`, `inbox-email`, `work-email`, `telegram-digest`, `rag-log`
 - Separate `Family`
 - Separate `Knowledge`
 - Use DM for ideas temporarily with explicit `#idea` until `Ideas` exists

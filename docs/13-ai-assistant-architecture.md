@@ -117,6 +117,7 @@ _light · delegated · 5% · simple_
 |---------|------|-------------|---------------|
 | DM (`Benka_Clawbot_base`) | Control | Medium | Decisions/facts on explicit command |
 | Ops supergroup (`Benka_Clawbot_SuperGroup`) | Ops hub | Medium | OPLOG only |
+| Inbox Email (topic) | Digest | Medium | Summaries only, no raw email bodies |
 | Work Email (topic) | Digest | Low | Summaries only, no raw email bodies |
 | Telegram Digest (topic) | Digest | Low | Digest summaries only |
 | Signals (topic) | Alert | High, narrow | Compact alert record |
@@ -157,6 +158,7 @@ bounded task (e.g., a timed digest window).
 ### Strict rules
 
 - Telegram messages → `LIVE` by default. Not persisted unless promoted.
+- Inbox email full bodies → never indexed. Compact summaries and metadata only.
 - Work email full bodies → never indexed. Compact summaries only.
 - Family content → `LIVE` only. Long-term requires explicit approval.
 - Credentials, tokens, keys → never stored in memory, RAG, or Obsidian.
@@ -329,8 +331,11 @@ OpenClaw Cron Jobs (08:00/09:00/12:00/15:00/19:00/21:00 МСК)
                        │  ingest:jobs:telegram ───────────────────────┼──► cron-bridge consumer loop
  cron /trigger ────────┤    {run_id, digest_type, config_ref}        │    → digest_worker.py --now
                        │                                              │
-                       │  ingest:jobs:email ──────────────────────────┼──► email-worker (future)
- email-trigger ────────┤                                              │
+                       │  ingest:jobs:email ──────────────────────────┼──► agentmail-email-bridge
+ email-trigger ────────┤    {run_id, job_type, digest_type}          │    → openclaw agent → AgentMail
+                       │                                              │    → inbox-email topic + derived events
+                       │  ingest:events:email ────────────────────────┼──► scheduled digest recap builder
+ email-poller ─────────┤    (derived inbox-email events, 7d)         │
                        │  ingest:events:telegram ─────────────────────┼──► telethon-event-listener (future)
  Telethon listener ────┤    (individual messages, real-time)         │    → enrich → classify → alert/rag
                        │                                              │
@@ -372,8 +377,9 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 | Stream | Status | Worker |
 |--------|--------|--------|
 | `ingest:jobs:telegram` | ✅ Live | `digest-consumer` thread → `digest_worker.py` |
+| `ingest:jobs:email` | 🧪 Artifact ready | `agentmail-email-bridge` → OpenClaw agent + AgentMail |
+| `ingest:events:email` | 🧪 Artifact ready | derived inbox-event buffer for scheduled recaps |
 | `ingest:rag:queue` | ✅ Live | `rag-consumer` thread → LightRAG `/documents/upload` |
-| `ingest:jobs:email` | Planned | email-worker (v2) |
 | `ingest:events:telegram` | Planned | real-time Telethon listener (v2) |
 
 Both consumer threads run in the same `telethon-digest-cron-bridge` container.
@@ -387,9 +393,49 @@ to hide the section.
 **Backlog (v2):**
 
 - `ingest:events:telegram` — real-time Telethon listener for private groups and signal channels
-- `ingest:jobs:email` — Work Email digest producer
+- sender/content signal routing from `ingest:events:email` into `signals`
 - Per-item pipeline: individual posts as events (vs. current whole-digest-as-job)
 - Monitoring/metrics for Redis streams (XLEN, DLQ alerts)
+
+## AgentMail Inbox Email
+
+A separate bridge polls the personal AgentMail inbox every 5 minutes through
+central OpenClaw agent runs and publishes compact mini-batches to the `inbox-email`
+topic. Scheduled recaps run at `08:00`, `13:00`, `16:00`, and `20:00` Moscow
+time from the derived event buffer rather than from Telegram history.
+
+### Architecture
+
+```text
+OpenClaw Cron Jobs (*/5 + 08:00/13:00/16:00/20:00 МСК)
+  └── isolated OpenClaw agent run
+        └── HTTP POST /trigger → agentmail-email-bridge
+              └── XADD ingest:jobs:email → HTTP 202 (immediate)
+
+                        ↓ async (Redis Streams)
+
+              agentmail-email-bridge (consumer loop)
+                    ├── poll job:
+                    │     docker exec → shared OpenClaw gateway container
+                    │     → openclaw agent → AgentMail MCP tools
+                    │     → batch summary → Telegram topic `inbox-email`
+                    │     → XADD ingest:events:email (derived events)
+                    └── digest job:
+                          XRANGE ingest:events:email
+                          → docker exec → shared OpenClaw gateway container
+                          → openclaw agent recap
+                          → Telegram topic `inbox-email`
+                          → label underlying emails as `benka/digested`
+```
+
+### Runtime guarantees
+
+- Mail access is `MCP-only` from the shared OpenClaw container; the Python bridge does not call
+  AgentMail HTTP APIs directly.
+- Internal labels `benka/polled`, `benka/low-signal`, and `benka/digested` are used for dedup
+  and lifecycle tracking without touching read-state.
+- `ingest:events:email` stores only derived summaries and metadata with 7-day retention; raw
+  bodies and attachments are excluded.
 
 ### Scoring
 

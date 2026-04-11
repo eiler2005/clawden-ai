@@ -1,5 +1,5 @@
 {
-  "version": "2026-04-10",
+  "version": "2026-04-11",
   "policy": "telegram_surfaces",
   "principles": [
     "least_privilege",
@@ -73,7 +73,7 @@
     {
       "name": "Benka_Clawbot_SuperGroup",
       "chat_id": "<ops-supergroup-chat-id>",
-      "purpose": "Operational control hub with forum topics for inbox, approvals, tasks, alerts, system logs, rag-log, work-email, and telegram-digest.",
+      "purpose": "Operational control hub with forum topics for inbox, approvals, tasks, alerts, system logs, rag-log, inbox-email, work-email, and telegram-digest.",
       "type": "supergroup_forum",
       "bot_mode": "control",
       "category": ["control", "publish", "operations"],
@@ -84,6 +84,7 @@
         "signals": "<topic-id-signals>",
         "system": "<topic-id-system>",
         "rag-log": "<topic-id-rag-log>",
+        "inbox-email": "<topic-id-inbox-email>",
         "work-email": "<topic-id-work-email>",
         "telegram-digest": "<topic-id-telegram-digest>"
       },
@@ -109,6 +110,39 @@
         "default_action": "operational_response_or_compact_log",
         "approvals_topic_required_for_sensitive_actions": true,
         "rag_log_must_not_include_raw_sensitive_payloads": true
+      }
+    },
+    {
+      "name": "Inbox Email",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<topic-id-inbox-email>",
+      "purpose": "Near-real-time mini-batches and scheduled digests from AgentMail personal inbox.",
+      "type": "supergroup_topic",
+      "bot_mode": "digest",
+      "category": ["publish", "derived_ingestion"],
+      "permissions": {
+        "read_messages": "deny",
+        "post_messages": "allow",
+        "reply_to_messages": "optional",
+        "pin_messages": "deny",
+        "delete_messages": "deny",
+        "manage_topics": "not_applicable",
+        "invite_users": "deny",
+        "full_admin": "deny",
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": false
+      },
+      "memory_policy": {
+        "auto_ingestion": false,
+        "allowed_classes": ["LIVE", "OPLOG", "DERIVED"],
+        "store_full_raw_email": false,
+        "rag_index_full_email": false
+      },
+      "ingestion_policy": {
+        "default_action": "poll_and_summarize",
+        "poll_interval_minutes": 5,
+        "scheduled_digest_hours": [8, 13, 16, 20],
+        "persistent_storage_requires_sensitivity_gate": true
       }
     },
     {

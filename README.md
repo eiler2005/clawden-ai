@@ -176,6 +176,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
 - **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 6× daily
+- **AgentMail inbox feed** — central OpenClaw + AgentMail MCP polls personal inbox every 5 minutes, posts mini-batches and scheduled recaps to the `inbox-email` topic
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
 - **Voice messages** — Whisper transcription baked into container
 - **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
@@ -198,8 +199,9 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 | Knowledge graph | [LightRAG](https://github.com/HKUDS/LightRAG) + Gemini embeddings |
 | **Integration bus** | **Redis 7 Streams** — async ingestion, consumer groups, DLQ |
 | Digest reader | Telethon MTProto — 150–200 Telegram channels, 6× daily |
+| Email ingest | AgentMail via central OpenClaw MCP access — 5-min poll + 4 daily digests |
 | Voice transcription | Whisper (ffmpeg, baked into image) |
-| Interface | Telegram Bot API + Telethon MTProto digest reader/poster |
+| Interface | Telegram Bot API + Telethon MTProto + AgentMail-driven inbox reader |
 | Reverse proxy | Caddy 2 (mTLS client cert auth) |
 | Notes sync | Obsidian ↔ [Syncthing](https://syncthing.net) (bidirectional) |
 | Host | Hetzner CX23, Ubuntu 24.04 |
@@ -283,6 +285,14 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   └── omniroute.env.example       env template with secret generation instructions
 ├── artifacts/integration-bus/
 │   └── docker-compose.yml          Redis 7 Streams compose (deploy at /opt/integration-bus/)
+├── artifacts/agentmail-email/
+│   ├── docker-compose.yml          standalone inbox-email compose template
+│   ├── Dockerfile                  Python + OpenClaw CLI image
+│   ├── cron_bridge.py              HTTP bridge + Redis consumer for poll/digest jobs
+│   ├── *.py                        Agent runner, prompts, event store, poster, models
+│   ├── config.example.json         redacted inbox config template
+│   ├── sync-openclaw-cron-jobs.sh  server-side OpenClaw Cron Jobs sync helper
+│   └── email.env.example           redacted runtime env template
 ├── artifacts/telethon-digest/
 │   ├── docker-compose.yml          standalone digest compose template
 │   ├── Dockerfile                  Python service image
@@ -305,6 +315,8 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   └── 13-ai-assistant-architecture.md      model routing and assistant behavior
 ├── scripts/
 │   ├── deploy-workspace.sh         rsync workspace/ to server
+│   ├── deploy-agentmail-email.sh   deploy inbox-email bridge + central OpenClaw MCP wiring
+│   ├── deploy-telethon-digest.sh   deploy Telegram digest bridge
 │   ├── setup-lightrag.sh           provision LightRAG on server
 │   ├── sync-obsidian.sh            legacy one-way rsync (superseded by Syncthing)
 │   ├── create-lightrag-env.sh      generate scripts/lightrag.env from template
@@ -351,13 +363,13 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 | Source | Stream | Status |
 |--------|--------|--------|
 | Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 6× daily |
+| AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | 🧪 Deployed — central OpenClaw MCP path validated; successful empty-window poll and editorial digest skip observed, live publish/post path pending first publishable email |
 | LightRAG async ingest | `ingest:rag:queue` | ✅ Live — digest notes pushed after each run, RAG consumer uploads immediately |
 
 ### Planned sources (v2)
 
 | Source | Stream | Notes |
 |--------|--------|-------|
-| Work email digest | `ingest:jobs:email` | Daily summary, no raw bodies stored |
 | Signal feeds | `ingest:events:telegram` | Real-time Telethon listener for priority channels / private groups |
 | Web feeds / webhooks | `ingest:events:web` | RSS, webhooks, site monitoring |
 
@@ -407,6 +419,8 @@ open http://127.0.0.1:8384
 # Integration bus — Redis health + stream lengths
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli ping'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:telegram'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:email'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN dlq:failed'
 
 # Telethon Digest logs
@@ -419,6 +433,10 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 # Telethon Digest cron bridge health/status
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'curl -s http://127.0.0.1:8091/health && echo && curl -s http://127.0.0.1:8091/status'
+
+# AgentMail inbox-email bridge health/status
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8092/health && echo && curl -s http://127.0.0.1:8092/status'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.

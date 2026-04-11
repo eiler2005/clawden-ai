@@ -744,6 +744,133 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
 ```
 
+## AgentMail Inbox Email
+
+AgentMail Inbox Email polls the personal inbox every 5 minutes through the
+shared OpenClaw gateway container with AgentMail MCP, posts compact mini-batches to the
+`inbox-email` topic, and publishes scheduled recaps at `08:00`, `13:00`,
+`16:00`, and `20:00` MSK.
+
+### Deploy
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+bash scripts/deploy-agentmail-email.sh
+```
+
+Local gitignored secret source:
+
+```text
+secrets/agentmail-email/email.env
+```
+
+Required local keys:
+
+- `AGENTMAIL_API_KEY`
+- `AGENTMAIL_INBOX_REF`
+- `EMAIL_DIGEST_SUPERGROUP_ID`
+- `EMAIL_DIGEST_TOPIC_ID`
+
+The deploy script:
+
+- rsyncs `/opt/agentmail-email`
+- hydrates `TELEGRAM_BOT_TOKEN` from `/opt/openclaw/.env`
+- mirrors `AGENTMAIL_API_KEY` into `/opt/openclaw/.env`
+- ensures the central OpenClaw config exposes AgentMail via `mcp.servers.agentmail`
+- rebuilds the lightweight Python `agentmail-email-bridge`
+- removes stale `/opt/agentmail-email/openclaw-config` leftovers from the old embedded-runtime design
+- prunes dangling Docker image/build artifacts after a successful rebuild
+- syncs the five OpenClaw Cron Jobs
+
+Architecture note:
+
+- `agentmail-email-bridge` no longer carries its own OpenClaw runtime or copied auth store.
+- Mailbox access happens only inside the shared `openclaw-openclaw-gateway-1` container.
+- The bridge talks to that container through Docker exec and remains responsible only for
+  Redis orchestration, Telegram posting, and state tracking.
+
+Current validation snapshot:
+
+- the rebuilt bridge image is about `229 MB` on server (down from the earlier embedded-runtime build)
+- manual `/trigger` → `poll` enqueue works
+- a clean empty-window poll finished with `exit_code=0` on `2026-04-11`
+- a manual `editorial` digest also finished with `exit_code=0` and `digest skipped (no derived events)`
+- no Telegram message was posted during that validation run because the inbox window contained no
+  publishable items
+
+### Managed OpenClaw jobs
+
+- `AgentMail Inbox · Poll every 5m`
+- `AgentMail Inbox · 08:00 Morning brief`
+- `AgentMail Inbox · 13:00 Regular digest`
+- `AgentMail Inbox · 16:00 Regular digest`
+- `AgentMail Inbox · 20:00 Evening editorial`
+
+### Bridge diagnostics
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8092/health && echo && curl -s http://127.0.0.1:8092/status'
+```
+
+- `GET /health` — quick liveness + last poll/digest snapshot
+- `GET /status` — current or last run payload with timestamps, job type, exit code, and tail
+- `POST /trigger` — enqueue `poll` or `digest` into `ingest:jobs:email`
+
+### Integration bus checks
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email
+  docker exec integration-bus-redis redis-cli XLEN ingest:events:email
+  docker exec integration-bus-redis redis-cli XPENDING ingest:jobs:email email-workers - + 10
+'
+```
+
+### Manual enqueue examples
+
+```bash
+# Poll now
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:email "*" \
+    run_id manual-poll \
+    job_type poll \
+    inbox_ref <agentmail-inbox-ref> \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+
+# Digest now
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:email "*" \
+    run_id manual-digest \
+    job_type digest \
+    digest_type interval \
+    inbox_ref <agentmail-inbox-ref> \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+```
+
+### Watch logs
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/agentmail-email && sudo docker compose logs --tail=100 agentmail-email-bridge'
+```
+
+### Cleanup old install leftovers
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  sudo rm -rf /opt/agentmail-email/openclaw-config
+  sudo docker image prune -af
+  sudo docker builder prune -af
+'
+```
+
+Use this after migrating away from the old embedded-runtime design or after repeated failed image builds.
+
 ## If SSH times out during banner exchange
 
 This indicates a host-level access problem before shell login. Use Hetzner Console for recovery checks:

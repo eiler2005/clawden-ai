@@ -1,0 +1,25 @@
+services:
+  agentmail-email-bridge:
+    container_name: agentmail-email-bridge
+    build: .
+    restart: unless-stopped
+    env_file: email.env
+    command: ["/app/entrypoint.sh"]
+    environment:
+      REDIS_URL: redis://integration-bus-redis:6379
+    ports:
+      - "127.0.0.1:8092:8092"
+    volumes:
+      - agentmail-email-state:/app/state
+      - ./config.json:/app/config.json
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - openclaw_default
+
+networks:
+  openclaw_default:
+    external: true
+
+volumes:
+  agentmail-email-state:
+    name: agentmail-email-state

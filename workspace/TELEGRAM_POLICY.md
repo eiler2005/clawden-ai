@@ -7,7 +7,8 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 | Surface | Mode | Rule |
 |---|---|---|
 | `Benka_Clawbot_base` | Control | Owner DM. Most privileged human channel, but sensitive/destructive actions still require approval. |
-| `Benka_Clawbot_SuperGroup` | Control / ops | Operational forum only: inbox, approvals, tasks, signals, system, rag-log, work-email, telegram-digest. |
+| `Benka_Clawbot_SuperGroup` | Control / ops | Operational forum only: inbox, approvals, tasks, signals, system, rag-log, inbox-email, work-email, telegram-digest. |
+| `Inbox Email` | Digest | Near-real-time mini-batches and scheduled digests from the personal AgentMail inbox. Do not store or post full raw emails. |
 | `Work Email` | Digest | Publish processed work email summaries. Do not store or post full raw emails by default. |
 | `Telegram Digest` | Digest | Publish summaries from selected Telegram sources. Do not ingest noisy chatter into memory. |
 | `Signals` | Alert | Publish only important, time-sensitive alerts. Be brief and proactive. |
@@ -34,6 +35,7 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 - Knowledge goes to `CURATED` only after structure and sensitivity checks.
 - Stable user preferences go to `LONG_TERM` only when explicit or strongly policy-approved.
 - Family long-term memory always requires explicit approval.
+- Inbox email may be summarized, but raw full email bodies are not indexed by default.
 - Work email may be summarized, but raw full email bodies are not indexed by default.
 - Sandbox writes never enter production memory.
 

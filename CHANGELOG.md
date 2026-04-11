@@ -7,8 +7,39 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Pending
-- (none)
+### Added
+- **`artifacts/agentmail-email/`**: new AgentMail inbox-email pipeline artifact with standalone
+  `docker-compose.yml`, `cron_bridge.py`, `agent_runner.py`, prompt builders, Redis-backed
+  derived-event buffer, Telegram poster, config/env templates, and OpenClaw cron sync helper.
+- **`scripts/deploy-agentmail-email.sh`**: deployment helper for `/opt/agentmail-email`,
+  central OpenClaw MCP wiring in `openclaw.json`, lightweight bridge rebuild, cron sync, and
+  post-deploy Docker cleanup.
+- **Telegram topology**: new `inbox-email` topic/surface added to policy/config docs next to
+  `work-email` and `telegram-digest`.
+
+### Changed
+- **`README.md`**: repository structure, integration-bus status, quick ops, and feature list now
+  include the AgentMail inbox-email pipeline.
+- **`artifacts/agentmail-email/`**: removed embedded OpenClaw runtime path; the bridge now
+  delegates agent runs to the shared `openclaw-openclaw-gateway-1` container via Docker exec,
+  so auth, MCP config, and AgentMail access stay centralized.
+- **Server cleanup**: stale email Redis lock/pending entry removed after embedded-runtime rollback;
+  unused Docker build cache cleared and the bridge image size dropped from ~2.78 GB to ~229 MB.
+- **`docs/03-operations.md`**: added AgentMail inbox-email deploy/runbook section.
+- **`docs/12-telegram-channel-architecture.md`** and **`docs/13-ai-assistant-architecture.md`**:
+  added `Inbox Email` surface, bus streams `ingest:jobs:email` / `ingest:events:email`, and
+  near-real-time poll + scheduled digest architecture.
+- **`artifacts/openclaw/openclaw.json`** and **`artifacts/openclaw/env.redacted.example`**:
+  added AgentMail MCP wiring via `AGENTMAIL_API_KEY`.
+
+### Verified
+- `agentmail-email-bridge` now starts as a lightweight Python image (`229 MB` on server after rebuild).
+- `/trigger` returns `202` and enqueues `poll` jobs into `ingest:jobs:email`.
+- Bridge consumer loop starts successfully and hands poll work to the shared OpenClaw container.
+- Manual `poll` finished with `exit_code=0` on `2026-04-11`; the window had no publishable emails, so
+  the empty-window path completed without Telegram posting or label mutations.
+- Manual `editorial` digest finished with `exit_code=0` on `2026-04-11`; it correctly returned
+  `digest skipped (no derived events)` instead of failing when the event buffer was empty.
 
 ## [2026-04-11c] — Fix sync-openclaw-cron-jobs.sh duplicate prevention
 
