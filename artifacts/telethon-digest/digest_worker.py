@@ -249,7 +249,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config()
-    schedule_hours = config.get("schedule_hours", [8, 9, 12, 15, 19, 21])
+    schedule_hours = config.get("schedule_hours", [8, 11, 14, 17, 21])
     tz = config.get("timezone", "Europe/Moscow")
 
     if args.now:

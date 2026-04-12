@@ -4,13 +4,12 @@
   "lookahead_hours": 4,
   "min_score": 2,
   "top_posts_for_llm": 42,
-  "schedule_hours": [8, 9, 12, 15, 19, 21],
+  "schedule_hours": [8, 11, 14, 17, 21],
   "digest_types": {
     "8":  "morning",
-    "9":  "interval",
-    "12": "interval",
-    "15": "interval",
-    "19": "interval",
+    "11": "interval",
+    "14": "interval",
+    "17": "interval",
     "21": "editorial"
   },
   "timezone": "Europe/Moscow",

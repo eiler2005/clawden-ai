@@ -154,10 +154,9 @@ If the bridge returns 409 digest_already_running, report that another digest is 
 remove_old_jobs
 
 add_job "Telethon Digest · 08:00 Morning brief" "0 8 * * *" "morning" "Morning brief for Telegram Digest"
-add_job "Telethon Digest · 09:00 Regular digest" "0 9 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 12:00 Regular digest" "0 12 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 15:00 Regular digest" "0 15 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 19:00 Regular digest" "0 19 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 11:00 Regular digest" "0 11 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 14:00 Regular digest" "0 14 * * *" "interval" "Regular interval digest"
+add_job "Telethon Digest · 17:00 Regular digest" "0 17 * * *" "interval" "Regular interval digest"
 add_job "Telethon Digest · 21:00 Evening editorial" "0 21 * * *" "editorial" "Evening editorial digest"
 
 echo "OpenClaw cron jobs synced for Telethon Digest."

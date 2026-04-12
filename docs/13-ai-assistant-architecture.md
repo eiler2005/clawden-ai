@@ -300,12 +300,12 @@ if they only summarize and publish within the configured topic.
 A scheduled service reads 150–200 Telegram channels Denis subscribes to,
 scores posts by folder priority and pinned-dialog status, summarizes via
 OmniRoute `medium`, and posts a compact digest to the `telegram-digest`
-topic in `Benka_Clawbot_SuperGroup` — 6× daily (08:00, 09:00, 12:00, 15:00, 19:00, 21:00 МСК).
+topic in `Benka_Clawbot_SuperGroup` — 5× daily (08:00, 11:00, 14:00, 17:00, 21:00 МСК).
 
 ### Architecture
 
 ```
-OpenClaw Cron Jobs (08:00/09:00/12:00/15:00/19:00/21:00 МСК)
+OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
   └── isolated OpenClaw agent run
         └── HTTP POST /trigger → telethon-digest-cron-bridge
               └── XADD ingest:jobs:telegram → HTTP 202 (immediate)
@@ -319,6 +319,7 @@ OpenClaw Cron Jobs (08:00/09:00/12:00/15:00/19:00/21:00 МСК)
               ├── scorer.py       — Pass 1: folder_priority × pin_boost; top-30 → LLM
               ├── link_builder.py — t.me deep links per post
               ├── summarizer.py   — OmniRoute medium, structured digest prompts
+              ├── pulse.py        — pulse ranking: buckets, diversity, novelty, interest profile
               └── poster.py       — Bot API → telegram-digest topic, split at 4000 chars
 ```
 
@@ -354,14 +355,13 @@ Stream naming:
 Container `telethon-digest-cron-bridge` shares the `openclaw_default` network and
 has direct access to `http://omniroute:20129/v1` and `http://integration-bus-redis:6379`.
 
-The scheduler of record is the OpenClaw Gateway itself. The six digest jobs
+The scheduler of record is the OpenClaw Gateway itself. The five digest jobs
 are stored in the gateway cron store and show up in Control → Cron Jobs:
 
 - `Telethon Digest · 08:00 Morning brief`
-- `Telethon Digest · 09:00 Regular digest`
-- `Telethon Digest · 12:00 Regular digest`
-- `Telethon Digest · 15:00 Regular digest`
-- `Telethon Digest · 19:00 Regular digest`
+- `Telethon Digest · 11:00 Regular digest`
+- `Telethon Digest · 14:00 Regular digest`
+- `Telethon Digest · 17:00 Regular digest`
 - `Telethon Digest · 21:00 Evening editorial`
 
 ### Rate limit handling
@@ -385,10 +385,25 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 Both consumer threads run in the same `telethon-digest-cron-bridge` container.
 `integration-bus-redis` (Redis 7 Alpine) is a standalone project at `/opt/integration-bus/`.
 
-**Known failure mode (poster.py):** `poster.py` hides the entire `Пульс дня` block when
-`document.themes` is empty, but `summarizer.py` can legitimately sanitize all candidate
-themes down to `[]`. That case should be treated as a content-quality fallback, not a reason
-to hide the section.
+### `Пульс дня` ranking
+
+`Пульс дня` now behaves like a compact editor, not a raw repetition counter.
+
+- Input: strong scored Telegram posts after dedup
+- Candidate generation: sanitized LLM `themes`, then local extraction, then fallback storyline lines
+- Ranking factors:
+  - cross-channel / repeated-signal strength
+  - bucket fit to Denis's interests
+  - novelty vs recently published pulse lines
+  - line quality (prefer storyline/theme over source-like labels)
+  - diversity constraints so one category does not dominate the block
+- Output rule: pick one strong line per bucket first, then fill the remaining slots with the next
+  best lines, capped per bucket
+
+The interest profile lives in `/app/state/pulse-profile.json` and is updated after each digest from
+the current strong-post pool. It stores bucket momentum, learned terms, and recent pulse signatures.
+This makes the digest adapt over time and keeps the ranking layer reusable for future AgentMail
+recap selection.
 
 **Backlog (v2):**
 
@@ -484,7 +499,7 @@ docker compose run --rm telethon-digest python digest_worker.py --now
 ### Digest format (Telegram HTML)
 
 ```html
-📊 <b>Дайджест</b> | 08:00–12:00 (143 каналов, 12 постов)
+📊 <b>Дайджест</b> | 11:00–14:00 (143 каналов, 12 постов)
 
 📁 <b>VIP</b>
 • <b>КаналA</b>: Краткое резюме события. (<a href="https://t.me/...">→</a>)

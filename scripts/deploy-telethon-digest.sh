@@ -113,7 +113,7 @@ PY
 cat <<'EOF'
 Telethon Digest deployed. OpenClaw Cron Jobs are now the scheduler.
 
-Scheduled: 08:00, 09:00, 12:00, 15:00, 19:00, 21:00 MSK via OpenClaw Control -> Cron Jobs
+Scheduled: 08:00, 11:00, 14:00, 17:00, 21:00 MSK via OpenClaw Control -> Cron Jobs
 
 Useful commands:
   # Run digest immediately

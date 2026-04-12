@@ -19,6 +19,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `work-email` and `telegram-digest`.
 
 ### Changed
+- **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
+  правилами дедупликации по смысловому факту, fallback на реальные storyline из digest-контента,
+  и без пустой заглушки про отсутствие сквозных тем.
+- **`artifacts/telethon-digest/pulse.py`**: added interest-bucket ranking with persisted profile
+  state in `/app/state/pulse-profile.json`; pulse selection now balances repeated signal, Denis-fit
+  buckets, novelty, and diversity instead of only repeated news pressure.
+- **Telethon Digest schedule**: окна обновлены до `08:00`, `11:00`, `14:00`, `17:00`, `21:00`
+  Moscow time across config, cron sync, deploy helper, and ops docs.
 - **`README.md`**: repository structure, integration-bus status, quick ops, and feature list now
   include the AgentMail inbox-email pipeline.
 - **OpenClaw runtime image**: production first moved from `openclaw-with-iproute2:20260408` to

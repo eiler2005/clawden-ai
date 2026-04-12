@@ -632,14 +632,14 @@ digests to the configured supergroup topic using the OpenClaw Telegram bot token
 It calls OmniRoute (`http://omniroute:20129/v1`) for LLM summarization and dedup.
 
 **Scheduling:** OpenClaw Gateway Cron Jobs trigger one-shot runs at
-`08:00, 09:00, 12:00, 15:00, 19:00, 21:00 MSK`. No long-running daemon.
+`08:00, 11:00, 14:00, 17:00, 21:00 MSK`. No long-running daemon.
 
 **Digest types (auto-selected by hour):**
 
 | Hour | Type | Format |
 |------|------|--------|
 | 08:00 | morning | Compact snapshot, 1-2 messages |
-| 09/12/15/19 | interval | Per-folder Tier A detail + Tier B summary |
+| 11/14/17 | interval | Per-folder Tier A detail + Tier B summary |
 | 21:00 | editorial | Full editorial: summary → themes → must-read → low signal → watchpoints |
 
 ### Deploy
@@ -651,15 +651,14 @@ bash scripts/deploy-telethon-digest.sh
 
 The script: rsyncs source, fills secrets from `/opt/openclaw/.env`, rebuilds image,
 stops the old daemon if any, removes legacy `/etc/cron.d/telethon-digest`, and syncs
-the six OpenClaw Cron Jobs into the Gateway store so they appear in Control → Cron Jobs.
+the five OpenClaw Cron Jobs into the Gateway store so they appear in Control → Cron Jobs.
 
 **Managed OpenClaw jobs:**
 
 - `Telethon Digest · 08:00 Morning brief`
-- `Telethon Digest · 09:00 Regular digest`
-- `Telethon Digest · 12:00 Regular digest`
-- `Telethon Digest · 15:00 Regular digest`
-- `Telethon Digest · 19:00 Regular digest`
+- `Telethon Digest · 11:00 Regular digest`
+- `Telethon Digest · 14:00 Regular digest`
+- `Telethon Digest · 17:00 Regular digest`
 - `Telethon Digest · 21:00 Evening editorial`
 
 Each job runs as an **isolated OpenClaw cron run** and sends one authenticated
@@ -671,6 +670,30 @@ gateway retries a job later than the scheduled hour.
 The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
 the bridge as "hung" while the worker is still processing a large window.
+
+### How `Пульс дня` is selected
+
+`Пульс дня` is no longer a plain "most repeated news" block. The editorial layer now does:
+
+1. take the strong scored post pool after `reader.py` → `scorer.py` → `dedup.py`
+2. build pulse candidates from LLM `themes`, local extraction, and fallback storyline lines
+3. rank candidates by:
+   - repeated / cross-channel signal
+   - fit to Denis-interest buckets (`AI`, `Telegram/privacy`, `fintech`, `geopolitics`, `creator`, `product`, `science`)
+   - novelty vs recently published pulse lines
+   - line quality (prefer storyline/theme, avoid source-like labels)
+   - diversity bonus so one category does not flood the block
+4. publish one strong line per bucket first, then fill remaining slots with the next best lines
+
+The bucket profile is persisted in `/app/state/pulse-profile.json` inside the shared `telethon-state`
+volume. It is updated after each digest from the current strong-post pool and stores:
+
+- bucket momentum from recent windows
+- learned bucket terms discovered from recurring posts
+- recent pulse signatures to suppress stale repetition
+
+This ranking/profile layer is intentionally generic and can later be reused for `inbox-email` or
+`work-email` recaps.
 
 **Important:** the target OpenClaw agent must be allowed to use `exec` and must
 have access to `/opt/telethon-digest`. The sync script defaults to agent `main`,

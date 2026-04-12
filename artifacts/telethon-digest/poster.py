@@ -199,7 +199,7 @@ def _story_count(document: DigestDocument) -> int:
 def _render_themes(document: DigestDocument) -> list[str]:
     title = "Пульс дня"
     if not document.themes:
-        return ["", f"<b>{title}</b>", "• Сильных сквозных тем за окно не выделилось."]
+        return []
     return ["", f"<b>{title}</b>", *[f"• {escape(item)}" for item in document.themes]]
 
 

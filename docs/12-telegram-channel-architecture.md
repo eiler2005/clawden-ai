@@ -215,6 +215,8 @@ Telegram surfaces:
   unless Denis explicitly asks and approves.
 - Telegram Digest: publish summaries from selected Telegram sources. Do not treat digest output as
   raw memory.
+- Telegram Digest may use a reusable interest-bucket ranking layer (`Пульс дня`) so one noisy topic
+  does not dominate the whole digest. The same ranking profile can later be reused for email recaps.
 - Signals: publish only important, time-sensitive alerts. Be proactive here, but brief.
 - Family: separate family group/domain. Be conservative. Require mention or reply by default. Never
   mix family context with work or operations. Do not write family long-term memory without explicit

@@ -106,7 +106,7 @@ bridges.
 │  │  Consumer loop → digest_worker.py --now     │                      │
 │  │  Telethon MTProto → OmniRoute medium →      │                      │
 │  │  Bot API topic post + Obsidian + LightRAG   │                      │
-│  │  schedule: 08/09/12/15/19/21 Europe/Moscow  │                      │
+│  │  schedule: 08/11/14/17/21 Europe/Moscow     │                      │
 │  └──────────────────────────────────────────────┘                      │
 │                                                                         │
 │  ┌──────────────────────────────────────────────┐                      │
@@ -194,7 +194,8 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 ## Features
 
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
-- **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 6× daily
+- **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 5× daily
+- **Interest-aware `Пульс дня`** — pulse ranking mixes repeated-signal strength, Denis-fit buckets, novelty, and diversity; bucket profile learns from recent posts and is reusable for future email recaps
 - **AgentMail inbox feed** — Python-first AgentMail adapter polls personal inbox every 5 minutes, OpenClaw classifies/summarizes snapshots, and the bridge posts mini-batches plus scheduled recaps to `inbox-email`
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
 - **Voice messages** — transcription is intentionally disabled on this VPS for now; may return later via a lighter CPU path or external API
@@ -217,7 +218,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 | Routing providers | Kiro (Claude, AWS Builder ID) · OpenRouter hub · Gemini |
 | Knowledge graph | [LightRAG](https://github.com/HKUDS/LightRAG) + Gemini embeddings |
 | **Integration bus** | **Redis 7 Streams** — async ingestion, consumer groups, DLQ |
-| Digest reader | Telethon MTProto — 150–200 Telegram channels, 6× daily |
+| Digest reader | Telethon MTProto — 150–200 Telegram channels, 5× daily |
 | Email ingest | AgentMail HTTP API in standalone Python bridge + OpenClaw JSON-only summarization — 5-min poll + 4 daily digests |
 | Voice transcription | Not enabled in the current image; may return later via a lighter CPU stack or external API |
 | Interface | Telegram Bot API + Telethon MTProto + AgentMail HTTP inbox reader |
@@ -382,7 +383,7 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 
 | Source | Stream | Status |
 |--------|--------|--------|
-| Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 6× daily |
+| Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 5× daily |
 | AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | ✅ Live — standalone `agentmail-email-bridge` reads AgentMail directly, poll every 5m, digests at 08/13/16/20 MSK; manual poll + editorial digest validated on 2026-04-12 |
 | LightRAG async ingest | `ingest:rag:queue` | ✅ Live — digest notes pushed after each run, RAG consumer uploads immediately |
 
