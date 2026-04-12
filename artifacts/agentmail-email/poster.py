@@ -3,11 +3,12 @@ Telegram posting helpers for inbox-email poll batches and digests.
 """
 from __future__ import annotations
 
+from collections import Counter
 import logging
 import os
 import re
 from datetime import datetime
-from html import escape
+from html import escape, unescape
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -26,6 +27,7 @@ MAX_MSG_LEN = 3900
 
 _ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre"}
 _TAG_RE = re.compile(r"<(/?)(\w+)([^>]*)>", re.IGNORECASE)
+_URL_RE = re.compile(r"https?://\S+")
 
 
 def _sanitize_html(text: str) -> str:
@@ -42,6 +44,19 @@ def _fmt_window(start: datetime, end: datetime) -> str:
     local_start = start.astimezone(TIMEZONE)
     local_end = end.astimezone(TIMEZONE)
     return f"{local_start:%H:%M}–{local_end:%H:%M} {TIMEZONE.key}"
+
+
+def _fmt_clock(value: str | None) -> str:
+    if not value:
+        return "--:--"
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return "--:--"
+    return dt.astimezone(TIMEZONE).strftime("%H:%M")
 
 
 def _model_line(meta: ModelMeta) -> str:
@@ -70,8 +85,9 @@ def render_poll_batch(result: PollPrepResult, *, window_start: datetime, window_
     lines = [
         f"📬 <b>Inbox Email</b> | {_fmt_window(window_start, window_end)}",
         (
-            f"• Новых тредов: <b>{result.threads_selected}</b> "
-            f"из <b>{result.threads_considered}</b>; low-signal: <b>{result.low_signal_count}</b>."
+            f"• Всего писем в окне: <b>{result.messages_scanned}</b>; "
+            f"новых тредов: <b>{result.threads_selected}</b> из <b>{result.threads_considered}</b>; "
+            f"low-signal: <b>{result.low_signal_count}</b>."
         ),
     ]
     if result.batch_lead:
@@ -142,6 +158,155 @@ def render_digest(document: DigestPrepResult, events: list[EmailEvent], *, windo
 
     lines.append("")
     lines.append(_model_line(document.model_meta))
+    return _sanitize_html("\n".join(lines).strip())
+
+
+def _digest_title(digest_type: str) -> str:
+    titles = {
+        "morning": "Inbox Email · Morning brief",
+        "interval": "Inbox Email · Regular digest",
+        "editorial": "Inbox Email · Evening editorial",
+    }
+    return titles.get(digest_type, "Inbox Email")
+
+
+def _sender_counts(messages: list[dict]) -> list[tuple[str, int]]:
+    counter = Counter()
+    for message in messages:
+        sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+        counter[sender] += 1
+    return sorted(counter.items(), key=lambda item: (-item[1], item[0].lower()))
+
+
+def _message_line(message: dict, *, include_preview: bool) -> list[str]:
+    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+    subject = str(message.get("subject") or "(no subject)").strip() or "(no subject)"
+    timestamp = _fmt_clock(str(message.get("timestamp") or ""))
+    attachment = ""
+    if message.get("has_attachments"):
+        attachment = f" · вложения: {int(message.get('attachment_count') or 0)}"
+    lines = [f"• {timestamp} — <b>{escape(sender)}</b> — {escape(subject)}{attachment}"]
+    if include_preview:
+        preview = str(message.get("preview") or "").strip()
+        if preview:
+            lines.append(escape(preview))
+    return lines
+
+
+def _compact_text(value: str | None, *, limit: int) -> str:
+    text = unescape(str(value or ""))
+    text = text.replace("\xa0", " ").replace("\u200c", " ").replace("&zwnj;", " ")
+    text = _URL_RE.sub("", text)
+    text = " ".join(text.split())
+    if not re.search(r"[A-Za-zА-Яа-я0-9]", text):
+        return ""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _message_snippet(message: dict, *, limit: int = 120) -> str:
+    preview = str(message.get("preview") or "").strip()
+    if not preview:
+        return ""
+    preview = preview.replace("View this post on the web at", "Web:")
+    preview = preview.replace("|", " · ")
+    return _compact_text(preview, limit=limit)
+
+
+def _important_line(message: dict) -> str:
+    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+    subject = str(message.get("subject") or "(no subject)").strip() or "(no subject)"
+    timestamp = _fmt_clock(str(message.get("timestamp") or ""))
+    snippet = _message_snippet(message, limit=150)
+    if snippet:
+        return f"• {timestamp} — <b>{escape(sender)}</b>: {escape(subject)}. {escape(snippet)}"
+    return f"• {timestamp} — <b>{escape(sender)}</b>: {escape(subject)}."
+
+
+def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
+    low_signal_messages = [message for message in messages if bool(message.get("is_low_signal"))]
+    if not low_signal_messages:
+        return []
+
+    senders = [str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender" for message in low_signal_messages]
+    top_senders = ", ".join(escape(sender) for sender, _ in Counter(senders).most_common(3))
+    lines = [f"• Остальной фон окна: {len(low_signal_messages)} low-signal писем, в основном от {top_senders}."]
+
+    if len(messages) > len(low_signal_messages):
+        important_senders = len({str(message.get('sender_display') or '').strip() for message in messages if not bool(message.get('is_low_signal')) and str(message.get('sender_display') or '').strip()})
+        useful_count = len(messages) - len(low_signal_messages)
+        useful_label = "более полезное письмо" if useful_count == 1 else "более полезных письма" if useful_count < 5 else "более полезных писем"
+        sender_label = "отправителя" if important_senders == 1 else "отправителей"
+        lines.append(f"• Помимо шума, в окне было {useful_count} {useful_label} от {important_senders} {sender_label}.")
+
+    return lines[:limit]
+
+
+def render_mailbox_digest(
+    *,
+    digest_type: str,
+    window_start: datetime,
+    window_end: datetime,
+    messages: list[dict],
+    important_messages: list[dict],
+    model_meta: ModelMeta,
+) -> str:
+    total_threads = len({str(message.get("thread_id") or "") for message in messages if str(message.get("thread_id") or "").strip()})
+    total_senders = len(_sender_counts(messages))
+    low_signal_count = sum(1 for message in messages if bool(message.get("is_low_signal")))
+
+    lines = [
+        f"📮 <b>{escape(_digest_title(digest_type))}</b> | {_fmt_window(window_start, window_end)}",
+        f"• Окно: {_fmt_window(window_start, window_end)}",
+        f"• Всего писем: <b>{len(messages)}</b>",
+        f"• Всего тредов: <b>{total_threads}</b>",
+        f"• Отправителей: <b>{total_senders}</b>",
+        f"• Важных: <b>{len(important_messages)}</b> · low-signal: <b>{low_signal_count}</b>",
+    ]
+
+    if not messages:
+        lines.append("")
+        lines.append("<b>Главное</b>")
+        lines.append("• Новых писем за это окно не было.")
+        lines.append("")
+        lines.append(_model_line(model_meta))
+        return _sanitize_html("\n".join(lines).strip())
+
+    sender_counts = _sender_counts(messages)
+    lines.append("")
+    lines.append("<b>От кого</b>")
+    for sender, count in sender_counts[:10]:
+        suffix = "писем" if count != 1 else "письмо"
+        lines.append(f"• <b>{escape(sender)}</b> — {count} {suffix}")
+    if len(sender_counts) > 10:
+        lines.append(f"• Ещё отправителей: {len(sender_counts) - 10}")
+
+    lines.append("")
+    lines.append("<b>Письма</b>")
+    for message in messages[:12]:
+        lines.extend(_message_line(message, include_preview=False))
+        snippet = _message_snippet(message, limit=110)
+        if snippet:
+            lines.append(escape(snippet))
+    if len(messages) > 12:
+        lines.append(f"• Ещё писем: {len(messages) - 12}")
+
+    lines.append("")
+    lines.append("<b>Что важного</b>")
+    if important_messages:
+        for line in [_important_line(message) for message in important_messages[:4]]:
+            lines.append(line)
+        for line in _supporting_insights(messages):
+            lines.append(line)
+    else:
+        for line in _supporting_insights(messages, limit=3):
+            lines.append(line)
+        if lines[-1] == "<b>Что важного</b>":
+            lines.append("• Явно важных писем в этом окне не вижу.")
+
+    lines.append("")
+    lines.append(_model_line(model_meta))
     return _sanitize_html("\n".join(lines).strip())
 
 

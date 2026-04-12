@@ -15,16 +15,17 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import redis as redis_lib
 from dotenv import load_dotenv
 
 from agentmail_api import AgentMailApiClient, AgentMailApiError
 from agent_runner import AgentRunError, run_agent_json
-from event_store import append_events, list_events, trim_old_events
-from models import DigestPrepResult, ModelMeta, PollPrepResult
-from poster import post_html_message, render_digest, render_poll_batch
-from prompts import build_digest_prompt, build_prepare_poll_analysis_prompt
+from event_store import append_events, trim_old_events
+from models import ModelMeta, PollPrepResult
+from poster import post_html_message, render_mailbox_digest
+from prompts import build_prepare_poll_analysis_prompt
 import state_store
 
 load_dotenv("/app/email.env", override=False)
@@ -200,6 +201,29 @@ def _empty_poll_result(*, run_id: str, inbox_ref: str, topic_name: str) -> PollP
     )
 
 
+def _low_signal_hints(config: dict) -> list[str]:
+    return [str(item).strip().lower() for item in config.get("low_signal_hints", []) if str(item).strip()]
+
+
+def _looks_low_signal_message(message: dict, *, config: dict) -> bool:
+    low_signal_label = _labels(config)["low_signal"]
+    labels = {str(value).strip() for value in (message.get("labels") or []) if str(value).strip()}
+    if low_signal_label in labels:
+        return True
+
+    haystack = " ".join(
+        [
+            str(message.get("subject") or ""),
+            str(message.get("preview") or ""),
+            str(message.get("text_excerpt") or ""),
+            str(message.get("from_name") or ""),
+            str(message.get("from_email") or ""),
+            str(message.get("sender_domain") or ""),
+        ]
+    ).lower()
+    return any(token in haystack for token in _low_signal_hints(config))
+
+
 def _collect_thread_snapshots(
     *,
     inbox_ref: str,
@@ -284,6 +308,53 @@ def _collect_thread_snapshots(
     return len(scanned_messages), snapshots
 
 
+def _flatten_window_messages(*, thread_snapshots: list[dict], config: dict) -> list[dict]:
+    messages: list[dict] = []
+    for thread in thread_snapshots:
+        for message in thread.get("messages", []) or []:
+            sender_name = str(message.get("from_name") or thread.get("latest_from_name") or "").strip()
+            sender_email = str(message.get("from_email") or thread.get("latest_from_email") or "").strip()
+            sender_domain = str(message.get("sender_domain") or thread.get("latest_sender_domain") or "").strip()
+            sender_display = sender_name or sender_email or sender_domain or "Unknown sender"
+            preview = str(message.get("text_excerpt") or message.get("preview") or thread.get("thread_preview") or "").strip()
+            entry = {
+                "message_id": str(message.get("message_id") or "").strip(),
+                "thread_id": str(thread.get("thread_id") or "").strip(),
+                "timestamp": str(message.get("timestamp") or thread.get("received_timestamp") or thread.get("timestamp") or ""),
+                "subject": str(message.get("subject") or thread.get("subject") or "(no subject)"),
+                "sender_display": sender_display,
+                "from_name": sender_name,
+                "from_email": sender_email,
+                "sender_domain": sender_domain,
+                "preview": preview,
+                "labels": [str(value) for value in (message.get("labels") or []) if str(value).strip()],
+                "has_attachments": bool(message.get("has_attachments", False)),
+                "attachment_count": int(message.get("attachment_count", 0) or 0),
+            }
+            entry["is_low_signal"] = _looks_low_signal_message(entry, config=config)
+            messages.append(entry)
+    messages.sort(key=lambda item: str(item.get("timestamp") or ""), reverse=True)
+    return messages
+
+
+def _scheduled_digest_window(now: datetime, *, config: dict) -> tuple[datetime, datetime]:
+    tz = ZoneInfo(str(config.get("timezone", "Europe/Moscow") or "Europe/Moscow"))
+    hours = sorted({int(value) for value in config.get("schedule_hours", [8, 13, 16, 20])})
+    local_now = now.astimezone(tz)
+
+    points: list[datetime] = []
+    for day_offset in (-1, 0, 1):
+        day = local_now.date() + timedelta(days=day_offset)
+        for hour in hours:
+            points.append(datetime(day.year, day.month, day.day, hour, 0, tzinfo=tz))
+    points.sort()
+
+    end_local = max(point for point in points if point <= local_now)
+    end_index = points.index(end_local)
+    start_local = points[end_index - 1]
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc)
+
+
 def _collect_message_ids(events) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
@@ -292,6 +363,17 @@ def _collect_message_ids(events) -> list[str]:
             if message_id and message_id not in seen:
                 seen.add(message_id)
                 result.append(message_id)
+    return result
+
+
+def _collect_mailbox_message_ids(messages: list[dict]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for message in messages:
+        message_id = str(message.get("message_id") or "").strip()
+        if message_id and message_id not in seen:
+            seen.add(message_id)
+            result.append(message_id)
     return result
 
 
@@ -465,10 +547,6 @@ def _process_poll(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -> 
         )
 
         if poll_result.publish_events:
-            html = render_poll_batch(poll_result, window_start=since_dt, window_end=now)
-            posted = asyncio.run(post_html_message(html))
-            if not posted:
-                raise RuntimeError("telegram_post_failed")
             append_events(r, poll_result.publish_events, retention_days=_event_retention_days(config))
 
         commit_tail = _apply_label_actions(inbox_ref, poll_result.label_actions)
@@ -503,13 +581,11 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
     try:
         now = datetime.now(timezone.utc)
         lookback_minutes = _parse_lookback_minutes(data)
-        last_digest_at = state_store.get_dt(r, state_store.last_digest_key(inbox_ref))
         if lookback_minutes is not None:
             window_start = now - timedelta(minutes=lookback_minutes)
+            window_end = now
         else:
-            window_start = last_digest_at or (
-                now - timedelta(hours=int(config.get("digest_bootstrap_lookback_hours", 24) or 24))
-            )
+            window_start, window_end = _scheduled_digest_window(now, config=config)
 
         last_poll_success = state_store.get_dt(r, state_store.last_poll_success_key(inbox_ref))
         lag_grace = timedelta(minutes=int(config.get("poll_lag_grace_minutes", 15) or 15))
@@ -524,50 +600,43 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
                 run_id=run_id,
                 inbox_ref=inbox_ref,
                 since_dt=catchup_since,
-                until_dt=now,
+                until_dt=window_end,
             )
 
-        events = list_events(r, inbox_ref=inbox_ref, start=window_start, end=now)
-        if not events:
-            state_store.set_dt(r, state_store.last_digest_key(inbox_ref), now)
-            trim_old_events(r, retention_days=_event_retention_days(config))
-            return _tail_union(
-                catchup_tail,
-                [
-                    (
-                        f"digest summary: events=0, window={window_start.isoformat()}..{now.isoformat()}, "
-                        f"lookback={lookback_minutes or 'state-driven'}"
-                    ),
-                    "digest skipped (no derived events)",
-                ],
-            )
-
-        result = run_agent_json(
-            build_digest_prompt(
-                digest_type=digest_type,
-                topic_name=str(config.get("topic_name", "inbox-email")),
-                window_start=window_start,
-                window_end=now,
-                events=events,
-            )
+        scanned_count, thread_snapshots = _collect_thread_snapshots(
+            inbox_ref=inbox_ref,
+            since_dt=window_start,
+            until_dt=window_end,
         )
-        digest = DigestPrepResult.from_payload(result.payload, digest_type=digest_type)
-        html = render_digest(digest, events, window_start=window_start, window_end=now)
+        mailbox_messages = _flatten_window_messages(thread_snapshots=thread_snapshots, config=config)
+        important_messages = [message for message in mailbox_messages if not bool(message.get("is_low_signal"))][:5]
+
+        html = render_mailbox_digest(
+            digest_type=digest_type,
+            window_start=window_start,
+            window_end=window_end,
+            messages=mailbox_messages,
+            important_messages=important_messages,
+            model_meta=ModelMeta(model_id="agentmail-direct", tier="primary"),
+        )
         posted = asyncio.run(post_html_message(html))
         if not posted:
             raise RuntimeError("telegram_post_failed")
 
         digested_label = _labels(config)["digested"]
-        commit_tail = _apply_label_actions(inbox_ref, {digested_label: _collect_message_ids(events)})
-        state_store.set_dt(r, state_store.last_digest_key(inbox_ref), now)
+        commit_tail = _apply_label_actions(inbox_ref, {digested_label: _collect_mailbox_message_ids(mailbox_messages)})
+        state_store.set_dt(r, state_store.last_digest_key(inbox_ref), window_end)
         trim_old_events(r, retention_days=_event_retention_days(config))
+        low_signal_count = sum(1 for message in mailbox_messages if bool(message.get("is_low_signal")))
         summary_tail = [
             (
-                f"digest summary: events={len(events)}, digest_type={digest_type}, "
-                f"window={window_start.isoformat()}..{now.isoformat()}"
+                f"digest summary: messages={len(mailbox_messages)}, threads={len(thread_snapshots)}, "
+                f"important={len(important_messages)}, low_signal={low_signal_count}, "
+                f"scanned={scanned_count}, digest_type={digest_type}, "
+                f"window={window_start.isoformat()}..{window_end.isoformat()}"
             )
         ]
-        return _tail_union(catchup_tail, result.output_tail, summary_tail, commit_tail)
+        return _tail_union(catchup_tail, summary_tail, commit_tail)
     finally:
         state_store.release_lock(r, lock_name, run_id)
 

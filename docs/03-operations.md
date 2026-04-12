@@ -786,13 +786,16 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 ## AgentMail Inbox Email
 
 AgentMail Inbox Email polls the personal inbox every 5 minutes through a standalone Python
-bridge that talks to the AgentMail HTTP API directly, posts compact mini-batches to the
-`inbox-email` topic, and publishes scheduled recaps at `08:00`, `13:00`,
-`16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only classification and recap generation
-from already fetched snapshots / derived events.
+bridge that talks to the AgentMail HTTP API directly, uses the 5-minute poll for internal
+state/labeling only, and publishes scheduled recaps to the `inbox-email` topic at `08:00`, `13:00`,
+`16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only poll classification; scheduled digests
+render directly from the mailbox window so they always reflect the actual message count and senders.
 
-If a scheduled digest window has no derived events, the bridge now still posts a short
+If a scheduled digest window has no messages, the bridge now still posts a short
 "empty window" message to Telegram instead of silently skipping the slot.
+
+Scheduled digest windows are anchored to the fixed Moscow schedule boundaries
+(`08:00 → 13:00 → 16:00 → 20:00`) rather than the timestamp of the previous manual run.
 
 ### Deploy
 

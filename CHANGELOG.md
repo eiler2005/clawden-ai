@@ -47,6 +47,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`artifacts/agentmail-email/cron_bridge.py`**: scheduled digests no longer disappear when the
   derived-event window is empty; the bridge now posts an explicit empty-window Telegram recap and
   marks the slot as delivered instead of silently skipping it.
+- **`artifacts/agentmail-email/cron_bridge.py` / `poster.py`**: 5-minute `poll` runs are now
+  internal-only (no Telegram mini-batches in `inbox-email`), while scheduled digests render
+  directly from the real mailbox window and include exact message counts, sender counts, and
+  per-message subjects for the slot.
+- **AgentMail digest windows**: scheduled runs are now anchored to the fixed Moscow schedule
+  boundaries (`08:00`, `13:00`, `16:00`, `20:00`) instead of drifting after a manual trigger.
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
   правилами дедупликации по смысловому факту, fallback на реальные storyline из digest-контента,
   и без пустой заглушки про отсутствие сквозных тем.
