@@ -19,7 +19,7 @@
     }
   },
   "tools": {
-    "profile": "messaging",
+    "profile": "coding",
     "exec": {
       "security": "deny",
       "ask": "always"
@@ -74,22 +74,6 @@
           "omniroute/medium",
           "omniroute/light"
         ]
-      }
-    }
-  },
-  "mcp": {
-    "servers": {
-      "agentmail": {
-        "command": "npx",
-        "args": [
-          "-y",
-          "agentmail-mcp",
-          "--tools",
-          "list_inboxes,list_threads,get_thread,update_message"
-        ],
-        "env": {
-          "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}"
-        }
       }
     }
   },

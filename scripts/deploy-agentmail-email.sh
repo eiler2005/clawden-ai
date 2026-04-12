@@ -100,10 +100,8 @@ PY
     exit 1
   }
 
-  agentmail_key="$(sudo awk -F= "/^AGENTMAIL_API_KEY=/{print substr(\$0, length(\$1)+2)}" email.env | tail -n1)"
-  if [ -n "$agentmail_key" ] && sudo test -f /opt/openclaw/.env; then
+  if sudo test -f /opt/openclaw/.env; then
     sudo sed -i "/^AGENTMAIL_API_KEY=/d" /opt/openclaw/.env
-    printf "AGENTMAIL_API_KEY=%s\n" "$agentmail_key" | sudo tee -a /opt/openclaw/.env >/dev/null
   fi
 
   sudo python3 - <<'"'"'PY'"'"'
@@ -112,15 +110,7 @@ from pathlib import Path
 path = Path("/opt/openclaw/docker-compose.yml")
 text = path.read_text()
 
-needle_gateway = "      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}\n"
-replace_gateway = needle_gateway + "      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}\n"
-if "      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}\n" not in text:
-    text = text.replace(needle_gateway, replace_gateway, 1)
-
-needle_cli = "      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}\n      BROWSER: echo\n"
-replace_cli = "      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}\n      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}\n      BROWSER: echo\n"
-if replace_cli not in text:
-    text = text.replace(needle_cli, replace_cli, 1)
+text = text.replace("      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}\n", "")
 
 path.write_text(text)
 PY
@@ -131,20 +121,13 @@ from pathlib import Path
 
 path = Path("/opt/openclaw/config/openclaw.json")
 data = json.loads(path.read_text())
-mcp = data.setdefault("mcp", {})
-servers = mcp.setdefault("servers", {})
-servers["agentmail"] = {
-    "command": "npx",
-    "args": [
-        "-y",
-        "agentmail-mcp",
-        "--tools",
-        "list_inboxes,list_threads,get_thread,update_message",
-    ],
-    "env": {
-        "AGENTMAIL_API_KEY": "${AGENTMAIL_API_KEY}",
-    },
-}
+data.setdefault("tools", {})["profile"] = "coding"
+if "mcp" in data and isinstance(data["mcp"], dict):
+    servers = data["mcp"].get("servers")
+    if isinstance(servers, dict):
+        servers.pop("agentmail", None)
+        if not servers:
+            data.pop("mcp", None)
 path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
 
@@ -152,6 +135,27 @@ PY
   sudo chmod +x /opt/agentmail-email/entrypoint.sh
   sudo chmod +x /opt/agentmail-email/sync-openclaw-cron-jobs.sh
   sudo test -f config.json || sudo cp config.example.json config.json
+  sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+env_path = Path("/opt/agentmail-email/email.env")
+config_path = Path("/opt/agentmail-email/config.json")
+
+env = {}
+for line in env_path.read_text().splitlines():
+    if not line or line.lstrip().startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    env[key.strip()] = value.strip()
+
+data = json.loads(config_path.read_text())
+if env.get("AGENTMAIL_INBOX_REF"):
+    data["inbox_ref"] = env["AGENTMAIL_INBOX_REF"]
+data.setdefault("topic_name", "inbox-email")
+data.setdefault("poll_bootstrap_lookback_minutes", 720)
+config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
   sudo rm -rf /opt/agentmail-email/openclaw-config 2>/dev/null || true
 
   cd /opt/openclaw
@@ -177,6 +181,31 @@ PY
   sudo docker image prune -f >/dev/null 2>&1 || true
   sudo docker builder prune -f >/dev/null 2>&1 || true
   /opt/agentmail-email/sync-openclaw-cron-jobs.sh
+  sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+paths = [
+    Path("/opt/openclaw/config/cron/jobs.json"),
+    Path("/home/deploy/.openclaw/cron/jobs.json"),
+]
+store_path = next((path for path in paths if path.exists()), None)
+if store_path is None:
+    raise SystemExit("OpenClaw cron store not found after sync.")
+
+data = json.loads(store_path.read_text())
+jobs = data.get("jobs", [])
+poll_jobs = [job for job in jobs if job.get("name") == "AgentMail Inbox · Poll every 5m"]
+if not poll_jobs:
+    raise SystemExit("AgentMail poll cron job missing after sync.")
+
+poll = poll_jobs[-1]
+state = poll.get("state", {})
+if not poll.get("enabled", False):
+    raise SystemExit("AgentMail poll cron job is disabled after sync.")
+if not state.get("nextRunAtMs"):
+    raise SystemExit("AgentMail poll cron job has no nextRunAtMs after sync.")
+PY
 '
 
 cat <<'EOF'

@@ -198,13 +198,13 @@ The redacted copy lives in `artifacts/openclaw/openclaw.json`.
 
 | Setting | Value | Reason |
 |---|---|---|
-| `tools.profile` | `"messaging"` | Safest preset; restrict to messaging tools only |
+| `tools.profile` | `"coding"` | OpenClaw stays focused on orchestration and LLM work; source-specific I/O (like AgentMail) lives in dedicated bridges |
 | `tools.exec.security` | `"deny"` | No host shell execution from agents |
 | `tools.exec.ask` | `"always"` | Approval prompts for any exec attempt |
 | `tools.fs.workspaceOnly` | `true` | Filesystem tools limited to mounted workspace |
 | `tools.elevated.enabled` | `false` | No privileged execution mode |
 
-Note: if agent workflows require file system or execution tools, switch to `tools.profile: "full"` with an explicit `tools.deny` list. Start strict, widen as needed.
+Note: the stack now uses `tools.profile: "coding"` because the email ingestion pipeline no longer depends on MCP-delivered AgentMail tools. Safety still relies on `tools.exec.security: "deny"`, `tools.exec.ask: "always"`, `tools.fs.workspaceOnly: true`, and controlled bridge-side automation.
 
 ### Operational note: gateway startup time
 

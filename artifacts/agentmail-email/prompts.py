@@ -9,7 +9,7 @@ from datetime import datetime
 from models import EmailEvent
 
 
-def build_prepare_poll_prompt(
+def build_prepare_poll_analysis_prompt(
     *,
     inbox_ref: str,
     topic_name: str,
@@ -17,6 +17,7 @@ def build_prepare_poll_prompt(
     until_iso: str,
     labels: dict[str, str],
     low_signal_hints: list[str],
+    thread_snapshots: list[dict],
     mode: str = "poll",
 ) -> str:
     skip_labels = [labels["polled"], labels["low_signal"], labels["digested"]]
@@ -30,11 +31,7 @@ def build_prepare_poll_prompt(
         if mode == "poll"
         else "This is catch-up mode for a future digest. batch_lead may be empty."
     )
-    return f"""You are preparing Benka's inbox-email ingestion window.
-
-You have access to AgentMail inside OpenClaw through MCP tools with the `agentmail__` prefix.
-Use only these mailbox tools when needed: `agentmail__list_inboxes`, `agentmail__list_threads`,
-`agentmail__get_thread`, `agentmail__update_message`.
+    return f"""You are preparing Benka's inbox-email ingestion window from already-fetched AgentMail data.
 
 Inbox: {inbox_ref}
 Window start (inclusive): {since_iso}
@@ -42,12 +39,14 @@ Window end (inclusive): {until_iso}
 Mode: {mode}
 
 Rules:
-- Read only this inbox.
 - {no_side_effects}
-- Use extracted_text or extracted_html when available so quoted history is stripped.
+- Use only the thread snapshots provided below. Do not use external tools.
+- Prefer each message `text_excerpt`, then `preview`.
 - Group new mail by thread_id. Multiple new messages in the same thread become one publish_event.
-- Skip messages that already carry any of these internal labels unless a newer unlabeled message in the same
-  thread arrived inside the window: {", ".join(skip_labels)}.
+- `window_message_ids` are the only message IDs allowed in publish_events and label_actions.
+- Messages may already carry labels. Skip anything that only repeats already-processed state unless a newer
+  unlabeled message in the same thread arrived inside the window.
+- Existing internal labels to treat as already handled: {", ".join(skip_labels)}.
 - Keep attachments as metadata only. Do not dump raw email bodies.
 - Treat obvious promo / newsletter / marketing / cold-sales noise as low signal.
 - Use these low-signal hints if helpful: {", ".join(low_signal_hints) or "(none)"}.
@@ -95,38 +94,10 @@ JSON schema:
 Important:
 - If there are no publishable events, return publish_events as [].
 - If there are no low-signal messages, return "{labels["low_signal"]}": [].
-- Do not invent IDs. Only include message_ids and thread_ids you actually observed.
-"""
+- Do not invent IDs. Only include message_ids and thread_ids present in the snapshots.
 
-
-def build_commit_labels_prompt(*, inbox_ref: str, label_actions: dict[str, list[str]]) -> str:
-    lines = [f"- {label}: {json.dumps(message_ids, ensure_ascii=False)}" for label, message_ids in label_actions.items()]
-    actions = "\n".join(lines) if lines else "- no-op"
-    return f"""Use only the AgentMail MCP tool `agentmail__update_message`. Apply internal labels to messages in inbox {inbox_ref}.
-
-Hard rules:
-- Add labels only. Do not remove labels.
-- Do not mark messages read or unread.
-- Do not send, draft, archive, forward, or reply.
-- If a message already has the label, that is fine.
-- Return strict JSON only.
-
-Apply these labels:
-{actions}
-
-JSON schema:
-{{
-  "ok": true,
-  "applied": {{
-    "label/name": 0
-  }},
-  "model_meta": {{
-    "model_id": "model id",
-    "tier": "primary",
-        "provider_fallback": false,
-        "local_fallback": false
-  }}
-}}
+Thread snapshots JSON:
+{json.dumps(thread_snapshots, ensure_ascii=False, indent=2)}
 """
 
 

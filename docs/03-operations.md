@@ -746,10 +746,11 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 
 ## AgentMail Inbox Email
 
-AgentMail Inbox Email polls the personal inbox every 5 minutes through the
-shared OpenClaw gateway container with AgentMail MCP, posts compact mini-batches to the
+AgentMail Inbox Email polls the personal inbox every 5 minutes through a standalone Python
+bridge that talks to the AgentMail HTTP API directly, posts compact mini-batches to the
 `inbox-email` topic, and publishes scheduled recaps at `08:00`, `13:00`,
-`16:00`, and `20:00` MSK.
+`16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only classification and recap generation
+from already fetched snapshots / derived events.
 
 ### Deploy
 
@@ -775,28 +776,36 @@ The deploy script:
 
 - rsyncs `/opt/agentmail-email`
 - hydrates `TELEGRAM_BOT_TOKEN` from `/opt/openclaw/.env`
-- mirrors `AGENTMAIL_API_KEY` into `/opt/openclaw/.env`
-- ensures the central OpenClaw config exposes AgentMail via `mcp.servers.agentmail`
+- keeps `AGENTMAIL_API_KEY` inside `/opt/agentmail-email/email.env`
+- removes stale AgentMail-specific coupling from the central OpenClaw config
 - rebuilds the lightweight Python `agentmail-email-bridge`
+- materializes the real `AGENTMAIL_INBOX_REF` into `/opt/agentmail-email/config.json`
 - removes stale `/opt/agentmail-email/openclaw-config` leftovers from the old embedded-runtime design
 - prunes dangling Docker image/build artifacts after a successful rebuild
 - syncs the five OpenClaw Cron Jobs
+- validates that the poll cron job is still enabled and has a next scheduled run
 
 Architecture note:
 
 - `agentmail-email-bridge` no longer carries its own OpenClaw runtime or copied auth store.
-- Mailbox access happens only inside the shared `openclaw-openclaw-gateway-1` container.
-- The bridge talks to that container through Docker exec and remains responsible only for
-  Redis orchestration, Telegram posting, and state tracking.
+- Mailbox access now happens inside the bridge itself via the AgentMail HTTP API.
+- The bridge remains responsible for Redis orchestration, Telegram posting, mailbox labels,
+  and derived event persistence.
+- The shared `openclaw-openclaw-gateway-1` container is used only for LLM steps over prepared
+  thread snapshots or derived events.
+- The poll cron must be created without `--exact`; on OpenClaw `2026.4.8`, `*/5` with `--exact`
+  can end up stored as `enabled=false` after the first run.
 
 Current validation snapshot:
 
 - the rebuilt bridge image is about `229 MB` on server (down from the earlier embedded-runtime build)
+- direct AgentMail API reads and label updates work from the bridge container
 - manual `/trigger` → `poll` enqueue works
 - a clean empty-window poll finished with `exit_code=0` on `2026-04-11`
-- a manual `editorial` digest also finished with `exit_code=0` and `digest skipped (no derived events)`
-- no Telegram message was posted during that validation run because the inbox window contained no
-  publishable items
+- on `2026-04-12`, a manual `poll lookback=1440` finished with `exit_code=0`, scanned `32` threads,
+  produced `1` publishable event, and tolerated one missing message id during label commit
+- on `2026-04-12`, a manual `editorial` digest finished with `exit_code=0`, rendered from the
+  derived event buffer, and applied `benka/digested=1`
 
 ### Managed OpenClaw jobs
 
@@ -816,6 +825,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 - `GET /health` — quick liveness + last poll/digest snapshot
 - `GET /status` — current or last run payload with timestamps, job type, exit code, and tail
 - `POST /trigger` — enqueue `poll` or `digest` into `ingest:jobs:email`
+- Optional trigger override: `lookback_minutes` for manual catch-up/backfill without editing Redis state
 
 ### Integration bus checks
 
@@ -824,6 +834,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email
   docker exec integration-bus-redis redis-cli XLEN ingest:events:email
   docker exec integration-bus-redis redis-cli XPENDING ingest:jobs:email email-workers - + 10
+  docker exec integration-bus-redis redis-cli XLEN dlq:failed
 '
 ```
 
@@ -835,6 +846,17 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   docker exec integration-bus-redis redis-cli XADD ingest:jobs:email "*" \
     run_id manual-poll \
     job_type poll \
+    inbox_ref <agentmail-inbox-ref> \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+
+# Poll now with a wider catch-up window
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:email "*" \
+    run_id manual-poll-backfill \
+    job_type poll \
+    lookback_minutes 1440 \
     inbox_ref <agentmail-inbox-ref> \
     requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     requested_by manual

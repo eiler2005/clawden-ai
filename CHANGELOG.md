@@ -11,35 +11,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`artifacts/agentmail-email/`**: new AgentMail inbox-email pipeline artifact with standalone
   `docker-compose.yml`, `cron_bridge.py`, `agent_runner.py`, prompt builders, Redis-backed
   derived-event buffer, Telegram poster, config/env templates, and OpenClaw cron sync helper.
+- **`artifacts/agentmail-email/agentmail_api.py`**: direct AgentMail HTTP adapter for inbox
+  listing, message listing, thread reads, and mailbox label updates.
 - **`scripts/deploy-agentmail-email.sh`**: deployment helper for `/opt/agentmail-email`,
-  central OpenClaw MCP wiring in `openclaw.json`, lightweight bridge rebuild, cron sync, and
-  post-deploy Docker cleanup.
+  Python-first bridge deployment, central OpenClaw cleanup, cron sync, and post-deploy Docker cleanup.
 - **Telegram topology**: new `inbox-email` topic/surface added to policy/config docs next to
   `work-email` and `telegram-digest`.
 
 ### Changed
 - **`README.md`**: repository structure, integration-bus status, quick ops, and feature list now
   include the AgentMail inbox-email pipeline.
-- **`artifacts/agentmail-email/`**: removed embedded OpenClaw runtime path; the bridge now
-  delegates agent runs to the shared `openclaw-openclaw-gateway-1` container via Docker exec,
-  so auth, MCP config, and AgentMail access stay centralized.
+- **`README.md` / `docs/03-operations.md` / `docs/13-ai-assistant-architecture.md`**: now show
+  `agentmail-email-bridge` as its own Docker service in the main architecture, document the
+  recovery/backfill path via `lookback_minutes`, and describe the Python-first AgentMail flow.
+- **`artifacts/agentmail-email/`**: removed embedded OpenClaw runtime path and removed AgentMail MCP
+  from the active runtime path; the bridge now reads mailbox data directly over AgentMail HTTP,
+  while OpenClaw only handles JSON-only classification and digest generation.
+- **`artifacts/agentmail-email/sync-openclaw-cron-jobs.sh`**: poll cron is now created without
+  `--exact`, which keeps the `*/5` OpenClaw job enabled instead of silently persisting as
+  `enabled=false` after the first run.
+- **`artifacts/agentmail-email/cron_bridge.py`**: trigger payload now accepts `lookback_minutes`
+  for manual catch-up windows; poll/digest status tails include concise runtime summaries; label
+  commit now tolerates per-message `404 NotFoundError` instead of failing the whole run.
+- **`artifacts/agentmail-email/prompts.py`**: OpenClaw prompts now operate on pre-fetched
+  thread snapshots / derived events only and explicitly disallow mailbox tools.
+- **`artifacts/openclaw/openclaw.json`**: removed `mcp.servers.agentmail` and tightened
+  `tools.profile` back to `"coding"`.
+- **`scripts/deploy-agentmail-email.sh`**: post-deploy validation now checks that the AgentMail
+  poll cron job exists, is enabled, and has a next scheduled run; it also removes stale
+  AgentMail-specific env/config coupling from the shared OpenClaw deployment.
 - **Server cleanup**: stale email Redis lock/pending entry removed after embedded-runtime rollback;
   unused Docker build cache cleared and the bridge image size dropped from ~2.78 GB to ~229 MB.
 - **`docs/03-operations.md`**: added AgentMail inbox-email deploy/runbook section.
 - **`docs/12-telegram-channel-architecture.md`** and **`docs/13-ai-assistant-architecture.md`**:
   added `Inbox Email` surface, bus streams `ingest:jobs:email` / `ingest:events:email`, and
   near-real-time poll + scheduled digest architecture.
-- **`artifacts/openclaw/openclaw.json`** and **`artifacts/openclaw/env.redacted.example`**:
-  added AgentMail MCP wiring via `AGENTMAIL_API_KEY`.
 
 ### Verified
 - `agentmail-email-bridge` now starts as a lightweight Python image (`229 MB` on server after rebuild).
 - `/trigger` returns `202` and enqueues `poll` jobs into `ingest:jobs:email`.
-- Bridge consumer loop starts successfully and hands poll work to the shared OpenClaw container.
+- Bridge consumer loop starts successfully and performs direct AgentMail API reads / label updates.
 - Manual `poll` finished with `exit_code=0` on `2026-04-11`; the window had no publishable emails, so
   the empty-window path completed without Telegram posting or label mutations.
-- Manual `editorial` digest finished with `exit_code=0` on `2026-04-11`; it correctly returned
-  `digest skipped (no derived events)` instead of failing when the event buffer was empty.
+- Manual `poll lookback=1440` finished with `exit_code=0` on `2026-04-12`; it scanned 32 threads,
+  produced 1 publishable event, and applied `benka/polled=23`, `benka/low-signal=6` with one
+  missing message id skipped safely.
+- Manual `editorial` digest finished with `exit_code=0` on `2026-04-12`; it summarized the
+  derived event buffer and applied `benka/digested=1`.
 
 ## [2026-04-11c] — Fix sync-openclaw-cron-jobs.sh duplicate prevention
 

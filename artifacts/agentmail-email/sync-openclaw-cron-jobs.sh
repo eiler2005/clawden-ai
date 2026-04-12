@@ -88,6 +88,7 @@ add_job() {
   local job_type="$3"
   local digest_type="${4:-}"
   local description="$5"
+  local exact_mode="${6:-yes}"
   local payload
   payload="{\"job_type\": ${job_type@Q}"
   if [[ -n "$digest_type" ]]; then
@@ -132,27 +133,34 @@ Report:
 - bridge HTTP result
 - whether the job was enqueued"
 
-  run_openclaw cron add \
-    --name "$name" \
-    --description "$description" \
-    --cron "$cron_expr" \
-    --tz "$OPENCLAW_CRON_TZ" \
-    --exact \
-    --session isolated \
-    --agent "$OPENCLAW_CRON_AGENT" \
-    --tools exec,read \
-    --light-context \
-    --timeout-seconds "$EMAIL_CRON_TIMEOUT_SECONDS" \
-    --message "$message" \
+  local -a cron_args=(
+    cron add
+    --name "$name"
+    --description "$description"
+    --cron "$cron_expr"
+    --tz "$OPENCLAW_CRON_TZ"
+    --session isolated
+    --agent "$OPENCLAW_CRON_AGENT"
+    --tools exec,read
+    --light-context
+    --timeout-seconds "$EMAIL_CRON_TIMEOUT_SECONDS"
+    --message "$message"
     --no-deliver
+  )
+
+  if [[ "$exact_mode" == "yes" ]]; then
+    cron_args+=(--exact)
+  fi
+
+  run_openclaw "${cron_args[@]}"
 }
 
 remove_old_jobs
 
-add_job "AgentMail Inbox · Poll every 5m" "*/5 * * * *" "poll" "" "Near-real-time inbox poll"
-add_job "AgentMail Inbox · 08:00 Morning brief" "0 8 * * *" "digest" "morning" "Morning inbox digest"
-add_job "AgentMail Inbox · 13:00 Regular digest" "0 13 * * *" "digest" "interval" "Midday inbox digest"
-add_job "AgentMail Inbox · 16:00 Regular digest" "0 16 * * *" "digest" "interval" "Afternoon inbox digest"
-add_job "AgentMail Inbox · 20:00 Evening editorial" "0 20 * * *" "digest" "editorial" "Evening inbox digest"
+add_job "AgentMail Inbox · Poll every 5m" "*/5 * * * *" "poll" "" "Near-real-time inbox poll" "no"
+add_job "AgentMail Inbox · 08:00 Morning brief" "0 8 * * *" "digest" "morning" "Morning inbox digest" "yes"
+add_job "AgentMail Inbox · 13:00 Regular digest" "0 13 * * *" "digest" "interval" "Midday inbox digest" "yes"
+add_job "AgentMail Inbox · 16:00 Regular digest" "0 16 * * *" "digest" "interval" "Afternoon inbox digest" "yes"
+add_job "AgentMail Inbox · 20:00 Evening editorial" "0 20 * * *" "digest" "editorial" "Evening inbox digest" "yes"
 
 echo "OpenClaw cron jobs synced for AgentMail Inbox."

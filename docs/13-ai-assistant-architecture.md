@@ -377,8 +377,8 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 | Stream | Status | Worker |
 |--------|--------|--------|
 | `ingest:jobs:telegram` | ✅ Live | `digest-consumer` thread → `digest_worker.py` |
-| `ingest:jobs:email` | 🧪 Artifact ready | `agentmail-email-bridge` → OpenClaw agent + AgentMail |
-| `ingest:events:email` | 🧪 Artifact ready | derived inbox-event buffer for scheduled recaps |
+| `ingest:jobs:email` | ✅ Live | `agentmail-email-bridge` trigger queue for poll/digest jobs |
+| `ingest:events:email` | ✅ Live | derived inbox-event buffer for scheduled recaps |
 | `ingest:rag:queue` | ✅ Live | `rag-consumer` thread → LightRAG `/documents/upload` |
 | `ingest:events:telegram` | Planned | real-time Telethon listener (v2) |
 
@@ -399,10 +399,11 @@ to hide the section.
 
 ## AgentMail Inbox Email
 
-A separate bridge polls the personal AgentMail inbox every 5 minutes through
-central OpenClaw agent runs and publishes compact mini-batches to the `inbox-email`
+A separate bridge polls the personal AgentMail inbox every 5 minutes through the
+AgentMail HTTP API and publishes compact mini-batches to the `inbox-email`
 topic. Scheduled recaps run at `08:00`, `13:00`, `16:00`, and `20:00` Moscow
-time from the derived event buffer rather than from Telegram history.
+time from the derived event buffer rather than from Telegram history. The bridge is a
+standalone Docker service at `/opt/agentmail-email`, separate from `telethon-digest-cron-bridge`.
 
 ### Architecture
 
@@ -416,26 +417,32 @@ OpenClaw Cron Jobs (*/5 + 08:00/13:00/16:00/20:00 МСК)
 
               agentmail-email-bridge (consumer loop)
                     ├── poll job:
-                    │     docker exec → shared OpenClaw gateway container
-                    │     → openclaw agent → AgentMail MCP tools
+                    │     AgentMail HTTP API → thread snapshots
+                    │     → shared OpenClaw JSON-only classifier
                     │     → batch summary → Telegram topic `inbox-email`
                     │     → XADD ingest:events:email (derived events)
                     └── digest job:
                           XRANGE ingest:events:email
-                          → docker exec → shared OpenClaw gateway container
-                          → openclaw agent recap
+                          → shared OpenClaw recap
                           → Telegram topic `inbox-email`
                           → label underlying emails as `benka/digested`
 ```
 
 ### Runtime guarantees
 
-- Mail access is `MCP-only` from the shared OpenClaw container; the Python bridge does not call
-  AgentMail HTTP APIs directly.
+- Mail access happens inside the Python bridge via the AgentMail HTTP API; OpenClaw sees only
+  prepared thread snapshots or derived events.
 - Internal labels `benka/polled`, `benka/low-signal`, and `benka/digested` are used for dedup
   and lifecycle tracking without touching read-state.
 - `ingest:events:email` stores only derived summaries and metadata with 7-day retention; raw
   bodies and attachments are excluded.
+- The `*/5` poll job must be synced without `--exact`; with OpenClaw `2026.4.8`, wildcard cron +
+  exact scheduling can leave the job stored as `enabled=false` after its first run.
+- Manual recovery/backfill uses `lookback_minutes` on `/trigger`, which widens the poll or digest
+  window without changing the standalone bridge architecture.
+- Live validation on `2026-04-12`: manual `poll lookback=1440` finished with `exit_code=0`,
+  scanned 32 threads, emitted one publishable event, and the follow-up `editorial` digest also
+  finished with `exit_code=0` from the derived buffer.
 
 ### Scoring
 
