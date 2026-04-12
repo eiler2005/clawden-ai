@@ -21,6 +21,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - **`README.md`**: repository structure, integration-bus status, quick ops, and feature list now
   include the AgentMail inbox-email pipeline.
+- **OpenClaw runtime image**: production first moved from `openclaw-with-iproute2:20260408` to
+  a slim image without Whisper, and then to `openclaw-with-iproute2:20260412-slim-2026.4.11`;
+  the image still keeps only `iproute2` and no longer bakes in Whisper, ffmpeg, or the extra
+  Python venv/toolchain.
+- **OmniRoute**: upgraded from `3.5.9` to `3.6.3`, pinned in `/opt/openclaw/omniroute-src`
+  on local branch `deploy/v3.6.3`, rebuilt in place with the existing `omniroute-data` volume.
 - **`README.md` / `docs/03-operations.md` / `docs/13-ai-assistant-architecture.md`**: now show
   `agentmail-email-bridge` as its own Docker service in the main architecture, document the
   recovery/backfill path via `lookback_minutes`, and describe the Python-first AgentMail flow.
@@ -42,6 +48,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   AgentMail-specific env/config coupling from the shared OpenClaw deployment.
 - **Server cleanup**: stale email Redis lock/pending entry removed after embedded-runtime rollback;
   unused Docker build cache cleared and the bridge image size dropped from ~2.78 GB to ~229 MB.
+- **`README.md` / `docs/01-server-state.md` / `docs/02-openclaw-installation.md` / `docs/03-operations.md` / `artifacts/openclaw/env.redacted.example`**:
+  updated to reflect that voice transcription is disabled in production for now and may return later
+  through a lighter CPU-oriented stack or an external API.
+- **`docs/01-server-state.md` / `docs/03-operations.md` / `docs/13-ai-assistant-architecture.md`**:
+  updated to reflect current OpenClaw `2026.4.11` and OmniRoute `3.6.3` runtime state.
 - **`docs/03-operations.md`**: added AgentMail inbox-email deploy/runbook section.
 - **`docs/12-telegram-channel-architecture.md`** and **`docs/13-ai-assistant-architecture.md`**:
   added `Inbox Email` surface, bus streams `ingest:jobs:email` / `ingest:events:email`, and

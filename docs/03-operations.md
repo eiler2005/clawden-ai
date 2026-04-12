@@ -22,7 +22,7 @@ Use the container runtime for:
 
 - OpenClaw CLI checks
 - runtime dependency verification
-- tool execution that agents depend on, such as `whisper`
+- tool execution that agents depend on
 
 If a new OpenClaw feature requires a binary or Python package, update `/opt/openclaw/Dockerfile.iproute2`, rebuild the image, and recreate `openclaw-gateway` instead of installing the package directly on Ubuntu.
 
@@ -69,33 +69,39 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
-## Container transcription (Whisper)
+## Voice transcription status
 
-Whisper is installed inside the OpenClaw gateway container image, so verify it in that same runtime context:
+Voice transcription is intentionally disabled in the current production image. The VPS keeps only the runtime dependency that is operationally required for `bind=lan`:
+
+- `iproute2` in the container image
+- no `whisper`
+- no `ffmpeg`
+- no `ffprobe`
+
+Verify the current absence in the same runtime context where OpenClaw actually runs:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   docker compose exec -T openclaw-gateway sh -lc "
-    which whisper &&
-    which ffmpeg &&
-    which ffprobe
+    command -v whisper || echo container_whisper_absent
+    command -v ffmpeg || echo container_ffmpeg_absent
+    command -v ffprobe || echo container_ffprobe_absent
   "
 '
 ```
 
-Example transcription (use the mounted workspace so the host can provide files):
+And verify the host stays clean too:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
-  cd /opt/openclaw &&
-  docker compose exec -T openclaw-gateway whisper \
-    /home/node/.openclaw/workspace/tmp/audio.mp3 \
-    --model small \
-    --output_dir /home/node/.openclaw/workspace/tmp/whisper-out \
-    --task transcribe
+  command -v whisper || echo host_whisper_absent
+  command -v ffmpeg || echo host_ffmpeg_absent
+  command -v ffprobe || echo host_ffprobe_absent
 '
 ```
+
+If voice workflows become important later, add them back intentionally via a lighter CPU-first stack or an external API rather than by default in the main runtime image.
 
 ## Restart paths
 
@@ -793,7 +799,7 @@ Architecture note:
   and derived event persistence.
 - The shared `openclaw-openclaw-gateway-1` container is used only for LLM steps over prepared
   thread snapshots or derived events.
-- The poll cron must be created without `--exact`; on OpenClaw `2026.4.8`, `*/5` with `--exact`
+- The poll cron must be created without `--exact`; on the current OpenClaw runtime, `*/5` with `--exact`
   can end up stored as `enabled=false` after the first run.
 
 Current validation snapshot:
@@ -975,7 +981,10 @@ After creating combos: Dashboard → API Manager → Create Key → copy bearer 
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
-  cd /opt/openclaw/omniroute-src && sudo git pull
+  TARGET_TAG=v3.6.3
+  cd /opt/openclaw/omniroute-src &&
+  sudo git fetch --tags origin &&
+  sudo git checkout -B "deploy/${TARGET_TAG#v}" "$TARGET_TAG"
   cd /opt/openclaw && sudo docker compose build --no-cache omniroute
   sudo docker compose up -d --force-recreate omniroute
 '

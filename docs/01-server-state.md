@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-10`
+Snapshot date: `2026-04-12`
 
 ## Host
 
@@ -60,11 +60,9 @@ Snapshot date: `2026-04-10`
 
 ### Container-side tools (optional)
 
-Installed inside the OpenClaw gateway container image (not on the host OS):
+Installed inside the current OpenClaw gateway container image:
 
-- `ffmpeg` and `ffprobe`
-- `whisper` CLI exposed as `/usr/local/bin/whisper`
-  - backed by an isolated Python venv at `/opt/openclaw-whisper-venv`
+- `iproute2`
 
 Explicitly not installed on the host OS:
 
@@ -72,7 +70,13 @@ Explicitly not installed on the host OS:
 - `ffmpeg`
 - `ffprobe`
 
-That absence is intentional. In this deployment, agent-facing runtime tools belong in the OpenClaw container image, not on the Ubuntu host.
+Also intentionally absent from the current gateway container image:
+
+- `whisper`
+- `ffmpeg`
+- `ffprobe`
+
+That absence is intentional. Voice transcription was removed to keep the CX23 VPS leaner; it can be revisited later with a lighter CPU-oriented stack or an external API.
 
 ## Network exposure
 
@@ -109,18 +113,19 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
-- `openclaw-with-iproute2:20260408`
+- `openclaw-with-iproute2:20260412-slim-2026.4.11`
 
 Reason:
 
 - the upstream image did not include `iproute2`
 - in this deployment, `bind=lan` caused OpenClaw to depend on `ip neigh show`
 - without `iproute2`, the process could enter a bad startup state even though the rest of the config was correct
-- the same derived image also includes `ffmpeg` and `openai-whisper` to ensure speech-to-text tooling is available in the OpenClaw runtime (container) context
+- Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
+- voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.4.8`
+- current OpenClaw CLI version in that image: `2026.4.11`
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed in `2026.4.8`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.4.11`.
 
 ## Workspace state
 
@@ -167,11 +172,11 @@ See `docs/09-workspace-setup.md` for full onboarding guide.
 
 ## Validation status note
 
-Upgrade to `2026.4.8` confirmed successful (2026-04-08):
+Upgrade to `2026.4.11` confirmed successful (2026-04-12):
 
 - gateway container is `healthy`
 - `/healthz` returns `{"ok":true,"status":"live"}`
-- `openclaw --version` reports `OpenClaw 2026.4.8`
+- `openclaw --version` reports `OpenClaw 2026.4.11`
 - `openclaw doctor` reports no errors (startup optimization hints applied)
 
 ## Important caveat
@@ -190,6 +195,8 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 
 - project root: `/opt/openclaw` (not a separate project — added via `docker-compose.override.yml`)
 - source: `/opt/openclaw/omniroute-src` (git clone of diegosouzapw/OmniRoute, `target: runner-base`)
+- deployed version: `v3.6.3`
+- checkout pin: local branch `deploy/v3.6.3` at tag `v3.6.3`
 - compose override: `/opt/openclaw/docker-compose.override.yml` (merged automatically by Docker Compose)
 - env file: `/opt/openclaw/omniroute.env` (gitignored; see `artifacts/omniroute/omniroute.env.example`)
 - dashboard port: `127.0.0.1:20128` → container `20128` (SSH tunnel access only)

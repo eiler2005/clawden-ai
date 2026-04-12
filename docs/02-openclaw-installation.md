@@ -80,7 +80,9 @@ Upgrade history:
 
 - `openclaw-with-iproute2:20260405` (`OpenClaw 2026.4.2`) — first stable derived image
 - `openclaw-with-iproute2:20260406/07` (`OpenClaw 2026.4.5`) — startup instability; blocked
-- `openclaw-with-iproute2:20260408` (`OpenClaw 2026.4.8`) — current production; `2026.4.5` regression fixed
+- `openclaw-with-iproute2:20260408` (`OpenClaw 2026.4.8`) — stable Whisper-enabled image used during earlier experiments
+- `openclaw-with-iproute2:20260412-slim` (`OpenClaw 2026.4.8`) — intermediate slim image with Whisper removed
+- `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) — current production; slim image retained, base OpenClaw updated
 
 ## Final deployed shape
 
@@ -122,57 +124,29 @@ Upgrade history:
 - `/etc/caddy/Caddyfile`
 - `/etc/caddy/certs/`
 
-## Container-side Whisper (optional)
-
-Whisper is installed inside the **OpenClaw gateway container image**, because agent tooling runs in that same container runtime context.
+## Voice transcription (currently disabled)
 
 Assumption: `OPENCLAW_HOST` is set as described in `docs/03-operations.md`.
 
-### Build + enable
+Current policy:
 
-This deployment bakes Whisper into the derived runtime image (`/opt/openclaw/Dockerfile.iproute2`) and then switches `OPENCLAW_IMAGE`.
+- Whisper is **not** installed on the host OS
+- Whisper is **not** installed in the current OpenClaw gateway image
+- the current derived image keeps only `iproute2`, which is operationally required for `bind=lan`
+- the current production image tag is `openclaw-with-iproute2:20260412-slim-2026.4.11`
 
-```bash
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
-  set -euo pipefail
-  cd /opt/openclaw
-
-  sudo docker build -t openclaw-with-iproute2:20260405 -f Dockerfile.iproute2 .
-  sudo sed -i "s/^OPENCLAW_IMAGE=.*/OPENCLAW_IMAGE=openclaw-with-iproute2:20260405/" .env
-  sudo docker compose up -d --force-recreate openclaw-gateway
-'
-```
-
-### Verify (inside the container)
+### Verify current absence
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   docker compose exec -T openclaw-gateway sh -lc "
-    which whisper &&
-    which ffmpeg &&
-    which ffprobe &&
-    python3 --version &&
-    pip3 --version
+    command -v whisper || echo container_whisper_absent
+    command -v ffmpeg || echo container_ffmpeg_absent
+    command -v ffprobe || echo container_ffprobe_absent
   "
 '
 ```
-
-### Host cleanup (recommended)
-
-If Whisper was installed on the host during early experiments, remove it to keep the host OS lean.
-
-```bash
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
-  sudo rm -f /usr/local/bin/whisper
-  sudo rm -rf /opt/openclaw/.venv-whisper
-  sudo apt-get purge -y ffmpeg python3-pip python3-venv || true
-  sudo apt-get autoremove -y || true
-  sudo apt-get clean || true
-'
-```
-
-Verify the host is intentionally clean:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
@@ -181,6 +155,15 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   command -v ffprobe || echo host_ffprobe_absent
 '
 ```
+
+### Future option
+
+If voice transcription becomes important later, reintroduce it intentionally rather than by default.
+Prefer one of these paths:
+
+- a lighter CPU-first stack such as `faster-whisper`
+- an external transcription API
+- a separate opt-in derived image specifically for audio workflows
 
 ## Redacted artifacts in this folder
 

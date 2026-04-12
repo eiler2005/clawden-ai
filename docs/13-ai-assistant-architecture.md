@@ -436,7 +436,7 @@ OpenClaw Cron Jobs (*/5 + 08:00/13:00/16:00/20:00 МСК)
   and lifecycle tracking without touching read-state.
 - `ingest:events:email` stores only derived summaries and metadata with 7-day retention; raw
   bodies and attachments are excluded.
-- The `*/5` poll job must be synced without `--exact`; with OpenClaw `2026.4.8`, wildcard cron +
+- The `*/5` poll job must be synced without `--exact`; with the current OpenClaw runtime, wildcard cron +
   exact scheduling can leave the job stored as `enabled=false` after its first run.
 - Manual recovery/backfill uses `lookback_minutes` on `/trigger`, which widens the poll or digest
   window without changing the standalone bridge architecture.

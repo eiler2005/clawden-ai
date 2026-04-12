@@ -55,9 +55,10 @@ bridges.
 │                     │ 127.0.0.1:18789                                  │
 │  ┌──────────────────▼───────────────────────────┐                      │
 │  │  openclaw-gateway  (Docker)                  │                      │
-│  │  image: openclaw-with-iproute2:20260408      │                      │
+│  │  image: openclaw-with-iproute2:20260412-slim-2026.4.11 │           │
 │  │                                              │──→ OpenAI gpt-5.4    │
-│  │  baked in:  ffmpeg · whisper · iproute2      │    (primary, OAuth)  │
+│  │  baked in:  iproute2                         │    (primary, OAuth)  │
+│  │  note:      voice transcription disabled     │                      │
 │  │  volume:    /opt/openclaw/config/  → state   │                      │
 │  │             /opt/openclaw/workspace/ → bot   │──→ omniroute:20129   │
 │  │             /opt/obsidian-vault/ → vault     │    (smart/med/light) │
@@ -196,7 +197,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 - **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 6× daily
 - **AgentMail inbox feed** — Python-first AgentMail adapter polls personal inbox every 5 minutes, OpenClaw classifies/summarizes snapshots, and the bridge posts mini-batches plus scheduled recaps to `inbox-email`
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
-- **Voice messages** — Whisper transcription baked into container
+- **Voice messages** — transcription is intentionally disabled on this VPS for now; may return later via a lighter CPU path or external API
 - **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
 - **Three-layer memory** — live workspace → raw decision log → LightRAG knowledge graph
 - **Obsidian vault sync** — bidirectional Syncthing between Mac (iCloud) and server, changes propagate in seconds
@@ -218,7 +219,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 | **Integration bus** | **Redis 7 Streams** — async ingestion, consumer groups, DLQ |
 | Digest reader | Telethon MTProto — 150–200 Telegram channels, 6× daily |
 | Email ingest | AgentMail HTTP API in standalone Python bridge + OpenClaw JSON-only summarization — 5-min poll + 4 daily digests |
-| Voice transcription | Whisper (ffmpeg, baked into image) |
+| Voice transcription | Not enabled in the current image; may return later via a lighter CPU stack or external API |
 | Interface | Telegram Bot API + Telethon MTProto + AgentMail HTTP inbox reader |
 | Reverse proxy | Caddy 2 (mTLS client cert auth) |
 | Notes sync | Obsidian ↔ [Syncthing](https://syncthing.net) (bidirectional) |
