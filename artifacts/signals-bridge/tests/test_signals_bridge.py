@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from config_store import normalize_config, validate_config
 from event_store import append_events
-from matching import build_telegram_message_link, extract_tradingview_username, local_event_from_candidate, match_email_rule, match_telegram_rule
+from matching import build_telegram_message_link, extract_tradingview_username, keyword_matches, local_event_from_candidate, match_email_rule, match_telegram_rule
 from models import SignalEvent
 from omniroute_client import _local_fallback_batch
 from telegram_adapter import resolve_telegram_window
@@ -231,7 +231,7 @@ class MatchingTests(unittest.TestCase):
             "source_id": "telegram-trader-speki",
             "kind": "author_keywords",
             "sender_ids": [777],
-            "keywords": ["юань", "валют"],
+            "keywords": ["юань", "валюта"],
             "tags": ["fx"],
         }
         candidate = match_telegram_rule(
@@ -244,7 +244,7 @@ class MatchingTests(unittest.TestCase):
                 "message_id": 2,
                 "sender_id": 777,
                 "author": "Example Author",
-                "text": "По юаню и валюте вижу интересный сетап",
+                "text": "По паре юань и валюте вижу интересный сетап",
                 "timestamp": "2026-04-12T12:00:00+00:00",
             },
         )
@@ -256,7 +256,7 @@ class MatchingTests(unittest.TestCase):
             "source_id": "telegram-trader-speki",
             "kind": "author_keywords",
             "sender_ids": [777],
-            "keywords": ["юань", "валют"],
+            "keywords": ["юань", "валюта"],
             "tags": ["fx"],
         }
         candidate = match_telegram_rule(
@@ -269,7 +269,7 @@ class MatchingTests(unittest.TestCase):
                 "message_id": 2,
                 "sender_id": 778,
                 "author": "Другой автор",
-                "text": "По юаню и валюте вижу интересный сетап",
+                "text": "По паре юань и валюте вижу интересный сетап",
                 "timestamp": "2026-04-12T12:00:00+00:00",
             },
         )
@@ -351,6 +351,37 @@ class MatchingTests(unittest.TestCase):
             },
         )
         self.assertIsNotNone(candidate)
+
+    def test_keyword_matches_respects_word_boundaries_for_short_words(self) -> None:
+        self.assertFalse(keyword_matches("Моя теория гласит, что рынок жив.", "си"))
+        self.assertFalse(keyword_matches("Сейчас и мысли совсем о другом.", "си"))
+        self.assertTrue(keyword_matches("По СИ вижу интересный сценарий.", "си"))
+        self.assertTrue(keyword_matches("Сишка смотрится бодро.", "сишка"))
+
+    def test_telegram_content_keywords_short_word_inside_longer_word_ignored(self) -> None:
+        rule = {
+            "id": "artem-bendak-fx-cny-rub",
+            "source_id": "telegram-artem-bendak-channel",
+            "kind": "content_keywords",
+            "keywords": ["си", "сишка"],
+            "tags": ["fx"],
+        }
+        candidate = match_telegram_rule(
+            ruleset_id="market-watch",
+            ruleset_title="Market Watch",
+            rule=rule,
+            message={
+                "chat_id": -1003000000002,
+                "chat_name": "Example FX Channel",
+                "message_id": 21,
+                "sender_id": -1003000000002,
+                "author": "Example FX Channel",
+                "text": "Моя теория гласит, что сейчас мысли про акции важнее.",
+                "timestamp": "2026-04-12T12:00:00+00:00",
+                "has_video": False,
+            },
+        )
+        self.assertIsNone(candidate)
 
     def test_build_telegram_message_link_for_private_chat(self) -> None:
         self.assertEqual(

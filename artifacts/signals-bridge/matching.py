@@ -52,6 +52,19 @@ def extract_tradingview_username(*parts: str) -> str | None:
     return None
 
 
+def keyword_matches(text: str, keyword: str) -> bool:
+    normalized_text = text.casefold()
+    normalized_keyword = str(keyword or "").strip().casefold()
+    if not normalized_keyword:
+        return False
+    pattern = re.compile(rf"(?<!\w){re.escape(normalized_keyword)}(?!\w)")
+    return bool(pattern.search(normalized_text))
+
+
+def match_keywords(text: str, keywords: list[str] | tuple[str, ...]) -> bool:
+    return any(keyword_matches(text, keyword) for keyword in keywords)
+
+
 def match_email_rule(*, ruleset_id: str, ruleset_title: str, rule: dict, message: dict) -> SignalCandidate | None:
     from_email = str(message.get("from_email", "")).strip().lower()
     if from_email != str(rule.get("from_email", "")).strip().lower():
@@ -101,14 +114,12 @@ def match_telegram_rule(*, ruleset_id: str, ruleset_title: str, rule: dict, mess
         allowed_sender_ids = {int(v) for v in rule.get("sender_ids", [])}
         if sender_id not in allowed_sender_ids:
             return None
-        normalized = text.casefold()
-        if not any(keyword.casefold() in normalized for keyword in rule.get("keywords", [])):
+        if not match_keywords(text, rule.get("keywords", [])):
             return None
     elif kind == "content_keywords":
-        normalized = text.casefold()
         if rule.get("require_video") and not has_video:
             return None
-        if not any(keyword.casefold() in normalized for keyword in rule.get("keywords", [])):
+        if not match_keywords(text, rule.get("keywords", [])):
             return None
     else:
         return None
