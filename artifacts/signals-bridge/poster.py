@@ -43,7 +43,7 @@ def _fmt_dt(value: str) -> str:
         current = datetime.fromisoformat(value)
     except ValueError:
         return value
-    return current.astimezone(TIMEZONE).strftime("%H:%M")
+    return current.astimezone(TIMEZONE).strftime("%d.%m %H:%M")
 
 
 def _model_line(meta: ModelMeta) -> str:
