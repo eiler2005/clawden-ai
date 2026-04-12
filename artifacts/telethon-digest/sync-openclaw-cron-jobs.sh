@@ -3,10 +3,10 @@ set -euo pipefail
 
 OPENCLAW_CRON_AGENT="${OPENCLAW_CRON_AGENT:-main}"
 OPENCLAW_CRON_TZ="${OPENCLAW_CRON_TZ:-Europe/Moscow}"
+OPENCLAW_CRON_STORE="${OPENCLAW_CRON_STORE:-}"
 TELETHON_ENV_FILE="${TELETHON_ENV_FILE:-/opt/telethon-digest/telethon.env}"
 DIGEST_CRON_BRIDGE_URL="${DIGEST_CRON_BRIDGE_URL:-http://telethon-digest-cron-bridge:8091/trigger}"
 DIGEST_CRON_TIMEOUT_SECONDS="${DIGEST_CRON_TIMEOUT_SECONDS:-1800}"
-declare -a OPENCLAW_CMD=()
 
 DIGEST_CRON_BRIDGE_TOKEN="${DIGEST_CRON_BRIDGE_TOKEN:-}"
 if [[ -z "$DIGEST_CRON_BRIDGE_TOKEN" && -r "$TELETHON_ENV_FILE" ]]; then
@@ -20,85 +20,96 @@ if [[ -z "$DIGEST_CRON_BRIDGE_TOKEN" ]]; then
   exit 1
 fi
 
-if [[ -n "${OPENCLAW_BIN:-}" ]]; then
-  OPENCLAW_CMD=("$OPENCLAW_BIN")
-elif command -v openclaw >/dev/null 2>&1; then
-  OPENCLAW_CMD=(openclaw)
-else
-  if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx 'openclaw-openclaw-gateway-1'; then
-    OPENCLAW_CMD=(docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw)
-  else
-    echo "openclaw CLI not found in PATH and gateway container fallback is unavailable." >&2
-    exit 1
+resolve_cron_store() {
+  if [[ -n "$OPENCLAW_CRON_STORE" ]]; then
+    echo "$OPENCLAW_CRON_STORE"
+    return 0
   fi
-fi
 
-run_openclaw() {
-  "${OPENCLAW_CMD[@]}" "$@"
+  local candidate
+  for candidate in \
+    /opt/openclaw/config/cron/jobs.json \
+    /home/deploy/.openclaw/cron/jobs.json
+  do
+    if [[ -f "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+    if command -v sudo >/dev/null 2>&1 && sudo test -f "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  echo "OpenClaw cron store not found. Set OPENCLAW_CRON_STORE explicitly." >&2
+  exit 1
 }
 
-read_existing_job_ids() {
-  local cron_list
-  cron_list="$(run_openclaw cron list 2>/dev/null)"
+restart_gateway_if_present() {
+  local gateway_name="openclaw-openclaw-gateway-1"
+  if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "$gateway_name"; then
+    docker restart "$gateway_name" >/dev/null
+    return 0
+  fi
+  if command -v sudo >/dev/null 2>&1 && sudo docker ps --format '{{.Names}}' | grep -qx "$gateway_name"; then
+    sudo docker restart "$gateway_name" >/dev/null
+  fi
+}
 
-  # Pass via env var: piping into a heredoc-fed python3 causes heredoc to win over pipe
-  CRON_LIST="$cron_list" python3 - <<'PY'
-import os
+CRON_STORE_PATH="$(resolve_cron_store)"
+
+sudo env \
+  CRON_STORE_PATH="$CRON_STORE_PATH" \
+  OPENCLAW_CRON_AGENT="$OPENCLAW_CRON_AGENT" \
+  OPENCLAW_CRON_TZ="$OPENCLAW_CRON_TZ" \
+  DIGEST_CRON_TIMEOUT_SECONDS="$DIGEST_CRON_TIMEOUT_SECONDS" \
+  DIGEST_CRON_BRIDGE_URL="$DIGEST_CRON_BRIDGE_URL" \
+  DIGEST_CRON_BRIDGE_TOKEN="$DIGEST_CRON_BRIDGE_TOKEN" \
+  python3 - <<'PYCODE_TELETHON_SYNC'
 import json
-import re
+import os
+import time
+import uuid
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
-# Prefix shared by all managed jobs — works even when names are truncated in text output
-MANAGED_PREFIX = "Telethon Digest"
+managed_prefix = "Telethon Digest"
+store_path = Path(os.environ["CRON_STORE_PATH"]).expanduser()
+agent_id = os.environ["OPENCLAW_CRON_AGENT"]
+tz_name = os.environ["OPENCLAW_CRON_TZ"]
+bridge_url = os.environ["DIGEST_CRON_BRIDGE_URL"]
+bridge_token = os.environ["DIGEST_CRON_BRIDGE_TOKEN"]
+timeout_seconds = int(os.environ["DIGEST_CRON_TIMEOUT_SECONDS"])
 
-uuid_re = re.compile(
-    r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.I
-)
+if not store_path.exists():
+    raise SystemExit(f"Cron store not found: {store_path}")
 
-raw = os.environ.get("CRON_LIST", "").strip()
-if not raw:
-    raise SystemExit(0)
+raw = json.loads(store_path.read_text())
+jobs = raw.get("jobs", raw if isinstance(raw, list) else [])
 
-# Try JSON parse first (if openclaw cron list returns JSON)
-try:
-    data = json.loads(raw)
-    jobs = (
-        data.get("jobs", []) if isinstance(data, dict)
-        else data if isinstance(data, list)
-        else []
-    )
-    for job in jobs:
-        if isinstance(job, dict) and str(job.get("name", "")).startswith(MANAGED_PREFIX):
-            jid = job.get("jobId") or job.get("id")
-            if jid:
-                print(jid)
-    raise SystemExit(0)
-except (json.JSONDecodeError, KeyError):
-    pass
+existing_by_name = {}
+for job in jobs:
+    name = str(job.get("name", ""))
+    if name.startswith(managed_prefix):
+        existing_by_name[name] = job
+        if job.get("agentId"):
+            agent_id = job["agentId"]
 
-# Fallback: text table — match any line containing the managed prefix, extract leading UUID
-for line in raw.splitlines():
-    if MANAGED_PREFIX in line:
-        m = uuid_re.search(line)
-        if m:
-            print(m.group(0))
-PY
-}
+backup_path = store_path.with_name(store_path.name + ".bak-" + str(int(time.time())))
+backup_path.write_text(store_path.read_text())
 
-remove_old_jobs() {
-  while IFS= read -r job_id; do
-    [[ -n "$job_id" ]] || continue
-    run_openclaw cron remove "$job_id" >/dev/null
-  done < <(read_existing_job_ids)
-}
 
-add_job() {
-  local name="$1"
-  local cron_expr="$2"
-  local digest_type="$3"
-  local description="$4"
-  local message
+def next_run_ms(hour: int) -> int:
+    now = datetime.now(ZoneInfo(tz_name))
+    candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return int(candidate.timestamp() * 1000)
 
-  printf -v message '%s' "/compact Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
+
+def build_message(digest_type: str) -> str:
+    return f"""/compact Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
 
 Rules:
 - Work only on this task.
@@ -112,20 +123,20 @@ python3 - <<'PY'
 import json
 import urllib.request
 
-url = ${DIGEST_CRON_BRIDGE_URL@Q}
-token = ${DIGEST_CRON_BRIDGE_TOKEN@Q}
-payload = {\"digest_type\": ${digest_type@Q}}
+url = {bridge_url!r}
+token = {bridge_token!r}
+payload = {{"digest_type": {digest_type!r}}}
 req = urllib.request.Request(
     url,
-    data=json.dumps(payload).encode(\"utf-8\"),
-    headers={
-        \"Authorization\": f\"Bearer {token}\",
-        \"Content-Type\": \"application/json\",
-    },
-    method=\"POST\",
+    data=json.dumps(payload).encode("utf-8"),
+    headers={{
+        "Authorization": f"Bearer {{token}}",
+        "Content-Type": "application/json",
+    }},
+    method="POST",
 )
 with urllib.request.urlopen(req, timeout=3600) as resp:
-    print(resp.read().decode(\"utf-8\"))
+    print(resp.read().decode("utf-8"))
 PY
 
 Report:
@@ -134,29 +145,68 @@ Report:
 - whether Telegram posting appears successful from the bridge response
 - first actionable error if the run failed
 
-If the bridge returns 409 digest_already_running, report that another digest is still in progress instead of calling it a hang."
+If the bridge returns 409 digest_already_running, report that another digest is still in progress instead of calling it a hang."""
 
-  run_openclaw cron add \
-    --name "$name" \
-    --description "$description" \
-    --cron "$cron_expr" \
-    --tz "$OPENCLAW_CRON_TZ" \
-    --exact \
-    --session isolated \
-    --agent "$OPENCLAW_CRON_AGENT" \
-    --tools exec,read \
-    --light-context \
-    --timeout-seconds "$DIGEST_CRON_TIMEOUT_SECONDS" \
-    --message "$message" \
-    --no-deliver
-}
 
-remove_old_jobs
+specs = [
+    ("Telethon Digest · 08:00 Morning brief", "Morning brief for Telegram Digest", 8, "morning"),
+    ("Telethon Digest · 11:00 Regular digest", "Regular interval digest", 11, "interval"),
+    ("Telethon Digest · 14:00 Regular digest", "Regular interval digest", 14, "interval"),
+    ("Telethon Digest · 17:00 Regular digest", "Regular interval digest", 17, "interval"),
+    ("Telethon Digest · 21:00 Evening editorial", "Evening editorial digest", 21, "editorial"),
+]
 
-add_job "Telethon Digest · 08:00 Morning brief" "0 8 * * *" "morning" "Morning brief for Telegram Digest"
-add_job "Telethon Digest · 11:00 Regular digest" "0 11 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 14:00 Regular digest" "0 14 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 17:00 Regular digest" "0 17 * * *" "interval" "Regular interval digest"
-add_job "Telethon Digest · 21:00 Evening editorial" "0 21 * * *" "editorial" "Evening editorial digest"
+filtered_jobs = [job for job in jobs if not str(job.get("name", "")).startswith(managed_prefix)]
+now_ms = int(time.time() * 1000)
+new_jobs = []
+for name, description, hour, digest_type in specs:
+    existing = existing_by_name.get(name, {})
+    state = dict(existing.get("state", {})) if isinstance(existing, dict) else {}
+    state["nextRunAtMs"] = next_run_ms(hour)
 
+    new_jobs.append(
+        {
+            "id": existing.get("id") or str(uuid.uuid4()),
+            "agentId": existing.get("agentId") or agent_id,
+            "name": name,
+            "description": description,
+            "enabled": True,
+            "createdAtMs": existing.get("createdAtMs") or now_ms,
+            "updatedAtMs": now_ms,
+            "schedule": {
+                "kind": "cron",
+                "expr": f"0 {hour} * * *",
+                "tz": tz_name,
+                "staggerMs": 0,
+            },
+            "sessionTarget": "isolated",
+            "wakeMode": "now",
+            "payload": {
+                "kind": "agentTurn",
+                "message": build_message(digest_type),
+                "timeoutSeconds": timeout_seconds,
+                "lightContext": True,
+                "toolsAllow": ["exec", "read"],
+            },
+            "delivery": {
+                "mode": "none",
+                "channel": "last",
+            },
+            "state": state,
+        }
+    )
+
+if isinstance(raw, dict):
+    raw["jobs"] = filtered_jobs + new_jobs
+    output = raw
+else:
+    output = filtered_jobs + new_jobs
+
+store_path.write_text(json.dumps(output, ensure_ascii=False, indent=2))
+print(f"Patched {store_path}")
+for job in new_jobs:
+    print(f"{job['name']} | {job['schedule']['expr']} | next={job['state']['nextRunAtMs']}")
+PYCODE_TELETHON_SYNC
+
+restart_gateway_if_present
 echo "OpenClaw cron jobs synced for Telethon Digest."

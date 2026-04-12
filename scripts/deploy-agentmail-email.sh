@@ -181,6 +181,21 @@ PY
   sudo docker image prune -f >/dev/null 2>&1 || true
   sudo docker builder prune -f >/dev/null 2>&1 || true
   /opt/agentmail-email/sync-openclaw-cron-jobs.sh
+
+  ready=0
+  for _ in $(seq 1 75); do
+    status="$(sudo docker ps --format "{{.Names}} {{.Status}}" | grep "^openclaw-openclaw-gateway-1 " || true)"
+    if echo "$status" | grep -q "(healthy)"; then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "OpenClaw gateway did not become healthy after cron sync." >&2
+    exit 1
+  fi
+
   sudo python3 - <<'PY'
 import json
 from pathlib import Path
@@ -220,5 +235,5 @@ Useful commands:
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8092/health && echo && curl -s http://127.0.0.1:8092/status'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:email'
-  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
 EOF

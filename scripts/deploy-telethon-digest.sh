@@ -108,6 +108,56 @@ PY
 
   # Register digest jobs in the OpenClaw gateway scheduler so they appear in Control UI.
   /opt/telethon-digest/sync-openclaw-cron-jobs.sh
+
+  ready=0
+  for _ in $(seq 1 75); do
+    status="$(sudo docker ps --format "{{.Names}} {{.Status}}" | grep "^openclaw-openclaw-gateway-1 " || true)"
+    if echo "$status" | grep -q "(healthy)"; then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "OpenClaw gateway did not become healthy after cron sync." >&2
+    exit 1
+  fi
+
+  sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+expected = {
+    "Telethon Digest · 08:00 Morning brief": "0 8 * * *",
+    "Telethon Digest · 11:00 Regular digest": "0 11 * * *",
+    "Telethon Digest · 14:00 Regular digest": "0 14 * * *",
+    "Telethon Digest · 17:00 Regular digest": "0 17 * * *",
+    "Telethon Digest · 21:00 Evening editorial": "0 21 * * *",
+}
+paths = [
+    Path("/opt/openclaw/config/cron/jobs.json"),
+    Path("/home/deploy/.openclaw/cron/jobs.json"),
+]
+store_path = next((path for path in paths if path.exists()), None)
+if store_path is None:
+    raise SystemExit("OpenClaw cron store not found after sync.")
+
+data = json.loads(store_path.read_text())
+jobs = data.get("jobs", data if isinstance(data, list) else [])
+found = {
+    job.get("name"): ((job.get("schedule") or {}).get("expr"), job.get("enabled"))
+    for job in jobs
+    if str(job.get("name", "")).startswith("Telethon Digest")
+}
+for name, expr in expected.items():
+    if name not in found:
+        raise SystemExit(f"Missing Telethon Digest cron job after sync: {name}")
+    found_expr, enabled = found[name]
+    if found_expr != expr:
+        raise SystemExit(f"Unexpected cron expr for {name}: {found_expr} != {expr}")
+    if enabled is not True:
+        raise SystemExit(f"Telethon Digest cron job is disabled after sync: {name}")
+PY
 '
 
 cat <<'EOF'
@@ -122,8 +172,8 @@ Useful commands:
   # Watch digest log
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo tail -f /var/log/telethon-digest-cron.log'
 
-  # Inspect jobs in OpenClaw
-  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+  # Inspect cron store directly
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
 
   # Re-sync channels
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'cd /opt/telethon-digest && sudo docker compose run --rm telethon-digest python sync_channels.py'

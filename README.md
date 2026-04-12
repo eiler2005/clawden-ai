@@ -322,6 +322,10 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── config.example.json         redacted folder config template
 │   ├── sync-openclaw-cron-jobs.sh  server-side OpenClaw Cron Jobs sync helper
 │   └── telethon.env.example        redacted runtime env template
+├── skills/
+│   ├── README.md                   project-owned Codex skills catalog + install notes
+│   └── openclaw-cron-maintenance/
+│       └── SKILL.md                runbook skill for OpenClaw cron-store maintenance
 ├── docs/
 │   ├── 01-server-state.md          current server snapshot (services, ports, images)
 │   ├── 02-openclaw-installation.md deployment decisions and auth setup
@@ -333,7 +337,8 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── 10-memory-architecture.md   three-layer memory system design
 │   ├── 11-lightrag-setup.md        LightRAG deployment and ingestion guide
 │   ├── 12-telegram-channel-architecture.md  Telegram topology, permissions, RAG gates
-│   └── 13-ai-assistant-architecture.md      model routing and assistant behavior
+│   ├── 13-ai-assistant-architecture.md      model routing and assistant behavior
+│   └── 14-codex-skills.md          project-specific Codex skill catalog
 ├── scripts/
 │   ├── deploy-workspace.sh         rsync workspace/ to server
 │   ├── deploy-agentmail-email.sh   deploy inbox-email bridge + keep central OpenClaw clean
@@ -449,7 +454,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'cd /opt/telethon-digest && sudo docker co
 
 # OpenClaw Cron Jobs
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
-  'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+  'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
 
 # Telethon Digest cron bridge health/status
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
@@ -486,7 +491,8 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 6. [`docs/11-lightrag-setup.md`](docs/11-lightrag-setup.md) — LightRAG knowledge graph
 7. [`docs/12-telegram-channel-architecture.md`](docs/12-telegram-channel-architecture.md) — Telegram topology and ingestion policy
 8. [`docs/13-ai-assistant-architecture.md`](docs/13-ai-assistant-architecture.md) — assistant model routing and behavior
-9. [`docs/08-git-and-redaction-policy.md`](docs/08-git-and-redaction-policy.md) — git safety rules
+9. [`docs/14-codex-skills.md`](docs/14-codex-skills.md) — project skill catalog for recurring Codex workflows
+10. [`docs/08-git-and-redaction-policy.md`](docs/08-git-and-redaction-policy.md) — git safety rules
 
 ---
 

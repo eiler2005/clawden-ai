@@ -671,6 +671,16 @@ The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
 the bridge as "hung" while the worker is still processing a large window.
 
+On this deployment, `openclaw cron list` may hang even when the gateway itself is
+healthy. Because of that, the sync helpers patch the cron store (`jobs.json`)
+directly, back it up first, then restart the gateway container so it reloads the
+managed jobs.
+
+This workflow is also captured as the repo skill
+`skills/openclaw-cron-maintenance/SKILL.md`, so future schedule or cron-store
+changes can follow one stable procedure instead of re-discovering the recovery
+path each time.
+
 ### How `Пульс дня` is selected
 
 `Пульс дня` is no longer a plain "most repeated news" block. The editorial layer now does:
@@ -770,7 +780,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
-  'docker exec openclaw-openclaw-gateway-1 /usr/local/bin/openclaw cron list'
+  'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
 ```
 
 ## AgentMail Inbox Email

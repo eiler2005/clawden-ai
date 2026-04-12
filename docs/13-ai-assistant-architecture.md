@@ -142,6 +142,41 @@ bounded task (e.g., a timed digest window).
 
 ---
 
+## Project Skills Layer
+
+### Why project-specific skills exist
+
+Built-in Codex tools are not enough to preserve deployment-specific muscle memory.
+This repository now keeps a small catalog of project-owned skills for recurring
+maintenance flows that have sharp edges or server-specific gotchas.
+
+The goal is simple:
+
+- make fragile operational knowledge reusable
+- keep the "correct" procedure close to the repo
+- reduce re-discovery during future deploy/debug sessions
+
+### Canonical locations
+
+- Repo source of truth: `skills/`
+- User-installed runtime copy: `~/.codex/skills/`
+- Human-facing catalog and expansion plan: `docs/14-codex-skills.md`
+
+### Current custom skill
+
+| Skill | Purpose |
+|-------|---------|
+| `openclaw-cron-maintenance` | Safe workflow for OpenClaw cron-store maintenance when `openclaw cron list/add/remove` is unreliable; patch `jobs.json`, restart gateway, validate health |
+
+### Scope boundary
+
+These project skills are for **repeatable local/server workflows**, not for product
+logic. The actual runtime behavior still lives in normal repo code
+(`sync-openclaw-cron-jobs.sh`, deploy scripts, bridges, prompts, policies). Skills
+only codify how an operator agent should work with that codebase safely.
+
+---
+
 ## Memory Architecture
 
 ### Memory classes
@@ -363,6 +398,10 @@ are stored in the gateway cron store and show up in Control → Cron Jobs:
 - `Telethon Digest · 14:00 Regular digest`
 - `Telethon Digest · 17:00 Regular digest`
 - `Telethon Digest · 21:00 Evening editorial`
+
+The repo sync helpers patch the OpenClaw cron store directly instead of relying
+on `openclaw cron list/add/remove`, because the CLI can hang on this gateway build
+while the underlying `jobs.json` store and scheduler keep working.
 
 ### Rate limit handling
 

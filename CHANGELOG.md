@@ -17,6 +17,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Python-first bridge deployment, central OpenClaw cleanup, cron sync, and post-deploy Docker cleanup.
 - **Telegram topology**: new `inbox-email` topic/surface added to policy/config docs next to
   `work-email` and `telegram-digest`.
+- **`skills/`**: repo-managed project skill catalog added, starting with
+  `skills/openclaw-cron-maintenance/SKILL.md` as the canonical playbook for OpenClaw cron-store
+  maintenance and hanging-CLI recovery.
+- **`docs/14-codex-skills.md`**: new catalog for custom Codex skills, their scope boundaries,
+  install/sync pattern, and the planned next skill set for this deployment.
 
 ### Changed
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
@@ -25,6 +30,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`artifacts/telethon-digest/pulse.py`**: added interest-bucket ranking with persisted profile
   state in `/app/state/pulse-profile.json`; pulse selection now balances repeated signal, Denis-fit
   buckets, novelty, and diversity instead of only repeated news pressure.
+- **`artifacts/telethon-digest/sync-openclaw-cron-jobs.sh`** and
+  **`artifacts/agentmail-email/sync-openclaw-cron-jobs.sh`**: no longer depend on
+  `openclaw cron list/add/remove`; they now patch the gateway cron store directly,
+  back it up, and restart the gateway to avoid the hanging CLI path on this server.
 - **Telethon Digest schedule**: окна обновлены до `08:00`, `11:00`, `14:00`, `17:00`, `21:00`
   Moscow time across config, cron sync, deploy helper, and ops docs.
 - **`README.md`**: repository structure, integration-bus status, quick ops, and feature list now
