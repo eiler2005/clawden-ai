@@ -13,6 +13,7 @@ services:
       - signals-bridge-sessions:/app/sessions
       - signals-bridge-state:/app/state
       - ./config.json:/app/config.json
+      - ./rules:/app/rules:ro
     networks:
       - openclaw_default
 
@@ -25,4 +26,3 @@ volumes:
     name: signals-bridge-sessions
   signals-bridge-state:
     name: signals-bridge-state
-
