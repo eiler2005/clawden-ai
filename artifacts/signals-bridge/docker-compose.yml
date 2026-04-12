@@ -1,0 +1,28 @@
+services:
+  signals-bridge:
+    container_name: signals-bridge
+    build: .
+    restart: unless-stopped
+    env_file: signals.env
+    command: ["/app/entrypoint.sh"]
+    environment:
+      REDIS_URL: redis://integration-bus-redis:6379
+    ports:
+      - "127.0.0.1:8093:8093"
+    volumes:
+      - signals-bridge-sessions:/app/sessions
+      - signals-bridge-state:/app/state
+      - ./config.json:/app/config.json
+    networks:
+      - openclaw_default
+
+networks:
+  openclaw_default:
+    external: true
+
+volumes:
+  signals-bridge-sessions:
+    name: signals-bridge-sessions
+  signals-bridge-state:
+    name: signals-bridge-state
+

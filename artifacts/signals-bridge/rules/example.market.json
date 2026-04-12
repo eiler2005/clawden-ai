@@ -1,0 +1,41 @@
+{
+  "rule_sets": [
+    {
+      "id": "market-watch",
+      "title": "Market Watch",
+      "enabled": true,
+      "poll_interval_seconds": 300,
+      "rules": [
+        {
+          "id": "email-analyst-a",
+          "source_type": "email",
+          "source_id": "email-market-alerts",
+          "enabled": true,
+          "kind": "tradingview_user",
+          "from_email": "noreply@example.com",
+          "tradingview_usernames": ["AnalystA"],
+          "tags": ["market", "email"]
+        },
+        {
+          "id": "telegram-hashtag-asset",
+          "source_type": "telegram",
+          "source_id": "telegram-market-chat-a",
+          "enabled": true,
+          "kind": "hashtag",
+          "hashtags": ["#asset"],
+          "tags": ["market", "asset"]
+        },
+        {
+          "id": "telegram-author-fx",
+          "source_type": "telegram",
+          "source_id": "telegram-market-chat-b",
+          "enabled": true,
+          "kind": "author_keywords",
+          "sender_ids": [111111111],
+          "keywords": ["currency", "fx", "macro"],
+          "tags": ["market", "fx"]
+        }
+      ]
+    }
+  ]
+}

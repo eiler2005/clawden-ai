@@ -1,0 +1,64 @@
+{
+  "timezone": "Europe/Moscow",
+  "scheduler": {
+    "tick_seconds": 300,
+    "cleanup_interval_seconds": 3600
+  },
+  "default_poll_interval_seconds": 300,
+  "event_retention_days": 14,
+  "delivery": {
+    "topic_name": "signals",
+    "mode": "mini_batch"
+  },
+  "rule_files": [
+    "rules/*.json"
+  ],
+  "sources": {
+    "email": [
+      {
+        "id": "email-market-alerts",
+        "kind": "email",
+        "enabled": true,
+        "inbox_ref": "alerts@example.com",
+        "poll_interval_seconds": 300,
+        "bootstrap_lookback_minutes": 720,
+        "lag_grace_minutes": 15,
+        "max_message_pages": 5,
+        "message_page_size": 100
+      }
+    ],
+    "telegram": [
+      {
+        "id": "telegram-market-chat-a",
+        "kind": "telegram",
+        "enabled": true,
+        "chat_id": -1001111111111,
+        "chat_name": "Example Market Chat A",
+        "poll_interval_seconds": 300,
+        "overlap_grace_minutes": 15,
+        "message_limit": 80
+      },
+      {
+        "id": "telegram-market-chat-b",
+        "kind": "telegram",
+        "enabled": true,
+        "chat_id": -1002222222222,
+        "chat_name": "Example Market Chat B",
+        "poll_interval_seconds": 300,
+        "overlap_grace_minutes": 15,
+        "message_limit": 80
+      }
+    ],
+    "web": [
+      {
+        "id": "web-tradingview-comments",
+        "kind": "web",
+        "enabled": false,
+        "poll_interval_seconds": 300,
+        "url": "https://www.tradingview.com",
+        "note": "Reserved for future scraping rules."
+      }
+    ]
+  },
+  "rule_sets": []
+}

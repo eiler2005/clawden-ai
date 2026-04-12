@@ -12,6 +12,10 @@ CLAUDE.local.md
 .vscode/
 .idea/
 
+# Python cache
+__pycache__/
+*.py[cod]
+
 # Temporary notes
 tmp/
 scratch/

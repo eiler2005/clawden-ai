@@ -791,6 +791,9 @@ bridge that talks to the AgentMail HTTP API directly, posts compact mini-batches
 `16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only classification and recap generation
 from already fetched snapshots / derived events.
 
+If a scheduled digest window has no derived events, the bridge now still posts a short
+"empty window" message to Telegram instead of silently skipping the slot.
+
 ### Deploy
 
 ```bash
@@ -931,6 +934,124 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 ```
 
 Use this after migrating away from the old embedded-runtime design or after repeated failed image builds.
+
+## Signals Bridge
+
+Signals Bridge polls allowlisted email + Telegram sources every 5 minutes through its own internal
+Python scheduler and publishes compact mini-batches into the `signals` topic. This service does not
+use OpenClaw Cron Jobs and does not use GPT-5.4 in the ingestion path; enrichment is limited to
+cheap `OmniRoute light` calls with low token budgets and a local fallback.
+
+Delivery format:
+
+- Telegram-derived signal items include a direct source link to the originating post when one can be constructed.
+- Email-derived signal items retain a compact excerpt in the rendered batch so the operator can read the core message without opening the raw mailbox.
+
+### Deploy
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+bash scripts/deploy-signals-bridge.sh
+```
+
+Local gitignored secret source:
+
+```text
+secrets/signals-bridge/signals.env
+secrets/signals-bridge/config.json
+secrets/signals-bridge/rules/*.json
+```
+
+Required local keys:
+
+- `TELEGRAM_API_ID`
+- `TELEGRAM_API_HASH`
+- `TELEGRAM_PHONE`
+- `SIGNALS_SUPERGROUP_ID`
+- `SIGNALS_TOPIC_ID`
+- `AGENTMAIL_API_KEY`
+
+Recommended local keys:
+
+- `OMNIROUTE_API_KEY`
+- `TELEGRAM_BOT_TOKEN` if you do not want the deploy script to hydrate it from `/opt/openclaw/.env`
+
+The deploy script:
+
+- rsyncs `/opt/signals-bridge`
+- syncs local `secrets/signals-bridge/config.json`
+- syncs local `secrets/signals-bridge/rules/*.json`
+- hydrates `TELEGRAM_BOT_TOKEN` from `/opt/openclaw/.env` when missing
+- hydrates `OMNIROUTE_API_KEY` from `/opt/openclaw/.env` when missing
+- generates `SIGNALS_BRIDGE_TOKEN` when missing
+- keeps the bridge standalone; there is no OpenClaw cron-store sync step
+- rebuilds the lightweight Python `signals-bridge`
+- starts `signals-bridge` and validates `GET /health`
+
+Architecture note:
+
+- polling cadence is every 5 minutes, not every 30 seconds
+- scheduling is internal to `signals-bridge`
+- public docs/templates stay generic; real local rules live in separate JSON files under `secrets/signals-bridge/rules/`
+- AgentMail and Telethon reads happen inside the bridge itself
+- the only LLM path is cheap `OmniRoute light` enrichment for already matched candidates
+- if OmniRoute is unavailable, the bridge falls back to local rule-based summaries and can still post
+
+### Bridge diagnostics
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8093/health && echo && curl -s http://127.0.0.1:8093/status'
+```
+
+- `GET /health` — quick liveness + last signals run summary
+- `GET /status` — current or last run payload with ruleset id, posted count, and tail
+- `POST /trigger` — enqueue a manual ruleset run into `ingest:jobs:signals`
+- Optional trigger overrides:
+  - `lookback_minutes` for manual catch-up/backfill
+  - `source_id` to limit a manual run to one configured source
+
+### Integration bus checks
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XLEN ingest:jobs:signals
+  docker exec integration-bus-redis redis-cli XLEN ingest:events:signals
+  docker exec integration-bus-redis redis-cli XPENDING ingest:jobs:signals signals-workers - + 10
+  docker exec integration-bus-redis redis-cli XLEN dlq:failed
+'
+```
+
+### Manual enqueue examples
+
+```bash
+# Run the whole trading ruleset now
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:signals "*" \
+    run_id manual-signals \
+    ruleset_id trading \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+
+# Run one source with a wider lookback
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XADD ingest:jobs:signals "*" \
+    run_id manual-signals-backfill \
+    ruleset_id trading \
+    source_id telegram-trader-speki \
+    lookback_minutes 60 \
+    requested_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    requested_by manual
+'
+```
+
+### Watch logs
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'cd /opt/signals-bridge && sudo docker compose logs --tail=100 signals-bridge'
+```
 
 ## If SSH times out during banner exchange
 

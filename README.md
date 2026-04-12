@@ -38,11 +38,12 @@ This repository is the **ops & config package** — deployment runbooks, workspa
 
 Messages arrive via Telegram → routed through OpenClaw gateway → Бенька picks the right AI model for the task → responds with full tool access. Long-term context lives in a three-layer memory system backed by a LightRAG knowledge graph.
 
-Two standalone bridge containers hang off the same OpenClaw runtime. `telethon-digest-cron-bridge`
-handles Telegram channel digests, while `agentmail-email-bridge` handles personal inbox polling and
-scheduled email recaps. Both enqueue work through Redis Streams, but only the LLM steps run through
-the shared `openclaw-gateway`: Telegram and email source reads stay inside their dedicated Python
-bridges.
+Three standalone bridge containers hang off the same OpenClaw runtime. `telethon-digest-cron-bridge`
+handles Telegram channel digests, `agentmail-email-bridge` handles personal inbox polling and
+scheduled email recaps, and `signals-bridge` handles low-latency trading-style signals from
+allowlisted email / Telegram sources. All three enqueue work through Redis Streams, but only the
+LLM enrichment steps run through shared model infrastructure: source reads stay inside their
+dedicated Python bridges.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -118,6 +119,18 @@ bridges.
 │  │  → thread snapshots → shared OpenClaw LLM   │                      │
 │  │  Poll every 5m → inbox-email mini-batches   │                      │
 │  │  Digests: 08/13/16/20 Europe/Moscow         │                      │
+│  │  Output: Telegram topic + Redis events      │                      │
+│  └──────────────────────────────────────────────┘                      │
+│                                                                         │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  signals-bridge  (Docker)                   │                      │
+│  │  /opt/signals-bridge                        │                      │
+│  │                                              │                      │
+│  │  Internal scheduler every 5m                │                      │
+│  │  → XADD ingest:jobs:signals                 │                      │
+│  │  Consumer loop → AgentMail + Telethon       │                      │
+│  │  deterministic prefilter → OmniRoute light  │                      │
+│  │  (cheap/free-tier only) → signals topic     │                      │
 │  │  Output: Telegram topic + Redis events      │                      │
 │  └──────────────────────────────────────────────┘                      │
 │                                                                         │
@@ -197,6 +210,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 - **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 5× daily
 - **Interest-aware `Пульс дня`** — pulse ranking mixes repeated-signal strength, Denis-fit buckets, novelty, and diversity; bucket profile learns from recent posts and is reusable for future email recaps
 - **AgentMail inbox feed** — Python-first AgentMail adapter polls personal inbox every 5 minutes, OpenClaw classifies/summarizes snapshots, and the bridge posts mini-batches plus scheduled recaps to `inbox-email`
+- **Signals bridge** — standalone `signals-bridge` polls allowlisted email + Telegram sources every 5 minutes, runs deterministic-first matching, and uses only cheap `OmniRoute light` enrichment with local fallback before posting to `signals`; Telegram batches include source links and email batches retain a compact message excerpt
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
 - **Voice messages** — transcription is intentionally disabled on this VPS for now; may return later via a lighter CPU path or external API
 - **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
@@ -220,6 +234,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 | **Integration bus** | **Redis 7 Streams** — async ingestion, consumer groups, DLQ |
 | Digest reader | Telethon MTProto — 150–200 Telegram channels, 5× daily |
 | Email ingest | AgentMail HTTP API in standalone Python bridge + OpenClaw JSON-only summarization — 5-min poll + 4 daily digests |
+| Signals ingest | Standalone Python bridge — 5-min internal scheduler, deterministic filters first, then OmniRoute `light` only |
 | Voice transcription | Not enabled in the current image; may return later via a lighter CPU stack or external API |
 | Interface | Telegram Bot API + Telethon MTProto + AgentMail HTTP inbox reader |
 | Reverse proxy | Caddy 2 (mTLS client cert auth) |
@@ -322,6 +337,15 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 │   ├── config.example.json         redacted folder config template
 │   ├── sync-openclaw-cron-jobs.sh  server-side OpenClaw Cron Jobs sync helper
 │   └── telethon.env.example        redacted runtime env template
+├── artifacts/signals-bridge/
+│   ├── docker-compose.yml          standalone signals compose template
+│   ├── Dockerfile                  Python service image
+│   ├── cron_bridge.py              internal scheduler + Redis consumer + HTTP trigger
+│   ├── *.py                        AgentMail/Telethon adapters, matcher, enrichment, poster
+│   ├── config.example.json         generic source config template with external `rule_files`
+│   ├── rules/                      public generic rule examples only
+│   ├── signals.env.example         redacted runtime env template
+│   └── tests/                      focused unit tests for matching / dedup / config validation
 ├── skills/
 │   ├── README.md                   project-owned Codex skills catalog + install notes
 │   └── openclaw-cron-maintenance/
@@ -342,6 +366,7 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for full 
 ├── scripts/
 │   ├── deploy-workspace.sh         rsync workspace/ to server
 │   ├── deploy-agentmail-email.sh   deploy inbox-email bridge + keep central OpenClaw clean
+│   ├── deploy-signals-bridge.sh    deploy low-cost signals bridge with internal 5-min scheduler
 │   ├── deploy-telethon-digest.sh   deploy Telegram digest bridge
 │   ├── setup-lightrag.sh           provision LightRAG on server
 │   ├── sync-obsidian.sh            legacy one-way rsync (superseded by Syncthing)
@@ -389,14 +414,15 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 | Source | Stream | Status |
 |--------|--------|--------|
 | Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 5× daily |
-| AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | ✅ Live — standalone `agentmail-email-bridge` reads AgentMail directly, poll every 5m, digests at 08/13/16/20 MSK; manual poll + editorial digest validated on 2026-04-12 |
+| AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | ✅ Live — standalone `agentmail-email-bridge` reads AgentMail directly, poll every 5m, digests at 08/13/16/20 MSK; scheduled digests now post an explicit empty-window message instead of silently skipping when no new events exist |
+| Signals bridge | `ingest:jobs:signals`, `ingest:events:signals` | ✅ Live artifact — standalone `signals-bridge` polls every 5m, loads real rules from local separate files, does deterministic-first matching, and uses only cheap `OmniRoute light` enrichment (or local fallback) before posting to `signals` |
 | LightRAG async ingest | `ingest:rag:queue` | ✅ Live — digest notes pushed after each run, RAG consumer uploads immediately |
 
 ### Planned sources (v2)
 
 | Source | Stream | Notes |
 |--------|--------|-------|
-| Signal feeds | `ingest:events:telegram` | Real-time Telethon listener for priority channels / private groups |
+| Signal feeds (real-time) | `ingest:events:telegram` | Future listener for priority channels / private groups beyond the current 5-minute `signals-bridge` polling model |
 | Web feeds / webhooks | `ingest:events:web` | RSS, webhooks, site monitoring |
 
 All future producers plug into the same Redis Streams. Workers are independent Python services
@@ -446,7 +472,9 @@ open http://127.0.0.1:8384
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli ping'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:telegram'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:signals'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:email'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:signals'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN dlq:failed'
 
 # Telethon Digest logs
@@ -463,6 +491,10 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 # AgentMail inbox-email bridge health/status
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'curl -s http://127.0.0.1:8092/health && echo && curl -s http://127.0.0.1:8092/status'
+
+# Signals bridge health/status
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8093/health && echo && curl -s http://127.0.0.1:8093/status'
 ```
 
 See [`docs/03-operations.md`](docs/03-operations.md) for the full ops runbook.

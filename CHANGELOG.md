@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **`artifacts/signals-bridge/`**: new standalone signals pipeline artifact with internal 5-minute
+  scheduler, AgentMail + Telethon adapters, deterministic rule matcher, Redis-backed event/state
+  store, cheap OmniRoute-light enrichment path, Telegram poster, config/env templates, auth helper,
+  and focused unit tests.
+- **`scripts/deploy-signals-bridge.sh`**: deployment helper for `/opt/signals-bridge`; keeps the
+  service independent from OpenClaw Cron Jobs, hydrates missing bot/router secrets from the shared
+  OpenClaw env when available, and validates `GET /health` after restart.
 - **`artifacts/agentmail-email/`**: new AgentMail inbox-email pipeline artifact with standalone
   `docker-compose.yml`, `cron_bridge.py`, `agent_runner.py`, prompt builders, Redis-backed
   derived-event buffer, Telegram poster, config/env templates, and OpenClaw cron sync helper.
@@ -24,6 +31,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   install/sync pattern, and the planned next skill set for this deployment.
 
 ### Changed
+- **Signals architecture**: `signals-bridge` now uses its own internal **5-minute** scheduler
+  instead of any 30-second loop or OpenClaw cron job, and the enrichment path is explicitly limited
+  to cheap `OmniRoute light` calls with low token settings plus a local fallback; GPT-5.4 is not
+  used in the signals ingestion path.
+- **Signals batch rendering**: signal mini-batches now retain a compact email excerpt and include a
+  direct Telegram source link for Telegram-derived items, making manual review faster inside the
+  `signals` topic.
+- **Signals config layout**: public docs/templates no longer embed Denis-specific signal rules;
+  the runtime now supports loading real local rule-sets from separate JSON files via `rule_files`
+  (for example `secrets/signals-bridge/rules/*.json`).
+- **`README.md` / `docs/03-operations.md` / `docs/13-ai-assistant-architecture.md`**: now document
+  the standalone signals service, new Redis streams `ingest:jobs:signals` / `ingest:events:signals`,
+  and the low-cost model policy for trading-style signals.
+- **`artifacts/agentmail-email/cron_bridge.py`**: scheduled digests no longer disappear when the
+  derived-event window is empty; the bridge now posts an explicit empty-window Telegram recap and
+  marks the slot as delivered instead of silently skipping it.
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
   правилами дедупликации по смысловому факту, fallback на реальные storyline из digest-контента,
   и без пустой заглушки про отсутствие сквозных тем.
@@ -76,6 +99,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   near-real-time poll + scheduled digest architecture.
 
 ### Verified
+- `python3 -m unittest discover -s artifacts/signals-bridge/tests -p 'test_*.py'`
+- `python3 -m py_compile artifacts/signals-bridge/*.py artifacts/signals-bridge/tests/*.py`
+- `bash -n scripts/deploy-signals-bridge.sh`
 - `agentmail-email-bridge` now starts as a lightweight Python image (`229 MB` on server after rebuild).
 - `/trigger` returns `202` and enqueues `poll` jobs into `ingest:jobs:email`.
 - Bridge consumer loop starts successfully and performs direct AgentMail API reads / label updates.

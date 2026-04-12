@@ -370,8 +370,15 @@ OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
                        │  ingest:jobs:email ──────────────────────────┼──► agentmail-email-bridge
  email-trigger ────────┤    {run_id, job_type, digest_type}          │    → openclaw agent → AgentMail
                        │                                              │    → inbox-email topic + derived events
+                       │  ingest:jobs:signals ────────────────────────┼──► signals-bridge
+ signals scheduler ────┤    {run_id, ruleset_id, source_id?}         │    → AgentMail + Telethon
+                       │                                              │    → deterministic filter
+                       │                                              │    → OmniRoute light only
+                       │                                              │    → signals topic + derived events
                        │  ingest:events:email ────────────────────────┼──► scheduled digest recap builder
  email-poller ─────────┤    (derived inbox-email events, 7d)         │
+                       │  ingest:events:signals ──────────────────────┼──► future recap / analytics / tuning
+ signals worker ───────┤    (derived signal events, 14d)             │
                        │  ingest:events:telegram ─────────────────────┼──► telethon-event-listener (future)
  Telethon listener ────┤    (individual messages, real-time)         │    → enrich → classify → alert/rag
                        │                                              │
@@ -383,7 +390,7 @@ OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
 
 Stream naming:
 - `ingest:jobs:{source}` — batch job triggers (telegram, email)
-- `ingest:events:{source}` — real-time item events (signals, private groups)
+- `ingest:events:{source}` — derived or real-time item events (signals, private groups)
 - `ingest:rag:queue` — items queued for LightRAG indexing
 - `dlq:failed` — dead letter queue (all sources)
 
@@ -417,11 +424,14 @@ while the underlying `jobs.json` store and scheduler keep working.
 |--------|--------|--------|
 | `ingest:jobs:telegram` | ✅ Live | `digest-consumer` thread → `digest_worker.py` |
 | `ingest:jobs:email` | ✅ Live | `agentmail-email-bridge` trigger queue for poll/digest jobs |
+| `ingest:jobs:signals` | ✅ Live artifact | `signals-bridge` internal 5-minute scheduler + worker queue |
 | `ingest:events:email` | ✅ Live | derived inbox-event buffer for scheduled recaps |
+| `ingest:events:signals` | ✅ Live artifact | 14-day derived signal log for dedup / future analytics |
 | `ingest:rag:queue` | ✅ Live | `rag-consumer` thread → LightRAG `/documents/upload` |
 | `ingest:events:telegram` | Planned | real-time Telethon listener (v2) |
 
-Both consumer threads run in the same `telethon-digest-cron-bridge` container.
+The digest path still runs two consumer threads in the same `telethon-digest-cron-bridge`
+container; `signals-bridge` is a separate standalone worker with its own internal scheduler.
 `integration-bus-redis` (Redis 7 Alpine) is a standalone project at `/opt/integration-bus/`.
 
 ### `Пульс дня` ranking
@@ -447,9 +457,59 @@ recap selection.
 **Backlog (v2):**
 
 - `ingest:events:telegram` — real-time Telethon listener for private groups and signal channels
-- sender/content signal routing from `ingest:events:email` into `signals`
+- move from 5-minute batch polling toward optional near-real-time per-item signal routing where needed
 - Per-item pipeline: individual posts as events (vs. current whole-digest-as-job)
 - Monitoring/metrics for Redis streams (XLEN, DLQ alerts)
+
+## Signals Bridge
+
+`signals-bridge` is a separate Python service for narrow, time-sensitive signals such as trading
+alerts. It is intentionally optimized for low token cost and does **not** use GPT-5.4 in the
+signals pipeline.
+
+### Architecture
+
+```text
+signals-bridge (every 5 minutes, internal scheduler)
+  └── XADD ingest:jobs:signals → HTTP 202 / internal enqueue
+
+                    ↓ async (Redis Streams)
+
+        signals-bridge worker loop
+              ├── email source:
+              │     AgentMail HTTP API → sender / username prefilter
+              ├── telegram source:
+              │     Telethon user session → chat / author / hashtag prefilter
+              ├── deterministic rules first
+              ├── one cheap OmniRoute `light` batch prompt for matched candidates only
+              │     max_tokens kept low; local fallback if OmniRoute unavailable
+              └── Telegram topic `signals` + XADD ingest:events:signals
+                    Telegram items carry source links; email items keep a compact excerpt
+```
+
+### Runtime guarantees
+
+- Poll cadence is every 5 minutes end-to-end; there is no 30-second signal loop.
+- `signals-bridge` uses an internal Python scheduler and does **not** create OpenClaw Cron Jobs.
+- Public artifact examples stay generic; real local rules are expected to be loaded from separate
+  JSON files via `rule_files`.
+- Source reads stay inside the bridge: AgentMail HTTP API for email, Telethon for Telegram.
+- LLM usage is deliberately constrained:
+  - only `OmniRoute light`
+  - short JSON-only prompt
+  - low `max_tokens`
+  - local rule-based fallback if OmniRoute is unavailable
+- GPT-5.4 remains outside the signals path; it is not used for signal ingestion, filtering, or rendering.
+- `ingest:events:signals` stores only derived summaries + metadata for 14 days; no raw email bodies
+  or full Telegram dumps are persisted.
+
+### V1 rule shape
+
+- Email: exact sender match `noreply@tradingview.com` plus TradingView username allowlist
+- Telegram group 1: exact hashtag rule such as `#si`
+- Telegram group 2: exact author id plus FX/currency keyword set
+- Cross-source duplicates are **not** collapsed in V1; email and Telegram hits stay as separate items
+  inside the same 5-minute mini-batch
 
 ## AgentMail Inbox Email
 
