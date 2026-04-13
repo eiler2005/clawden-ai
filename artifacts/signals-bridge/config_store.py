@@ -12,6 +12,12 @@ CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/app/config.json"))
 VALID_SOURCE_TYPES = {"email", "telegram", "web"}
 VALID_TELEGRAM_RULE_KINDS = {"hashtag", "author_keywords", "content_keywords"}
 VALID_EMAIL_RULE_KINDS = {"tradingview_user"}
+DEFAULT_LAST30DAYS_QUERY_BUNDLE = [
+    "OpenAI Codex Claude Code Gemini CLI Cursor Windsurf",
+    "OpenClaw MCP servers agent tooling open source AI tools",
+    "AI coding agents context engineering prompt engineering",
+    "Veo 3 Seedance 2.0 Nano Banana Pro paper.design creator workflows",
+]
 
 
 def load_config() -> dict:
@@ -30,6 +36,19 @@ def normalize_config(data: dict, *, base_path: Path | None = None) -> dict:
     data.setdefault("delivery", {})
     data["delivery"].setdefault("topic_name", "signals")
     data["delivery"].setdefault("mode", "mini_batch")
+    data.setdefault("last30days", {})
+    data["last30days"].setdefault("enabled", False)
+    data["last30days"].setdefault("schedule_expr", "0 7 * * *")
+    data["last30days"].setdefault("timezone", data.get("timezone", "Europe/Moscow"))
+    data["last30days"].setdefault("preset_id", "broad-discovery-v1")
+    data["last30days"].setdefault("mode", "compact")
+    data["last30days"].setdefault("max_items", 7)
+    data["last30days"].setdefault("query_bundle", list(DEFAULT_LAST30DAYS_QUERY_BUNDLE))
+    data["last30days"].setdefault("telegram", {})
+    data["last30days"]["telegram"].setdefault("topic_name", "last30daysTrend")
+    data["last30days"]["telegram"].setdefault("topic_id", 0)
+    data["last30days"].setdefault("obsidian", {})
+    data["last30days"]["obsidian"].setdefault("root", "Last30Days")
     data.setdefault("sources", {})
     for key in VALID_SOURCE_TYPES:
         data["sources"].setdefault(key, [])
@@ -93,6 +112,8 @@ def validate_config(data: dict) -> None:
             elif source_type == "web" and sources.get("web"):
                 continue
 
+    _validate_last30days(data.get("last30days", {}))
+
 
 def _validate_telegram_rule(rule: dict, source: dict) -> None:
     kind = str(rule.get("kind", "")).strip()
@@ -120,6 +141,28 @@ def _validate_email_rule(rule: dict) -> None:
         raise ValueError(f"email rule {rule.get('id')} missing from_email")
     if not rule.get("tradingview_usernames"):
         raise ValueError(f"email rule {rule.get('id')} missing tradingview_usernames")
+
+
+def _validate_last30days(data: dict) -> None:
+    current = dict(data or {})
+    current.setdefault("mode", "compact")
+    current.setdefault("schedule_expr", "0 7 * * *")
+    current.setdefault("query_bundle", list(DEFAULT_LAST30DAYS_QUERY_BUNDLE))
+    current.setdefault("telegram", {})
+    current["telegram"].setdefault("topic_id", 0)
+    if str(current.get("mode", "compact")).strip() != "compact":
+        raise ValueError("last30days.mode must currently be compact")
+    expr = str(current.get("schedule_expr", "")).strip()
+    if len(expr.split()) != 5:
+        raise ValueError("last30days.schedule_expr must be a 5-part cron expression")
+    query_bundle = [str(item).strip() for item in current.get("query_bundle", []) if str(item).strip()]
+    if not query_bundle:
+        raise ValueError("last30days.query_bundle must not be empty")
+    topic_id = current.get("telegram", {}).get("topic_id", 0)
+    try:
+        int(topic_id or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("last30days.telegram.topic_id must be an integer") from exc
 
 
 def get_ruleset(config: dict, ruleset_id: str) -> dict:

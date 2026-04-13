@@ -28,6 +28,10 @@ MAX_MSG_LEN = 3900
 _ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre"}
 _TAG_RE = re.compile(r"<(/?)(\w+)([^>]*)>", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://\S+")
+_MODEL_LABELS = {
+    "agentmail-direct": "OpenClaw Agent",
+    "openclaw": "OpenClaw Agent",
+}
 
 
 def _sanitize_html(text: str) -> str:
@@ -60,11 +64,19 @@ def _fmt_clock(value: str | None) -> str:
 
 
 def _model_line(meta: ModelMeta) -> str:
-    parts = [meta.tier, meta.model_id]
+    label = (meta.model_label or _MODEL_LABELS.get(meta.model_id) or meta.model_id).strip()
+    route = meta.tier.strip() or "primary"
+    parts = [f"{route} ({label})" if label else route]
     if meta.provider_fallback:
         parts.append("fallback")
     if meta.local_fallback:
         parts.append("local")
+    if meta.score_pct is not None:
+        parts.append(f"{meta.score_pct}%")
+    if meta.complexity:
+        parts.append(meta.complexity)
+    if meta.memory_mode:
+        parts.append(meta.memory_mode)
     return f"<i>{' · '.join(parts)}</i>"
 
 

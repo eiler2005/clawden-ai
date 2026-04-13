@@ -118,6 +118,7 @@ PY
 
   sudo chmod 600 signals.env
   sudo chmod +x /opt/signals-bridge/entrypoint.sh
+  sudo chmod +x /opt/signals-bridge/sync-openclaw-cron-jobs.sh
 
   sudo docker compose build
   sudo docker compose down 2>/dev/null || true
@@ -135,6 +136,8 @@ PY
     echo "signals-bridge did not become healthy in time." >&2
     exit 1
   fi
+
+  sudo /opt/signals-bridge/sync-openclaw-cron-jobs.sh
 '
 
 cat <<'EOF'
@@ -147,6 +150,7 @@ Cadence:
 Useful commands:
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'cd /opt/signals-bridge && sudo docker compose logs --tail=100 signals-bridge'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8093/health && echo && curl -s http://127.0.0.1:8093/status'
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:signals'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:signals'
 EOF

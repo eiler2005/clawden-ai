@@ -32,15 +32,36 @@ def _event_to_fields(event: SignalEvent) -> dict[str, str]:
     }
 
 
-def append_events(r, events: list[SignalEvent], *, retention_days: int) -> list[str]:
+def event_dedup_key(event: SignalEvent) -> str:
+    return f"dedup:signals:{event.source_type}:{event.source_id}:{event.external_ref}"
+
+
+def append_new_events(
+    r,
+    events: list[SignalEvent],
+    *,
+    retention_days: int,
+) -> tuple[list[str], list[SignalEvent], list[SignalEvent]]:
     ids: list[str] = []
+    appended: list[SignalEvent] = []
+    skipped: list[SignalEvent] = []
+    seen_keys: set[str] = set()
     for event in events:
-        dedup_key = (
-            f"dedup:signals:{event.source_type}:{event.source_id}:{event.external_ref}"
-        )
-        if not r.set(dedup_key, event.event_id, nx=True, ex=retention_days * 86400):
+        dedup_key = event_dedup_key(event)
+        if dedup_key in seen_keys:
+            skipped.append(event)
             continue
+        seen_keys.add(dedup_key)
+        if not r.set(dedup_key, event.event_id, nx=True, ex=retention_days * 86400):
+            skipped.append(event)
+            continue
+        appended.append(event)
         ids.append(r.xadd(STREAM_EVENTS, _event_to_fields(event)))
+    return ids, appended, skipped
+
+
+def append_events(r, events: list[SignalEvent], *, retention_days: int) -> list[str]:
+    ids, _, _ = append_new_events(r, events, retention_days=retention_days)
     return ids
 
 

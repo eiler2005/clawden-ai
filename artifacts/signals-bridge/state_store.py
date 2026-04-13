@@ -27,6 +27,10 @@ def source_cursor_key(source_id: str) -> str:
     return f"state:signals:source:{_slug(source_id)}:cursor"
 
 
+def last30days_last_success_key(preset_id: str) -> str:
+    return f"state:signals:last30days:{_slug(preset_id)}:last_success_at"
+
+
 def lock_key(scope: str, target: str) -> str:
     return f"lock:signals:{_slug(scope)}:{_slug(target)}"
 
@@ -73,4 +77,3 @@ def release_lock(r, key: str, holder: str) -> None:
 
 def set_status(r, payload: dict) -> None:
     r.set(status_key(), json.dumps(payload, ensure_ascii=False))
-

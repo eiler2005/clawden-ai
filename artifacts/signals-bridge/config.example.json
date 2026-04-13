@@ -10,8 +10,29 @@
     "topic_name": "signals",
     "mode": "mini_batch"
   },
+  "last30days": {
+    "enabled": true,
+    "schedule_expr": "0 7 * * *",
+    "timezone": "Europe/Moscow",
+    "preset_id": "broad-discovery-v1",
+    "mode": "compact",
+    "telegram": {
+      "topic_name": "last30daysTrend",
+      "topic_id": 0
+    },
+    "obsidian": {
+      "root": "Last30Days"
+    },
+    "max_items": 7,
+    "query_bundle": [
+      "OpenAI Codex Claude Code Gemini CLI Cursor Windsurf",
+      "OpenClaw MCP servers agent tooling open source AI tools",
+      "AI coding agents context engineering prompt engineering",
+      "Veo 3 Seedance 2.0 Nano Banana Pro paper.design creator workflows"
+    ]
+  },
   "rule_files": [
-    "rules/*.json"
+    "rules/*.local.json"
   ],
   "sources": {
     "email": [

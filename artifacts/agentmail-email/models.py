@@ -11,17 +11,32 @@ from typing import Any
 class ModelMeta:
     model_id: str = "openclaw"
     tier: str = "primary"
+    model_label: str = ""
     provider_fallback: bool = False
     local_fallback: bool = False
+    score_pct: int | None = None
+    complexity: str = "standard"
+    memory_mode: str = "memory"
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any] | None) -> "ModelMeta":
         payload = payload or {}
+        raw_score = payload.get("score_pct")
+        score_pct: int | None = None
+        if raw_score not in (None, ""):
+            try:
+                score_pct = max(0, min(100, int(raw_score)))
+            except (TypeError, ValueError):
+                score_pct = None
         return cls(
             model_id=str(payload.get("model_id") or "openclaw"),
             tier=str(payload.get("tier") or "primary"),
+            model_label=str(payload.get("model_label") or ""),
             provider_fallback=bool(payload.get("provider_fallback", False)),
             local_fallback=bool(payload.get("local_fallback", False)),
+            score_pct=score_pct,
+            complexity=str(payload.get("complexity") or "standard").strip() or "standard",
+            memory_mode=str(payload.get("memory_mode") or "memory").strip() or "memory",
         )
 
 

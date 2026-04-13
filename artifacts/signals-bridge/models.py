@@ -84,3 +84,44 @@ class PreparedSignalBatch:
     events: list[SignalEvent]
     model_meta: ModelMeta
     dropped_external_refs: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Last30DaysTheme:
+    theme_id: str
+    title: str
+    snippet: str
+    url: str
+    sources: list[str] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)
+    score: float = 0.0
+    source_titles: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class Last30DaysDigest:
+    preset_id: str
+    mode: str
+    generated_at: str
+    topic_name: str
+    topic_id: int
+    query_bundle: list[str]
+    themes: list[Last30DaysTheme] = field(default_factory=list)
+    source_counts: dict[str, int] = field(default_factory=dict)
+    errors_by_source: dict[str, str] = field(default_factory=dict)
+    query_errors: dict[str, str] = field(default_factory=dict)
+    successful_queries: int = 0
+    total_queries: int = 0
+    suggestions: list[str] = field(default_factory=list)
+    reports: list[dict[str, Any]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    status: str = "ok"
+    persisted_paths: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["themes"] = [theme.to_dict() for theme in self.themes]
+        return payload

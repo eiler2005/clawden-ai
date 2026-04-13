@@ -12,13 +12,13 @@ from zoneinfo import ZoneInfo
 
 import aiohttp
 
-from models import ModelMeta, SignalEvent
+from models import Last30DaysDigest, ModelMeta, SignalEvent
 
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 SUPERGROUP_ID = int(os.environ["SIGNALS_SUPERGROUP_ID"])
-TOPIC_ID = int(os.environ["SIGNALS_TOPIC_ID"])
+TOPIC_ID = int(os.environ.get("SIGNALS_TOPIC_ID", "0") or 0)
 TIMEZONE = ZoneInfo(os.environ.get("SIGNALS_TIMEZONE", "Europe/Moscow"))
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -117,17 +117,59 @@ def _split_text(text: str) -> list[str]:
     return chunks
 
 
-async def post_html_message(text: str) -> bool:
+def render_last30days_digest(digest: Last30DaysDigest) -> str:
+    lines = [
+        f"🧭 <b>{escape(digest.topic_name)}</b> | {len(digest.themes)} тем",
+        f"<i>{digest.successful_queries}/{digest.total_queries} compact queries · {_source_coverage_line(digest.source_counts)}</i>",
+    ]
+    if digest.notes:
+        lines.append("")
+        lines.append(escape(" ".join(digest.notes)))
+    for index, theme in enumerate(digest.themes, start=1):
+        lines.append("")
+        lines.append(f"{index}. <b>{escape(theme.title)}</b>")
+        if theme.snippet:
+            lines.append(escape(theme.snippet))
+        meta = []
+        if theme.sources:
+            meta.append(", ".join(escape(source) for source in theme.sources))
+        if theme.queries:
+            meta.append("queries: " + " | ".join(escape(query) for query in theme.queries[:2]))
+        if meta:
+            lines.append(f"<i>{' · '.join(meta)}</i>")
+        if theme.url:
+            lines.append(escape(theme.url))
+    if digest.errors_by_source or digest.query_errors:
+        lines.append("")
+        lines.append("<i>Partial gaps:</i>")
+        for source, error in list(digest.errors_by_source.items())[:3]:
+            lines.append(escape(f"{source}: {error}"))
+        for query, error in list(digest.query_errors.items())[:2]:
+            lines.append(escape(f"{query}: {error}"))
+    return _sanitize_html("\n".join(lines).strip())
+
+
+def _source_coverage_line(source_counts: dict[str, int]) -> str:
+    if not source_counts:
+        return "no source coverage"
+    parts = [f"{source}:{count}" for source, count in list(source_counts.items())[:5]]
+    return "sources " + ", ".join(parts)
+
+
+async def post_html_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:
     chunks = _split_text(text)
+    resolved_chat_id = int(chat_id if chat_id is not None else SUPERGROUP_ID)
+    resolved_topic_id = topic_id if topic_id is not None else TOPIC_ID
     async with aiohttp.ClientSession() as session:
         for chunk in chunks:
             payload = {
-                "chat_id": SUPERGROUP_ID,
-                "message_thread_id": TOPIC_ID,
+                "chat_id": resolved_chat_id,
                 "text": chunk,
                 "parse_mode": "HTML",
                 "disable_web_page_preview": True,
             }
+            if resolved_topic_id:
+                payload["message_thread_id"] = int(resolved_topic_id)
             try:
                 async with session.post(
                     f"{BASE_URL}/sendMessage",

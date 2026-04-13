@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from config_store import normalize_config, validate_config
-from event_store import append_events
+from event_store import append_events, append_new_events
+from last30days_runner import build_digest
 from matching import build_telegram_message_link, extract_tradingview_username, keyword_matches, local_event_from_candidate, match_email_rule, match_telegram_rule
 from models import SignalEvent
 from omniroute_client import _local_fallback_batch
@@ -126,6 +129,23 @@ class ConfigValidationTests(unittest.TestCase):
             normalized = normalize_config(config, base_path=base)
         self.assertEqual(len(normalized["rule_sets"]), 1)
         self.assertEqual(normalized["rule_sets"][0]["id"], "market-watch")
+
+    def test_normalize_sets_last30days_defaults(self) -> None:
+        normalized = normalize_config(sample_config())
+        self.assertEqual(normalized["last30days"]["mode"], "compact")
+        self.assertEqual(normalized["last30days"]["preset_id"], "broad-discovery-v1")
+        self.assertEqual(len(normalized["last30days"]["query_bundle"]), 4)
+
+    def test_invalid_last30days_mode_raises(self) -> None:
+        config = sample_config()
+        config["last30days"] = {
+            "mode": "deep",
+            "schedule_expr": "0 7 * * *",
+            "query_bundle": ["topic"],
+            "telegram": {"topic_id": 0},
+        }
+        with self.assertRaisesRegex(ValueError, "last30days.mode"):
+            validate_config(config)
 
 
 class MatchingTests(unittest.TestCase):
@@ -504,6 +524,69 @@ class DeliveryAndStateTests(unittest.TestCase):
         ids = append_events(r, events, retention_days=14)
         self.assertEqual(len(ids), 1)
 
+    def test_append_new_events_skips_existing_and_same_batch_duplicates(self) -> None:
+        r = FakeRedis()
+        events = [
+            SignalEvent(
+                event_id="1",
+                ruleset_id="trading",
+                rule_id="rule-a",
+                source_type="telegram",
+                source_id="source",
+                external_ref="chat:1",
+                occurred_at="2026-04-12T12:00:00+00:00",
+                captured_at="2026-04-12T12:00:00+00:00",
+                author="A",
+                title="T1",
+                summary="S1",
+                tags=["si"],
+                confidence=0.8,
+                telegram_topic="signals",
+            ),
+            SignalEvent(
+                event_id="2",
+                ruleset_id="trading",
+                rule_id="rule-b",
+                source_type="telegram",
+                source_id="source",
+                external_ref="chat:1",
+                occurred_at="2026-04-12T12:00:01+00:00",
+                captured_at="2026-04-12T12:00:01+00:00",
+                author="A",
+                title="T1 duplicate",
+                summary="S1 duplicate",
+                tags=["si"],
+                confidence=0.8,
+                telegram_topic="signals",
+            ),
+            SignalEvent(
+                event_id="3",
+                ruleset_id="trading",
+                rule_id="rule-c",
+                source_type="telegram",
+                source_id="source",
+                external_ref="chat:2",
+                occurred_at="2026-04-12T12:01:00+00:00",
+                captured_at="2026-04-12T12:01:00+00:00",
+                author="B",
+                title="T2",
+                summary="S2",
+                tags=["si"],
+                confidence=0.8,
+                telegram_topic="signals",
+            ),
+        ]
+
+        ids, appended, skipped = append_new_events(r, events, retention_days=14)
+        self.assertEqual(len(ids), 2)
+        self.assertEqual([event.external_ref for event in appended], ["chat:1", "chat:2"])
+        self.assertEqual([event.external_ref for event in skipped], ["chat:1"])
+
+        ids, appended, skipped = append_new_events(r, events, retention_days=14)
+        self.assertEqual(ids, [])
+        self.assertEqual(appended, [])
+        self.assertEqual([event.external_ref for event in skipped], ["chat:1", "chat:1", "chat:2"])
+
     def test_overlap_window_uses_last_success_minus_grace(self) -> None:
         now = datetime(2026, 4, 12, 12, 0, tzinfo=timezone.utc)
         last_success = now - timedelta(minutes=5)
@@ -551,6 +634,178 @@ class DeliveryAndStateTests(unittest.TestCase):
         batch = _local_fallback_batch(candidates=[email_candidate, tg_candidate], topic_name="signals")
         self.assertEqual(batch.events[0].source_excerpt, "Full email excerpt about SI and setup")
         self.assertEqual(batch.events[1].source_link, "https://t.me/c/1/5")
+
+
+class Last30DaysDigestTests(unittest.TestCase):
+    @patch("last30days_runner.subprocess.run")
+    def test_build_digest_merges_queries_and_keeps_partial_failures(self, mock_run) -> None:
+        payload = {
+            "provider_runtime": {
+                "reasoning_provider": "local",
+                "planner_model": "deterministic",
+                "rerank_model": "deterministic",
+            },
+            "query_plan": {
+                "intent": "research",
+                "freshness_mode": "recent",
+                "cluster_mode": "standard",
+                "raw_topic": "topic",
+                "subqueries": [],
+                "source_weights": {},
+            },
+            "clusters": [
+                {
+                    "cluster_id": "cluster-1",
+                    "title": "Theme 1",
+                    "candidate_ids": ["cand-1"],
+                    "representative_ids": ["cand-1"],
+                    "sources": ["reddit", "x"],
+                    "score": 91.0,
+                }
+            ],
+            "ranked_candidates": [
+                {
+                    "candidate_id": "cand-1",
+                    "item_id": "item-1",
+                    "source": "reddit",
+                    "title": "Theme 1",
+                    "url": "https://example.com/theme-1",
+                    "snippet": "Compact summary",
+                    "subquery_labels": ["primary"],
+                    "native_ranks": {},
+                    "local_relevance": 0.8,
+                    "freshness": 9,
+                    "engagement": 120,
+                    "source_quality": 0.9,
+                    "rrf_score": 0.7,
+                    "sources": ["reddit", "x"],
+                    "source_items": [{"title": "Reference 1", "url": "https://example.com/theme-1"}],
+                    "final_score": 95.0,
+                    "cluster_id": "cluster-1",
+                }
+            ],
+            "items_by_source": {"reddit": [{"item_id": "item-1"}], "x": [{"item_id": "item-2"}]},
+            "errors_by_source": {"youtube": "timeout"},
+        }
+
+        success = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+        failure = Mock(returncode=1, stdout="", stderr="provider error")
+        mock_run.side_effect = [success, failure, success, success]
+
+        config = normalize_config(sample_config())
+        digest = build_digest(
+            config,
+            preset_id="broad-discovery-v1",
+            now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(digest.total_queries, 4)
+        self.assertEqual(digest.successful_queries, 3)
+        self.assertEqual(digest.status, "partial")
+        self.assertTrue(digest.themes)
+        self.assertIn("youtube", digest.errors_by_source)
+        self.assertEqual(digest.themes[0].title, "Theme 1")
+
+    @patch("last30days_runner.subprocess.run")
+    def test_build_digest_uses_rescue_queries_after_empty_composite_result(self, mock_run) -> None:
+        empty = {
+            "provider_runtime": {
+                "reasoning_provider": "local",
+                "planner_model": "deterministic",
+                "rerank_model": "deterministic",
+            },
+            "clusters": [],
+            "ranked_candidates": [],
+            "items_by_source": {"reddit": [], "hackernews": []},
+            "errors_by_source": {},
+            "warnings": ["No candidates survived retrieval and ranking."],
+        }
+        rescue = {
+            "provider_runtime": {
+                "reasoning_provider": "local",
+                "planner_model": "deterministic",
+                "rerank_model": "deterministic",
+            },
+            "clusters": [
+                {
+                    "cluster_id": "cluster-openai-codex",
+                    "title": "OpenAI Codex reaches 3M weekly active users",
+                    "candidate_ids": ["codex-1"],
+                    "representative_ids": ["codex-1"],
+                    "sources": ["hackernews"],
+                    "score": 91.0,
+                }
+            ],
+            "ranked_candidates": [
+                {
+                    "candidate_id": "codex-1",
+                    "item_id": "item-codex-1",
+                    "source": "hackernews",
+                    "title": "OpenAI Codex reaches 3M weekly active users",
+                    "url": "https://example.com/openai-codex",
+                    "snippet": "OpenAI Codex reached 3M weekly active users in under a month.",
+                    "sources": ["hackernews"],
+                    "source_items": [{"title": "HN reference", "url": "https://example.com/openai-codex"}],
+                    "final_score": 95.0,
+                    "cluster_id": "cluster-openai-codex",
+                }
+            ],
+            "items_by_source": {"hackernews": [{"item_id": "item-codex-1"}]},
+            "errors_by_source": {},
+            "warnings": [],
+        }
+
+        def fake_run(cmd, **kwargs):
+            query = cmd[2]
+            payload = rescue if query == "OpenAI Codex" else empty
+            return Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        mock_run.side_effect = fake_run
+
+        config = normalize_config(sample_config())
+        digest = build_digest(
+            config,
+            preset_id="broad-discovery-v1",
+            now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(digest.status, "ok")
+        self.assertTrue(digest.themes)
+        self.assertEqual(digest.themes[0].title, "OpenAI Codex reaches 3M weekly active users")
+        self.assertGreaterEqual(digest.source_counts["hn"], 1)
+        first_report = digest.reports[0]
+        self.assertIn("rescue_queries", first_report)
+        self.assertIn("OpenAI Codex", first_report["rescue_queries"])
+
+    @patch("last30days_runner.subprocess.run")
+    def test_build_digest_passes_github_repo_hints_for_top_queries(self, mock_run) -> None:
+        payload = {
+            "provider_runtime": {
+                "reasoning_provider": "local",
+                "planner_model": "deterministic",
+                "rerank_model": "deterministic",
+            },
+            "clusters": [],
+            "ranked_candidates": [],
+            "items_by_source": {},
+            "errors_by_source": {},
+            "warnings": [],
+        }
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["OpenAI Codex"]
+        digest = build_digest(
+            config,
+            preset_id="broad-discovery-v1",
+            now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(digest.total_queries, 1)
+        first_cmd = mock_run.call_args[0][0]
+        self.assertIn("--github-repo", first_cmd)
+        idx = first_cmd.index("--github-repo")
+        self.assertEqual(first_cmd[idx + 1], "openai/codex")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ services:
       - signals-bridge-state:/app/state
       - ./config.json:/app/config.json
       - ./rules:/app/rules:ro
+      - /opt/obsidian-vault:/app/obsidian
     networks:
       - openclaw_default
 

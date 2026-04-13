@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Signals bridge: internal scheduler + Redis consumer + low-cost enrichment."""
+"""Signals bridge: internal scheduler + Redis consumers + compact last30days daily feed."""
 from __future__ import annotations
 
 import asyncio
@@ -21,9 +21,11 @@ from dotenv import load_dotenv
 from agentmail_api import AgentMailApiClient, AgentMailApiError
 from config_store import get_ruleset, index_sources, load_config
 from email_adapter import collect_email_candidates, resolve_email_window
-from event_store import append_events, trim_old_events
+from event_store import append_events, append_new_events, trim_old_events
+from last30days_persistence import persist_last30days_digest
+from last30days_runner import build_digest
 from omniroute_client import prepare_signal_batch
-from poster import post_html_message, render_batch
+from poster import post_html_message, render_batch, render_last30days_digest
 import state_store
 from telegram_adapter import build_client as build_telethon_client
 from telegram_adapter import collect_telegram_candidates
@@ -42,12 +44,16 @@ TOKEN = os.environ.get("SIGNALS_BRIDGE_TOKEN", "").strip()
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 
 STATE_DIR = Path("/app/state")
-STATUS_PATH = STATE_DIR / "signals-bridge-status.json"
+SIGNALS_STATUS_PATH = STATE_DIR / "signals-bridge-status.json"
+LAST30DAYS_STATUS_PATH = STATE_DIR / "last30days-status.json"
 
 STREAM_JOBS = "ingest:jobs:signals"
+STREAM_LAST30DAYS_JOBS = "ingest:jobs:last30days"
 STREAM_DLQ = "dlq:failed"
 CONSUMER_GROUP = "signals-workers"
 CONSUMER_NAME = "signals-bridge-worker"
+LAST30DAYS_CONSUMER_GROUP = "last30days-workers"
+LAST30DAYS_CONSUMER_NAME = "signals-last30days-worker"
 BLOCK_MS = 5000
 
 
@@ -74,18 +80,26 @@ def _tail_union(*tails: list[str]) -> list[str]:
     return lines[-18:]
 
 
-def _load_status() -> dict:
-    if not STATUS_PATH.exists():
+def _load_status_file(path: Path) -> dict:
+    if not path.exists():
         return {"ok": True, "running": False}
     try:
-        return json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {"ok": False, "running": False, "error": "status_unreadable"}
 
 
-def _write_status(r: redis_lib.Redis | None, payload: dict) -> None:
+def _load_signals_status() -> dict:
+    return _load_status_file(SIGNALS_STATUS_PATH)
+
+
+def _load_last30days_status() -> dict:
+    return _load_status_file(LAST30DAYS_STATUS_PATH)
+
+
+def _write_status(path: Path, r: redis_lib.Redis | None, payload: dict) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATUS_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     if r is not None:
         state_store.set_status(r, payload)
 
@@ -111,6 +125,17 @@ def _event_retention_days(config: dict) -> int:
     return int(config.get("event_retention_days", 14) or 14)
 
 
+def _last30days_enabled(config: dict) -> bool:
+    env_value = os.environ.get("LAST30DAYS_ENABLED", "1").strip().lower()
+    if env_value in {"0", "false", "no", "off"}:
+        return False
+    return bool(config.get("last30days", {}).get("enabled", False))
+
+
+def _last30days_lock_ttl_seconds() -> int:
+    return int(os.environ.get("LAST30DAYS_TIMEOUT_SECONDS", "420") or 420) + 120
+
+
 def _dlq(r, *, run_id: str, error: str, payload: dict) -> None:
     try:
         r.xadd(
@@ -127,26 +152,36 @@ def _dlq(r, *, run_id: str, error: str, payload: dict) -> None:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "signals-bridge/1.0"
+    server_version = "signals-bridge/1.1"
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            status = _load_status()
+            signals_status = _load_signals_status()
+            last30days_status = _load_last30days_status()
             self._send(
                 HTTPStatus.OK,
                 {
-                    "ok": True,
+                    "ok": bool(signals_status.get("ok", True) and last30days_status.get("ok", True)),
                     "service": "signals-bridge",
-                    "running": bool(status.get("running")),
-                    "last_ruleset_id": status.get("ruleset_id"),
-                    "last_started_at": status.get("started_at"),
-                    "last_finished_at": status.get("finished_at"),
-                    "last_posted_events": status.get("posted_events", 0),
+                    "running": bool(signals_status.get("running") or last30days_status.get("running")),
+                    "last_ruleset_id": signals_status.get("ruleset_id"),
+                    "last_started_at": signals_status.get("started_at"),
+                    "last_finished_at": signals_status.get("finished_at"),
+                    "last_posted_events": signals_status.get("posted_events", 0),
+                    "last30days": {
+                        "running": bool(last30days_status.get("running")),
+                        "preset_id": last30days_status.get("preset_id"),
+                        "last_generated_at": last30days_status.get("finished_at"),
+                        "last_posted_themes": last30days_status.get("posted_themes", 0),
+                        "topic_name": last30days_status.get("topic_name"),
+                    },
                 },
             )
             return
         if self.path == "/status":
-            self._send(HTTPStatus.OK, _load_status())
+            payload = _load_signals_status()
+            payload["last30days"] = _load_last30days_status()
+            self._send(HTTPStatus.OK, payload)
             return
         self._send(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
@@ -167,6 +202,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_json"})
             return
 
+        job_type = str(payload.get("job_type", "")).strip() or "signals"
+        if job_type == "last30days_daily":
+            self._enqueue_last30days(payload)
+            return
+        self._enqueue_signals(payload)
+
+    def log_message(self, fmt: str, *args) -> None:
+        logger.info("%s - %s", self.address_string(), fmt % args)
+
+    def _send(self, status: HTTPStatus, payload: dict) -> None:
+        body = _json_bytes(payload)
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _enqueue_signals(self, payload: dict) -> None:
         ruleset_id = str(payload.get("ruleset_id", "")).strip()
         source_id = str(payload.get("source_id", "")).strip()
         try:
@@ -210,6 +263,7 @@ class Handler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "status": "enqueued",
+                "job_type": "signals",
                 "run_id": run_id,
                 "ruleset_id": ruleset_id,
                 "source_id": source_id or None,
@@ -217,16 +271,48 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
 
-    def log_message(self, fmt: str, *args) -> None:
-        logger.info("%s - %s", self.address_string(), fmt % args)
+    def _enqueue_last30days(self, payload: dict) -> None:
+        try:
+            config = load_config()
+            if not _last30days_enabled(config):
+                raise RuntimeError("last30days_disabled")
+            preset_id = str(payload.get("preset_id") or config.get("last30days", {}).get("preset_id") or "").strip()
+            if not preset_id:
+                raise RuntimeError("missing_preset_id")
+        except RuntimeError as exc:
+            self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+            return
+        except Exception as exc:
+            self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_config", "detail": str(exc)})
+            return
 
-    def _send(self, status: HTTPStatus, payload: dict) -> None:
-        body = _json_bytes(payload)
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        run_id = str(uuid.uuid4())
+        try:
+            r = _make_redis()
+            r.xadd(
+                STREAM_LAST30DAYS_JOBS,
+                {
+                    "run_id": run_id,
+                    "job_type": "last30days_daily",
+                    "preset_id": preset_id,
+                    "requested_at": _utc_now_iso(),
+                    "requested_by": "manual",
+                },
+            )
+        except redis_lib.exceptions.RedisError as exc:
+            self._send(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "bus_unavailable", "detail": str(exc)})
+            return
+
+        self._send(
+            HTTPStatus.ACCEPTED,
+            {
+                "ok": True,
+                "status": "enqueued",
+                "job_type": "last30days_daily",
+                "run_id": run_id,
+                "preset_id": preset_id,
+            },
+        )
 
 
 def _scheduler_loop() -> None:
@@ -284,17 +370,17 @@ def _cleanup_loop() -> None:
             time.sleep(600)
 
 
-def _consumer_loop() -> None:
+def _signals_consumer_loop() -> None:
     while True:
         r = _make_redis()
         try:
-            _consumer_loop_inner(r)
+            _signals_consumer_loop_inner(r)
         except redis_lib.exceptions.RedisError:
             logger.exception("signals consumer lost redis connection")
             time.sleep(3)
 
 
-def _consumer_loop_inner(r) -> None:
+def _signals_consumer_loop_inner(r) -> None:
     try:
         r.xgroup_create(STREAM_JOBS, CONSUMER_GROUP, id="0", mkstream=True)
     except redis_lib.exceptions.ResponseError as exc:
@@ -317,7 +403,7 @@ def _consumer_loop_inner(r) -> None:
         ruleset_id = data.get("ruleset_id", "")
         logger.info("Processing signals run_id=%s ruleset=%s", run_id, ruleset_id)
         try:
-            result = _process_job(r, data)
+            result = _process_signals_job(r, data)
             r.xack(STREAM_JOBS, CONSUMER_GROUP, msg_id)
             logger.info(
                 "Signals run finished run_id=%s ruleset=%s posted=%s",
@@ -329,6 +415,7 @@ def _consumer_loop_inner(r) -> None:
             logger.exception("signals job failed run_id=%s", run_id)
             _dlq(r, run_id=run_id, error=str(exc), payload=data)
             _write_status(
+                SIGNALS_STATUS_PATH,
                 r,
                 {
                     "ok": False,
@@ -344,7 +431,68 @@ def _consumer_loop_inner(r) -> None:
             r.xack(STREAM_JOBS, CONSUMER_GROUP, msg_id)
 
 
-def _process_job(r, data: dict[str, str]) -> dict:
+def _last30days_consumer_loop() -> None:
+    while True:
+        r = _make_redis()
+        try:
+            _last30days_consumer_loop_inner(r)
+        except redis_lib.exceptions.RedisError:
+            logger.exception("last30days consumer lost redis connection")
+            time.sleep(3)
+
+
+def _last30days_consumer_loop_inner(r) -> None:
+    try:
+        r.xgroup_create(STREAM_LAST30DAYS_JOBS, LAST30DAYS_CONSUMER_GROUP, id="0", mkstream=True)
+    except redis_lib.exceptions.ResponseError as exc:
+        if "BUSYGROUP" not in str(exc):
+            raise
+
+    while True:
+        messages = r.xreadgroup(
+            LAST30DAYS_CONSUMER_GROUP,
+            LAST30DAYS_CONSUMER_NAME,
+            {STREAM_LAST30DAYS_JOBS: ">"},
+            block=BLOCK_MS,
+            count=1,
+        )
+        if not messages:
+            continue
+        _, entries = messages[0]
+        msg_id, data = entries[0]
+        run_id = data.get("run_id", msg_id)
+        preset_id = data.get("preset_id", "")
+        logger.info("Processing last30days run_id=%s preset=%s", run_id, preset_id)
+        try:
+            result = _process_last30days_job(r, data)
+            r.xack(STREAM_LAST30DAYS_JOBS, LAST30DAYS_CONSUMER_GROUP, msg_id)
+            logger.info(
+                "Last30Days run finished run_id=%s preset=%s themes=%s",
+                run_id,
+                preset_id,
+                result.get("posted_themes", 0),
+            )
+        except Exception as exc:
+            logger.exception("last30days job failed run_id=%s", run_id)
+            _dlq(r, run_id=run_id, error=str(exc), payload=data)
+            _write_status(
+                LAST30DAYS_STATUS_PATH,
+                r,
+                {
+                    "ok": False,
+                    "running": False,
+                    "preset_id": preset_id,
+                    "run_id": run_id,
+                    "started_at": None,
+                    "finished_at": _utc_now_iso(),
+                    "posted_themes": 0,
+                    "tail": [str(exc)],
+                },
+            )
+            r.xack(STREAM_LAST30DAYS_JOBS, LAST30DAYS_CONSUMER_GROUP, msg_id)
+
+
+def _process_signals_job(r, data: dict[str, str]) -> dict:
     config = load_config()
     ruleset = get_ruleset(config, str(data.get("ruleset_id", "")).strip())
     lookback_minutes = _parse_lookback_minutes(data)
@@ -360,6 +508,7 @@ def _process_job(r, data: dict[str, str]) -> dict:
 
     started_at = _utc_now_iso()
     _write_status(
+        SIGNALS_STATUS_PATH,
         r,
         {
             "ok": True,
@@ -429,12 +578,16 @@ def _process_job(r, data: dict[str, str]) -> dict:
             topic_name=topic_name,
             candidates=candidates,
         )
-        append_events(r, prepared.events, retention_days=_event_retention_days(config))
+        _, fresh_events, duplicate_events = append_new_events(
+            r,
+            prepared.events,
+            retention_days=_event_retention_days(config),
+        )
         posted = False
-        if prepared.events:
+        if fresh_events:
             body = render_batch(
                 ruleset_title=str(ruleset.get("title", ruleset["id"])),
-                events=prepared.events,
+                events=fresh_events,
                 model_meta=prepared.model_meta,
             )
             posted = asyncio.run(post_html_message(body))
@@ -447,12 +600,89 @@ def _process_job(r, data: dict[str, str]) -> dict:
             "run_id": run_id,
             "started_at": started_at,
             "finished_at": finished_at,
-            "posted_events": len(prepared.events) if posted else 0,
-            "tail": _tail_union(*tails, [f"dropped={len(prepared.dropped_external_refs)}"], source_errors),
+            "posted_events": len(fresh_events) if posted else 0,
+            "tail": _tail_union(
+                *tails,
+                [
+                    f"dropped={len(prepared.dropped_external_refs)}",
+                    f"deduped={len(duplicate_events)}",
+                ],
+                source_errors,
+            ),
             "omniroute_model": os.environ.get("OMNIROUTE_MODEL", "light"),
             "scheduler_tick_seconds": int(config.get("scheduler", {}).get("tick_seconds", 300) or 300),
         }
-        _write_status(r, status)
+        _write_status(SIGNALS_STATUS_PATH, r, status)
+        return status
+    finally:
+        state_store.release_lock(r, job_lock, holder)
+
+
+def _process_last30days_job(r, data: dict[str, str]) -> dict:
+    config = load_config()
+    if not _last30days_enabled(config):
+        raise RuntimeError("last30days_disabled")
+    preset_id = str(data.get("preset_id") or config.get("last30days", {}).get("preset_id") or "").strip()
+    run_id = str(data.get("run_id", "")).strip() or str(uuid.uuid4())
+
+    holder = run_id
+    job_lock = state_store.lock_key("last30days", preset_id)
+    if not state_store.acquire_lock(r, job_lock, holder, ttl_seconds=_last30days_lock_ttl_seconds()):
+        raise RuntimeError(f"last30days preset is already running: {preset_id}")
+
+    started_at = _utc_now_iso()
+    _write_status(
+        LAST30DAYS_STATUS_PATH,
+        r,
+        {
+            "ok": True,
+            "running": True,
+            "preset_id": preset_id,
+            "run_id": run_id,
+            "started_at": started_at,
+            "finished_at": None,
+            "posted_themes": 0,
+            "tail": [],
+        },
+    )
+
+    try:
+        digest = build_digest(config, preset_id=preset_id)
+        paths = persist_last30days_digest(digest, config=config)
+        digest.persisted_paths = paths
+
+        post_ok = True
+        post_tail: list[str] = []
+        if digest.topic_id > 0:
+            body = render_last30days_digest(digest)
+            post_ok = asyncio.run(post_html_message(body, topic_id=digest.topic_id))
+            if not post_ok:
+                post_tail.append("telegram_post_failed")
+        else:
+            post_tail.append("telegram_topic_id_missing")
+
+        finished_at = _utc_now_iso()
+        state_store.set_dt(r, state_store.last30days_last_success_key(preset_id), _utc_now())
+        status = {
+            "ok": digest.status != "failed" and post_ok,
+            "running": False,
+            "preset_id": preset_id,
+            "run_id": run_id,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "posted_themes": len(digest.themes) if post_ok else 0,
+            "total_themes": len(digest.themes),
+            "successful_queries": digest.successful_queries,
+            "total_queries": digest.total_queries,
+            "topic_name": digest.topic_name,
+            "topic_id": digest.topic_id,
+            "source_counts": digest.source_counts,
+            "errors_by_source": digest.errors_by_source,
+            "query_errors": digest.query_errors,
+            "persisted_paths": paths,
+            "tail": _tail_union(digest.notes, post_tail),
+        }
+        _write_status(LAST30DAYS_STATUS_PATH, r, status)
         return status
     finally:
         state_store.release_lock(r, job_lock, holder)
@@ -525,13 +755,15 @@ def main() -> None:
         raise SystemExit("SIGNALS_BRIDGE_TOKEN is required")
     config = load_config()
     logger.info(
-        "Starting signals-bridge on :%s with 5m scheduler tick=%s and OmniRoute model=%s",
+        "Starting signals-bridge on :%s with 5m scheduler tick=%s and OmniRoute model=%s (last30days=%s)",
         PORT,
         config.get("scheduler", {}).get("tick_seconds", 300),
         os.environ.get("OMNIROUTE_MODEL", "light"),
+        _last30days_enabled(config),
     )
     threading.Thread(target=_scheduler_loop, daemon=True, name="signals-scheduler").start()
-    threading.Thread(target=_consumer_loop, daemon=True, name="signals-consumer").start()
+    threading.Thread(target=_signals_consumer_loop, daemon=True, name="signals-consumer").start()
+    threading.Thread(target=_last30days_consumer_loop, daemon=True, name="last30days-consumer").start()
     threading.Thread(target=_cleanup_loop, daemon=True, name="signals-cleanup").start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.serve_forever()
@@ -539,4 +771,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

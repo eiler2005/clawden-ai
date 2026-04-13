@@ -86,8 +86,12 @@ JSON schema:
   "model_meta": {{
     "model_id": "model id",
     "tier": "primary",
+    "model_label": "OpenClaw Agent",
     "provider_fallback": false,
-    "local_fallback": false
+    "local_fallback": false,
+    "score_pct": 13,
+    "complexity": "standard",
+    "memory_mode": "memory"
   }}
 }}
 
@@ -149,8 +153,12 @@ Return strict JSON only:
   "model_meta": {{
     "model_id": "model id",
     "tier": "primary",
+    "model_label": "OpenClaw Agent",
     "provider_fallback": false,
-    "local_fallback": false
+    "local_fallback": false,
+    "score_pct": 13,
+    "complexity": "standard",
+    "memory_mode": "memory"
   }}
 }}
 
