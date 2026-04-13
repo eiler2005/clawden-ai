@@ -114,35 +114,56 @@ def _split_text(text: str) -> list[str]:
     return chunks
 
 
+_CATEGORY_EMOJI = {
+    "Big Tech & AI": "🤖",
+    "Markets / Regulation / Geopolitics": "📈",
+    "Open Source / Builders": "🛠",
+    "Science / Hardware": "🔬",
+    "Startups / Deals": "💼",
+    "Consumer Platforms": "📱",
+    "Creator / Media": "🎬",
+    "World / Culture": "🌐",
+}
+
+SUPPRESS_ERROR_SOURCES = {"reddit"}  # broken at API level; remove when RSS works
+
+
 def render_last30days_digest(digest: Last30DaysDigest) -> str:
+    try:
+        dt = datetime.fromisoformat(digest.generated_at).astimezone(TIMEZONE)
+        date_label = dt.strftime("%-d %b")
+    except (ValueError, AttributeError):
+        date_label = digest.generated_at[:10]
+
     lines = [
-        f"🧭 <b>{escape(digest.topic_name)}</b> | {len(digest.themes)} тем",
-        f"<i>{digest.successful_queries}/{digest.total_queries} compact queries · {_source_coverage_line(digest.source_counts)}</i>",
+        f"🌍 <b>Радар · {date_label}</b>  |  {digest.successful_queries}/{digest.total_queries}  |  {_source_coverage_line(digest.source_counts)}",
     ]
-    if digest.notes:
+
+    for section in digest.category_sections:
+        if not section.themes:
+            continue
+        emoji = _CATEGORY_EMOJI.get(section.category, "•")
         lines.append("")
-        lines.append(escape(" ".join(digest.notes)))
-    for index, theme in enumerate(digest.themes, start=1):
-        lines.append("")
-        lines.append(f"{index}. <b>{escape(theme.title)}</b>")
-        if theme.snippet:
-            lines.append(escape(theme.snippet))
-        meta = []
-        if theme.sources:
-            meta.append(", ".join(escape(source) for source in theme.sources))
-        if theme.queries:
-            meta.append("queries: " + " | ".join(escape(query) for query in theme.queries[:2]))
-        if meta:
-            lines.append(f"<i>{' · '.join(meta)}</i>")
-        if theme.url:
-            lines.append(escape(theme.url))
-    if digest.errors_by_source or digest.query_errors:
-        lines.append("")
-        lines.append("<i>Partial gaps:</i>")
-        for source, error in list(digest.errors_by_source.items())[:3]:
-            lines.append(escape(f"{source}: {error}"))
-        for query, error in list(digest.query_errors.items())[:2]:
-            lines.append(escape(f"{query}: {error}"))
+        lines.append(f"{emoji} <b>{escape(section.category)}</b>")
+        for index, theme in enumerate(section.themes[:4], start=1):
+            source_badge = ""
+            if theme.sources:
+                source_badge = f" <i>[{' · '.join(escape(s) for s in theme.sources[:3])}]</i>"
+            lines.append("")
+            lines.append(f"{index}. <b>{escape(theme.title)}</b>{source_badge}")
+            if theme.snippet:
+                lines.append(escape(_compact_excerpt(theme.snippet, limit=200)))
+            if theme.url:
+                lines.append(theme.url)
+
+    if digest.errors_by_source:
+        visible_errors = {s: e for s, e in digest.errors_by_source.items() if s not in SUPPRESS_ERROR_SOURCES}
+        if visible_errors:
+            lines.append("")
+            lines.append("<i>Частичные пробелы:</i>")
+            for source, error in list(visible_errors.items())[:3]:
+                lines.append(escape(f"{source}: {error[:120]}"))
+
     return _sanitize_html("\n".join(lines).strip())
 
 

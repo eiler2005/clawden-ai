@@ -94,7 +94,7 @@ config = json.loads(config_path.read_text())
 last30days = dict(config.get("last30days") or {})
 enabled = bool(last30days.get("enabled", False))
 schedule_expr = str(last30days.get("schedule_expr") or "0 7 * * *").strip()
-preset_id = str(last30days.get("preset_id") or "broad-discovery-v1").strip()
+preset_id = str(last30days.get("preset_id") or "world-radar-v1").strip()
 tz_name = str(last30days.get("timezone") or default_tz_name).strip() or default_tz_name
 
 raw = json.loads(store_path.read_text())

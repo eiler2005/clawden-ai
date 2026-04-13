@@ -14,7 +14,7 @@
     "enabled": true,
     "schedule_expr": "0 7 * * *",
     "timezone": "Europe/Moscow",
-    "preset_id": "broad-discovery-v1",
+    "preset_id": "world-radar-v1",
     "mode": "compact",
     "telegram": {
       "topic_name": "last30daysTrend",
@@ -23,13 +23,45 @@
     "obsidian": {
       "root": "Last30Days"
     },
-    "max_items": 7,
+    "max_items": 10,
     "query_bundle": [
-      "OpenAI Codex Claude Code Gemini CLI Cursor Windsurf",
-      "OpenClaw MCP servers agent tooling open source AI tools",
-      "AI coding agents context engineering prompt engineering",
-      "Veo 3 Seedance 2.0 Nano Banana Pro paper.design creator workflows"
-    ]
+      "OpenAI Anthropic Google DeepMind xAI Nvidia Apple Microsoft product launches AI research breakthroughs",
+      "AI policy regulation antitrust government tech industry economy inflation tariffs geopolitics",
+      "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
+      "machine learning research papers models benchmarks reasoning agents multimodal academic",
+      "startup funding rounds acquisitions mergers venture capital unicorns IPO deals exits",
+      "robotics autonomous vehicles space biotech semiconductors hardware frontier science",
+      "content platforms creator economy streaming social media viral culture internet trends",
+      "semiconductors chips supply chain trade war Taiwan defense cybersecurity national security"
+    ],
+    "platform_sources": {
+      "reddit": {
+        "mode": "rss",
+        "feeds": [
+          "worldnews", "technology", "science", "Futurology",
+          "economy", "geopolitics", "artificial", "OutOfTheLoop"
+        ]
+      },
+      "hn": {
+        "feeds": ["frontpage", "ask", "show"]
+      },
+      "github": {
+        "repos": [
+          "openai/openai-python", "anthropics/anthropic-sdk-python",
+          "modelcontextprotocol/servers", "microsoft/autogen",
+          "langchain-ai/langchain", "ollama/ollama"
+        ],
+        "trending": true
+      },
+      "youtube": {
+        "search_terms": [
+          "AI news week", "tech industry analysis", "world events explained"
+        ]
+      },
+      "bluesky": {
+        "starter_packs": ["ai-researchers", "tech-journalists"]
+      }
+    }
   },
   "rule_files": [
     "rules/*.local.json"

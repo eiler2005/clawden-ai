@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,13 +16,19 @@ sys.path.insert(0, str(ROOT))
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-100123")
 
+if "aiohttp" not in sys.modules:
+    sys.modules["aiohttp"] = types.SimpleNamespace(ClientSession=object, ClientTimeout=lambda total=None: None)
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
+os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-1001")
+
 from config_store import normalize_config, validate_config
 from event_store import append_events, append_new_events
+from last30days_persistence import _render_expanded_markdown
 from last30days_runner import build_digest
 from matching import build_telegram_message_link, extract_tradingview_username, keyword_matches, local_event_from_candidate, match_email_rule, match_telegram_rule
-from models import ModelMeta, SignalEvent
+from models import Last30DaysCategorySection, Last30DaysDigest, Last30DaysTheme, ModelMeta, SignalEvent
 from omniroute_client import _local_fallback_batch
-from poster import render_batch
+from poster import render_batch, render_last30days_digest
 from telegram_adapter import resolve_telegram_window
 
 
@@ -93,6 +100,61 @@ def sample_config() -> dict:
     }
 
 
+def last30days_payload(
+    *,
+    title: str,
+    query_source: str = "x",
+    candidate_id: str = "cand-1",
+    url: str | None = None,
+    snippet: str = "Compact summary with enough context to avoid penalties.",
+    score: float = 95.0,
+    sources: list[str] | None = None,
+    source_titles: list[str] | None = None,
+    clusters: list[dict] | None = None,
+    ranked_candidates: list[dict] | None = None,
+    items_by_source: dict | None = None,
+) -> dict:
+    resolved_url = url or f"https://example.com/{candidate_id}"
+    if clusters is None:
+        clusters = [
+            {
+                "cluster_id": f"cluster-{candidate_id}",
+                "title": title,
+                "candidate_ids": [candidate_id],
+                "representative_ids": [candidate_id],
+                "sources": sources or [query_source],
+                "score": score,
+            }
+        ]
+    if ranked_candidates is None:
+        ranked_candidates = [
+            {
+                "candidate_id": candidate_id,
+                "item_id": f"item-{candidate_id}",
+                "source": query_source,
+                "title": title,
+                "url": resolved_url,
+                "snippet": snippet,
+                "sources": sources or [query_source],
+                "source_items": [{"title": item, "url": resolved_url} for item in (source_titles or ["Reference 1"])],
+                "final_score": score,
+                "cluster_id": f"cluster-{candidate_id}",
+            }
+        ]
+    return {
+        "provider_runtime": {
+            "reasoning_provider": "local",
+            "planner_model": "deterministic",
+            "rerank_model": "deterministic",
+        },
+        "clusters": clusters,
+        "ranked_candidates": ranked_candidates,
+        "items_by_source": items_by_source or {query_source: [{"item_id": f"item-{candidate_id}"}]},
+        "errors_by_source": {},
+        "warnings": [],
+    }
+
+
 class ConfigValidationTests(unittest.TestCase):
     def test_invalid_source_kind_raises(self) -> None:
         config = sample_config()
@@ -137,8 +199,9 @@ class ConfigValidationTests(unittest.TestCase):
     def test_normalize_sets_last30days_defaults(self) -> None:
         normalized = normalize_config(sample_config())
         self.assertEqual(normalized["last30days"]["mode"], "compact")
-        self.assertEqual(normalized["last30days"]["preset_id"], "broad-discovery-v1")
-        self.assertEqual(len(normalized["last30days"]["query_bundle"]), 4)
+        self.assertEqual(normalized["last30days"]["preset_id"], "world-radar-v1")
+        self.assertEqual(normalized["last30days"]["max_items"], 10)
+        self.assertEqual(len(normalized["last30days"]["query_bundle"]), 8)
 
     def test_invalid_last30days_mode_raises(self) -> None:
         config = sample_config()
@@ -766,63 +829,24 @@ class DeliveryAndStateTests(unittest.TestCase):
 class Last30DaysDigestTests(unittest.TestCase):
     @patch("last30days_runner.subprocess.run")
     def test_build_digest_merges_queries_and_keeps_partial_failures(self, mock_run) -> None:
-        payload = {
-            "provider_runtime": {
-                "reasoning_provider": "local",
-                "planner_model": "deterministic",
-                "rerank_model": "deterministic",
-            },
-            "query_plan": {
-                "intent": "research",
-                "freshness_mode": "recent",
-                "cluster_mode": "standard",
-                "raw_topic": "topic",
-                "subqueries": [],
-                "source_weights": {},
-            },
-            "clusters": [
-                {
-                    "cluster_id": "cluster-1",
-                    "title": "Theme 1",
-                    "candidate_ids": ["cand-1"],
-                    "representative_ids": ["cand-1"],
-                    "sources": ["reddit", "x"],
-                    "score": 91.0,
-                }
-            ],
-            "ranked_candidates": [
-                {
-                    "candidate_id": "cand-1",
-                    "item_id": "item-1",
-                    "source": "reddit",
-                    "title": "Theme 1",
-                    "url": "https://example.com/theme-1",
-                    "snippet": "Compact summary",
-                    "subquery_labels": ["primary"],
-                    "native_ranks": {},
-                    "local_relevance": 0.8,
-                    "freshness": 9,
-                    "engagement": 120,
-                    "source_quality": 0.9,
-                    "rrf_score": 0.7,
-                    "sources": ["reddit", "x"],
-                    "source_items": [{"title": "Reference 1", "url": "https://example.com/theme-1"}],
-                    "final_score": 95.0,
-                    "cluster_id": "cluster-1",
-                }
-            ],
-            "items_by_source": {"reddit": [{"item_id": "item-1"}], "x": [{"item_id": "item-2"}]},
-            "errors_by_source": {"youtube": "timeout"},
-        }
+        payload = last30days_payload(
+            title="Theme 1",
+            query_source="x",
+            sources=["reddit", "x"],
+            source_titles=["Reference 1"],
+        )
+        payload["items_by_source"] = {"reddit": [{"item_id": "item-1"}], "x": [{"item_id": "item-2"}]}
+        payload["errors_by_source"] = {"youtube": "timeout"}
 
         success = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
         failure = Mock(returncode=1, stdout="", stderr="provider error")
         mock_run.side_effect = [success, failure, success, success]
 
         config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["topic-1", "topic-2", "topic-3", "topic-4"]
         digest = build_digest(
             config,
-            preset_id="broad-discovery-v1",
+            preset_id="world-radar-v1",
             now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
         )
 
@@ -830,6 +854,8 @@ class Last30DaysDigestTests(unittest.TestCase):
         self.assertEqual(digest.successful_queries, 3)
         self.assertEqual(digest.status, "partial")
         self.assertTrue(digest.themes)
+        self.assertTrue(digest.global_themes)
+        self.assertTrue(digest.category_sections)
         self.assertIn("youtube", digest.errors_by_source)
         self.assertEqual(digest.themes[0].title, "Theme 1")
 
@@ -847,92 +873,478 @@ class Last30DaysDigestTests(unittest.TestCase):
             "errors_by_source": {},
             "warnings": ["No candidates survived retrieval and ranking."],
         }
-        rescue = {
-            "provider_runtime": {
-                "reasoning_provider": "local",
-                "planner_model": "deterministic",
-                "rerank_model": "deterministic",
-            },
-            "clusters": [
-                {
-                    "cluster_id": "cluster-openai-codex",
-                    "title": "OpenAI Codex reaches 3M weekly active users",
-                    "candidate_ids": ["codex-1"],
-                    "representative_ids": ["codex-1"],
-                    "sources": ["hackernews"],
-                    "score": 91.0,
-                }
-            ],
-            "ranked_candidates": [
-                {
-                    "candidate_id": "codex-1",
-                    "item_id": "item-codex-1",
-                    "source": "hackernews",
-                    "title": "OpenAI Codex reaches 3M weekly active users",
-                    "url": "https://example.com/openai-codex",
-                    "snippet": "OpenAI Codex reached 3M weekly active users in under a month.",
-                    "sources": ["hackernews"],
-                    "source_items": [{"title": "HN reference", "url": "https://example.com/openai-codex"}],
-                    "final_score": 95.0,
-                    "cluster_id": "cluster-openai-codex",
-                }
-            ],
-            "items_by_source": {"hackernews": [{"item_id": "item-codex-1"}]},
-            "errors_by_source": {},
-            "warnings": [],
-        }
+        rescue = last30days_payload(
+            title="OpenAI ships a new frontier model",
+            query_source="hackernews",
+            candidate_id="openai-1",
+            url="https://example.com/openai-launch",
+            snippet="OpenAI ships a new frontier model and pushes pricing changes across the market.",
+            sources=["hackernews"],
+            source_titles=["HN reference"],
+        )
 
         def fake_run(cmd, **kwargs):
             query = cmd[2]
-            payload = rescue if query == "OpenAI Codex" else empty
+            payload = rescue if query == "OpenAI" else empty
             return Mock(returncode=0, stdout=json.dumps(payload), stderr="")
 
         mock_run.side_effect = fake_run
 
         config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["OpenAI Anthropic Google DeepMind xAI Nvidia Apple Microsoft product launches AI research breakthroughs"]
         digest = build_digest(
             config,
-            preset_id="broad-discovery-v1",
+            preset_id="world-radar-v1",
             now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
         )
 
         self.assertEqual(digest.status, "ok")
         self.assertTrue(digest.themes)
-        self.assertEqual(digest.themes[0].title, "OpenAI Codex reaches 3M weekly active users")
+        self.assertEqual(digest.themes[0].title, "OpenAI ships a new frontier model")
+        self.assertEqual(digest.themes[0].category, "Big Tech & AI")
         self.assertGreaterEqual(digest.source_counts["hn"], 1)
         first_report = digest.reports[0]
         self.assertIn("rescue_queries", first_report)
-        self.assertIn("OpenAI Codex", first_report["rescue_queries"])
+        self.assertIn("OpenAI", first_report["rescue_queries"])
 
     @patch("last30days_runner.subprocess.run")
     def test_build_digest_passes_github_repo_hints_for_top_queries(self, mock_run) -> None:
-        payload = {
-            "provider_runtime": {
-                "reasoning_provider": "local",
-                "planner_model": "deterministic",
-                "rerank_model": "deterministic",
-            },
-            "clusters": [],
-            "ranked_candidates": [],
-            "items_by_source": {},
-            "errors_by_source": {},
-            "warnings": [],
-        }
+        payload = last30days_payload(title="MCP ecosystem accelerates")
+        payload["clusters"] = []
+        payload["ranked_candidates"] = []
+        payload["items_by_source"] = {}
         mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
 
         config = normalize_config(sample_config())
-        config["last30days"]["query_bundle"] = ["OpenAI Codex"]
+        config["last30days"]["query_bundle"] = ["open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks"]
         digest = build_digest(
             config,
-            preset_id="broad-discovery-v1",
+            preset_id="world-radar-v1",
             now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
         )
 
         self.assertEqual(digest.total_queries, 1)
-        first_cmd = mock_run.call_args[0][0]
-        self.assertIn("--github-repo", first_cmd)
-        idx = first_cmd.index("--github-repo")
-        self.assertEqual(first_cmd[idx + 1], "openai/codex")
+        repo_args = []
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            if "--github-repo" in cmd:
+                idx = cmd.index("--github-repo")
+                repo_args.append(cmd[idx + 1])
+        self.assertTrue(repo_args)
+        self.assertTrue(any("openclaw/openclaw" in arg for arg in repo_args))
+        self.assertTrue(any("modelcontextprotocol/servers" in arg for arg in repo_args))
+
+    @patch("last30days_runner.subprocess.run")
+    def test_build_digest_applies_source_and_category_caps(self, mock_run) -> None:
+        big_tech_clusters = []
+        big_tech_candidates = []
+        for index in range(5):
+            candidate_id = f"bigtech-{index}"
+            big_tech_clusters.append(
+                {
+                    "cluster_id": f"cluster-{candidate_id}",
+                    "title": f"OpenAI headline {index}",
+                    "candidate_ids": [candidate_id],
+                    "representative_ids": [candidate_id],
+                    "sources": ["x"],
+                    "score": 99.0 - index,
+                }
+            )
+            big_tech_candidates.append(
+                {
+                    "candidate_id": candidate_id,
+                    "item_id": f"item-{candidate_id}",
+                    "source": "x",
+                    "title": f"OpenAI headline {index}",
+                    "url": f"https://example.com/openai-{index}",
+                    "snippet": "OpenAI changes the market with a meaningful product move and broad ecosystem impact.",
+                    "sources": ["x"],
+                    "source_items": [{"title": f"Reference {index}", "url": f"https://example.com/openai-{index}"}],
+                    "final_score": 99.0 - index,
+                    "cluster_id": f"cluster-{candidate_id}",
+                }
+            )
+        consumer_payload = last30days_payload(
+            title="TikTok changes ranking logic",
+            query_source="x",
+            candidate_id="consumer-1",
+            snippet="TikTok ships a major ranking change that affects creators and consumer behavior globally.",
+        )
+        creator_payload = last30days_payload(
+            title="Runway expands creator workflow stack",
+            query_source="youtube",
+            candidate_id="creator-1",
+            snippet="Runway expands creator workflow stack with new video-generation and editing capabilities.",
+            sources=["youtube"],
+            source_titles=["Creator reference"],
+        )
+
+        def fake_run(cmd, **kwargs):
+            query = cmd[2]
+            if query == "OpenAI Anthropic Google Meta xAI Nvidia Apple Microsoft Amazon launches product roadmap":
+                payload = last30days_payload(
+                    title="unused",
+                    clusters=big_tech_clusters,
+                    ranked_candidates=big_tech_candidates,
+                    items_by_source={"x": [{"item_id": item["item_id"]} for item in big_tech_candidates]},
+                )
+                return Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+            if query == "X TikTok YouTube Instagram Reddit Bluesky consumer apps platform changes viral products":
+                return Mock(returncode=0, stdout=json.dumps(consumer_payload), stderr="")
+            if query == "creator economy Veo Runway Pika Sora Midjourney YouTube media workflows":
+                return Mock(returncode=0, stdout=json.dumps(creator_payload), stderr="")
+            empty = last30days_payload(title="unused")
+            empty["clusters"] = []
+            empty["ranked_candidates"] = []
+            empty["items_by_source"] = {}
+            return Mock(returncode=0, stdout=json.dumps(empty), stderr="")
+
+        mock_run.side_effect = fake_run
+
+        config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = [
+            "OpenAI Anthropic Google Meta xAI Nvidia Apple Microsoft Amazon launches product roadmap",
+            "X TikTok YouTube Instagram Reddit Bluesky consumer apps platform changes viral products",
+            "creator economy Veo Runway Pika Sora Midjourney YouTube media workflows",
+        ]
+        digest = build_digest(
+            config,
+            preset_id="world-radar-v1",
+            now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
+        )
+
+        x_count = len([theme for theme in digest.themes if theme.primary_source == "x"])
+        big_tech_count = len([theme for theme in digest.themes if theme.category == "Big Tech & AI"])
+        self.assertLessEqual(x_count, 4)
+        self.assertLessEqual(big_tech_count, 3)
+        self.assertTrue(any(section.category == "Creator / Media" for section in digest.category_sections))
+
+    def test_renderers_output_world_radar_sections(self) -> None:
+        theme = Last30DaysTheme(
+            theme_id="theme-1",
+            title="OpenAI launches new model",
+            snippet="OpenAI launches a new model and resets pricing expectations across the market.",
+            url="https://example.com/openai",
+            sources=["x"],
+            queries=["OpenAI Anthropic Google Meta xAI Nvidia Apple Microsoft Amazon launches product roadmap"],
+            score=95.0,
+            source_titles=["Reference 1"],
+            category="Big Tech & AI",
+            primary_source="x",
+            global_score=110.0,
+            global_rank=1,
+            category_rank=1,
+        )
+        digest = Last30DaysDigest(
+            preset_id="world-radar-v1",
+            mode="compact",
+            generated_at="2026-04-12T04:00:00+00:00",
+            topic_name="last30daysTrend",
+            topic_id=414,
+            query_bundle=["topic"],
+            themes=[theme],
+            global_themes=[theme],
+            category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])],
+            source_counts={"x": 5},
+            successful_queries=8,
+            total_queries=8,
+        )
+
+        telegram_text = render_last30days_digest(digest)
+        markdown_text = _render_expanded_markdown(digest, datetime(2026, 4, 12, 7, 0, tzinfo=timezone.utc))
+
+        self.assertIn("Радар", telegram_text)
+        self.assertIn("🤖", telegram_text)
+        self.assertIn("Big Tech &amp; AI", telegram_text)
+        self.assertIn("OpenAI launches new model", telegram_text)
+        self.assertIn("## Global Top Themes", markdown_text)
+        self.assertIn("## Category Sections", markdown_text)
+
+
+class RadarRedesignTests(unittest.TestCase):
+    """Tests for the radar redesign: source priority, quality bonuses, per-source caps, platform_sources."""
+
+    # ── _build_platform_args ──────────────────────────────────────────────────
+
+    def test_build_platform_args_reddit_rss(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        args = _build_platform_args({"reddit": {"mode": "rss", "feeds": ["worldnews", "technology"]}})
+        self.assertIn("--reddit-sub", args)
+        idx = args.index("--reddit-sub")
+        self.assertIn("worldnews", args[idx + 1])
+        self.assertIn("technology", args[idx + 1])
+
+    def test_build_platform_args_hn(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        args = _build_platform_args({"hn": {"feeds": ["frontpage", "ask"]}})
+        self.assertIn("--hn-feed", args)
+        idx = args.index("--hn-feed")
+        self.assertIn("frontpage", args[idx + 1])
+
+    def test_build_platform_args_youtube_search(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        args = _build_platform_args({"youtube": {"search_terms": ["AI news week"]}})
+        self.assertIn("--youtube-search", args)
+
+    def test_build_platform_args_bluesky_packs(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        args = _build_platform_args({"bluesky": {"starter_packs": ["ai-researchers"]}})
+        self.assertIn("--bluesky-pack", args)
+
+    def test_build_platform_args_empty(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        self.assertEqual(_build_platform_args({}), [])
+
+    def test_build_platform_args_does_not_include_github(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        args = _build_platform_args({"github": {"repos": ["owner/repo"], "trending": True}})
+        self.assertNotIn("--github-repo", args)
+
+    # ── _build_github_repos ───────────────────────────────────────────────────
+
+    def test_build_github_repos_merges_hints_and_platform_sources(self) -> None:
+        from last30days_runner import _build_github_repos
+
+        platform = {"github": {"repos": ["new-org/new-repo"], "trending": False}}
+        repos = _build_github_repos(
+            "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
+            platform,
+        )
+        self.assertIn("openclaw/openclaw", repos)          # from GITHUB_REPO_HINTS
+        self.assertIn("modelcontextprotocol/servers", repos)
+        self.assertIn("new-org/new-repo", repos)            # from platform_sources
+
+    def test_build_github_repos_deduplicates(self) -> None:
+        from last30days_runner import _build_github_repos
+
+        platform = {"github": {"repos": ["openclaw/openclaw"], "trending": False}}
+        repos = _build_github_repos(
+            "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
+            platform,
+        )
+        self.assertEqual(repos.count("openclaw/openclaw"), 1)
+
+    def test_build_github_repos_trending_flag(self) -> None:
+        from last30days_runner import _build_github_repos
+
+        repos = _build_github_repos("some query", {"github": {"repos": [], "trending": True}})
+        self.assertIn("trending", repos)
+
+    def test_build_github_repos_no_platform_sources(self) -> None:
+        from last30days_runner import _build_github_repos
+
+        repos = _build_github_repos(
+            "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
+            {},
+        )
+        self.assertIn("openclaw/openclaw", repos)
+
+    # ── Source priority (hn > web > reddit > ... > x) ────────────────────────
+
+    def test_primary_source_prefers_hn_over_x(self) -> None:
+        from last30days_runner import _primary_source
+
+        theme = {"sources": ["x", "hn", "web"]}
+        self.assertEqual(_primary_source(theme), "hn")
+
+    def test_primary_source_prefers_web_over_x(self) -> None:
+        from last30days_runner import _primary_source
+
+        theme = {"sources": ["x", "web"]}
+        self.assertEqual(_primary_source(theme), "web")
+
+    def test_primary_source_prefers_reddit_over_x(self) -> None:
+        from last30days_runner import _primary_source
+
+        theme = {"sources": ["x", "reddit"]}
+        self.assertEqual(_primary_source(theme), "reddit")
+
+    def test_primary_source_x_only(self) -> None:
+        from last30days_runner import _primary_source
+
+        theme = {"sources": ["x"]}
+        self.assertEqual(_primary_source(theme), "x")
+
+    # ── Quality bonus in _world_score ─────────────────────────────────────────
+
+    def test_world_score_quality_bonus_for_hn(self) -> None:
+        from last30days_runner import _world_score
+
+        hn_theme = {
+            "score": 80.0,
+            "sources": ["hn"],
+            "queries": ["q1"],
+            "category": "Big Tech & AI",
+            "primary_source": "hn",
+            "source_titles": ["HN ref"],
+            "title": "Some HN title",
+            "snippet": "A solid long snippet that exceeds 40 characters easily.",
+            "url": "https://example.com/hn",
+        }
+        x_theme = dict(hn_theme)
+        x_theme["sources"] = ["x"]
+        x_theme["primary_source"] = "x"
+        x_theme["title"] = "@SomeTweet with short text"
+
+        hn_score = _world_score(hn_theme)
+        x_score = _world_score(x_theme)
+        self.assertGreater(hn_score, x_score)
+
+    def test_world_score_multi_quality_bonus(self) -> None:
+        from last30days_runner import _world_score
+
+        multi = {
+            "score": 80.0,
+            "sources": ["hn", "web", "youtube"],
+            "queries": ["q1"],
+            "category": "Big Tech & AI",
+            "primary_source": "hn",
+            "source_titles": ["ref"],
+            "title": "Multi-source story",
+            "snippet": "Snippet long enough to not get penalized at all here.",
+            "url": "https://example.com/multi",
+        }
+        single = dict(multi)
+        single["sources"] = ["hn"]
+
+        self.assertGreater(_world_score(multi), _world_score(single))
+
+    # ── Context penalties ─────────────────────────────────────────────────────
+
+    def test_context_penalty_tweet_title(self) -> None:
+        from last30days_runner import _context_penalty
+
+        tweet = {"title": "@SomeUser This is a tweet", "url": "https://x.com/user/status/1", "sources": ["x"], "source_titles": [], "snippet": "Short."}
+        normal = {"title": "A proper article headline", "url": "https://example.com/article", "sources": ["web"], "source_titles": ["ref"], "snippet": "A snippet that is long enough."}
+        self.assertGreater(_context_penalty(tweet), _context_penalty(normal))
+
+    def test_context_penalty_no_url(self) -> None:
+        from last30days_runner import _context_penalty
+
+        no_url = {"title": "Some title", "url": "", "sources": ["hn"], "source_titles": ["ref"], "snippet": "A nice snippet that is long enough."}
+        with_url = dict(no_url)
+        with_url["url"] = "https://example.com"
+        self.assertGreater(_context_penalty(no_url), _context_penalty(with_url))
+
+    def test_context_penalty_short_snippet(self) -> None:
+        from last30days_runner import _context_penalty
+
+        short = {"title": "Some title", "url": "https://example.com", "sources": ["web"], "source_titles": ["ref"], "snippet": "Too short"}
+        long = dict(short)
+        long["snippet"] = "This is a proper snippet with enough characters to avoid the short penalty."
+        self.assertGreater(_context_penalty(short), _context_penalty(long))
+
+    # ── Per-source caps (_SOURCE_CAPS) ────────────────────────────────────────
+
+    def test_x_source_cap_is_two(self) -> None:
+        from last30days_runner import _SOURCE_CAPS
+        self.assertEqual(_SOURCE_CAPS["x"], 2)
+
+    def test_hn_source_cap_is_five(self) -> None:
+        from last30days_runner import _SOURCE_CAPS
+        self.assertEqual(_SOURCE_CAPS["hn"], 5)
+
+    @patch("last30days_runner.subprocess.run")
+    def test_x_capped_at_two_in_digest(self, mock_run) -> None:
+        """x-sourced themes must not exceed _SOURCE_CAPS["x"] = 2 in global themes."""
+        clusters = []
+        candidates = []
+        for i in range(6):
+            cid = f"x-theme-{i}"
+            clusters.append({"cluster_id": f"c-{cid}", "title": f"X headline {i}", "candidate_ids": [cid], "representative_ids": [cid], "sources": ["x"], "score": 90.0 - i})
+            candidates.append({"candidate_id": cid, "item_id": f"item-{cid}", "source": "x", "title": f"X headline {i}", "url": f"https://x.com/{i}", "snippet": "Some tweet content that might be a bit short.", "sources": ["x"], "source_items": [{"title": f"Ref {i}", "url": f"https://x.com/{i}"}], "final_score": 90.0 - i, "cluster_id": f"c-{cid}"})
+
+        payload = last30days_payload(title="unused", clusters=clusters, ranked_candidates=candidates, items_by_source={"x": [{"item_id": c["item_id"]} for c in candidates]})
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["some query"]
+        digest = build_digest(config, preset_id="world-radar-v1", now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc))
+
+        x_count = sum(1 for t in digest.global_themes if t.primary_source == "x")
+        self.assertLessEqual(x_count, 2)
+
+    # ── platform_sources passed to subprocess ─────────────────────────────────
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_sources_reddit_rss_passed_to_subprocess(self, mock_run) -> None:
+        payload = last30days_payload(title="World event")
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["world news query"]
+        config["last30days"]["platform_sources"] = {
+            "reddit": {"mode": "rss", "feeds": ["worldnews", "geopolitics"]}
+        }
+        build_digest(config, preset_id="world-radar-v1", now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc))
+
+        all_cmds = [call[0][0] for call in mock_run.call_args_list]
+        reddit_args = [cmd[cmd.index("--reddit-sub") + 1] for cmd in all_cmds if "--reddit-sub" in cmd]
+        self.assertTrue(reddit_args, "Expected --reddit-sub in subprocess calls")
+        self.assertTrue(any("worldnews" in arg for arg in reddit_args))
+        self.assertTrue(any("geopolitics" in arg for arg in reddit_args))
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_sources_github_merged_with_hints(self, mock_run) -> None:
+        payload = last30days_payload(title="OSS story")
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["query_bundle"] = ["open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks"]
+        config["last30days"]["platform_sources"] = {
+            "github": {"repos": ["extra-org/extra-repo"], "trending": False}
+        }
+        build_digest(config, preset_id="world-radar-v1", now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc))
+
+        all_cmds = [call[0][0] for call in mock_run.call_args_list]
+        repo_args = [cmd[cmd.index("--github-repo") + 1] for cmd in all_cmds if "--github-repo" in cmd]
+        self.assertTrue(repo_args)
+        # Both GITHUB_REPO_HINTS and platform_sources repos should appear
+        combined = ",".join(repo_args)
+        self.assertIn("openclaw/openclaw", combined)
+        self.assertIn("extra-org/extra-repo", combined)
+
+    # ── Telegram render (new radar format) ────────────────────────────────────
+
+    def test_render_shows_radar_header_with_date(self) -> None:
+        theme = Last30DaysTheme(theme_id="t1", title="AI story", snippet="Good snippet about AI topic.", url="https://example.com", sources=["hn"], queries=["q"], score=90.0, category="Big Tech & AI", primary_source="hn", global_score=100.0, global_rank=1, category_rank=1)
+        digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])], source_counts={"hn": 10}, successful_queries=8, total_queries=8)
+        text = render_last30days_digest(digest)
+        self.assertIn("🌍", text)
+        self.assertIn("Радар", text)
+        self.assertIn("13", text)  # day in date
+
+    def test_render_category_emoji_present(self) -> None:
+        theme = Last30DaysTheme(theme_id="t1", title="Market move", snippet="Markets react to Fed decision.", url="https://example.com", sources=["web"], queries=["q"], score=90.0, category="Markets / Regulation / Geopolitics", primary_source="web", global_score=100.0, global_rank=1, category_rank=1)
+        digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Markets / Regulation / Geopolitics", themes=[theme])], source_counts={"web": 5}, successful_queries=8, total_queries=8)
+        text = render_last30days_digest(digest)
+        self.assertIn("📈", text)
+
+    def test_render_suppresses_reddit_errors(self) -> None:
+        theme = Last30DaysTheme(theme_id="t1", title="Story", snippet="Some story snippet here.", url="https://example.com", sources=["hn"], queries=["q"], score=90.0, category="Big Tech & AI", primary_source="hn", global_score=100.0, global_rank=1, category_rank=1)
+        digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])], source_counts={"hn": 5}, errors_by_source={"reddit": "API access denied", "youtube": "rate limited"}, successful_queries=8, total_queries=8)
+        text = render_last30days_digest(digest)
+        self.assertNotIn("reddit: API access denied", text)
+        self.assertIn("youtube", text)
+
+    def test_render_shows_source_badge(self) -> None:
+        theme = Last30DaysTheme(theme_id="t1", title="HN story", snippet="A good long snippet that should appear.", url="https://example.com", sources=["hn", "web"], queries=["q"], score=90.0, category="Open Source / Builders", primary_source="hn", global_score=100.0, global_rank=1, category_rank=1)
+        digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Open Source / Builders", themes=[theme])], source_counts={"hn": 5}, successful_queries=8, total_queries=8)
+        text = render_last30days_digest(digest)
+        self.assertIn("[hn · web]", text)
+
+    def test_render_up_to_four_themes_per_category(self) -> None:
+        themes = [Last30DaysTheme(theme_id=f"t{i}", title=f"Story {i}", snippet="A proper snippet for this story.", url=f"https://example.com/{i}", sources=["hn"], queries=["q"], score=90.0 - i, category="Big Tech & AI", primary_source="hn", global_score=100.0 - i, global_rank=i + 1, category_rank=i + 1) for i in range(6)]
+        digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=themes[:4], global_themes=themes, category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=themes)], source_counts={"hn": 20}, successful_queries=8, total_queries=8)
+        text = render_last30days_digest(digest)
+        self.assertIn("4.", text)
+        self.assertNotIn("5.", text)
 
 
 if __name__ == "__main__":

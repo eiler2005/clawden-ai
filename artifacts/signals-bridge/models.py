@@ -96,9 +96,26 @@ class Last30DaysTheme:
     queries: list[str] = field(default_factory=list)
     score: float = 0.0
     source_titles: list[str] = field(default_factory=list)
+    category: str = ""
+    primary_source: str = ""
+    global_score: float = 0.0
+    global_rank: int = 0
+    category_rank: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class Last30DaysCategorySection:
+    category: str
+    themes: list[Last30DaysTheme] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "themes": [theme.to_dict() for theme in self.themes],
+        }
 
 
 @dataclass
@@ -110,6 +127,8 @@ class Last30DaysDigest:
     topic_id: int
     query_bundle: list[str]
     themes: list[Last30DaysTheme] = field(default_factory=list)
+    global_themes: list[Last30DaysTheme] = field(default_factory=list)
+    category_sections: list[Last30DaysCategorySection] = field(default_factory=list)
     source_counts: dict[str, int] = field(default_factory=dict)
     errors_by_source: dict[str, str] = field(default_factory=dict)
     query_errors: dict[str, str] = field(default_factory=dict)
@@ -124,4 +143,6 @@ class Last30DaysDigest:
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["themes"] = [theme.to_dict() for theme in self.themes]
+        payload["global_themes"] = [theme.to_dict() for theme in self.global_themes]
+        payload["category_sections"] = [section.to_dict() for section in self.category_sections]
         return payload

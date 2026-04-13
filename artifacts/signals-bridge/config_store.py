@@ -13,10 +13,14 @@ VALID_SOURCE_TYPES = {"email", "telegram", "web"}
 VALID_TELEGRAM_RULE_KINDS = {"hashtag", "author_keywords", "content_keywords"}
 VALID_EMAIL_RULE_KINDS = {"tradingview_user"}
 DEFAULT_LAST30DAYS_QUERY_BUNDLE = [
-    "OpenAI Codex Claude Code Gemini CLI Cursor Windsurf",
-    "OpenClaw MCP servers agent tooling open source AI tools",
-    "AI coding agents context engineering prompt engineering",
-    "Veo 3 Seedance 2.0 Nano Banana Pro paper.design creator workflows",
+    "OpenAI Anthropic Google Meta xAI Nvidia Apple Microsoft Amazon launches product roadmap",
+    "markets macro inflation tariffs antitrust regulation geopolitics elections trade oil chips",
+    "X TikTok YouTube Instagram Reddit Bluesky consumer apps platform changes viral products",
+    "creator economy Veo Runway Pika Sora Midjourney YouTube media workflows",
+    "startup funding acquisitions IPO venture capital big tech deals unicorns",
+    "robotics humanoids autonomous vehicles space biotech semiconductors frontier tech",
+    "GitHub open source MCP agents developer tools infrastructure repos",
+    "internet culture memes controversies movements essays podcasts viral narratives",
 ]
 
 
@@ -40,9 +44,9 @@ def normalize_config(data: dict, *, base_path: Path | None = None) -> dict:
     data["last30days"].setdefault("enabled", False)
     data["last30days"].setdefault("schedule_expr", "0 7 * * *")
     data["last30days"].setdefault("timezone", data.get("timezone", "Europe/Moscow"))
-    data["last30days"].setdefault("preset_id", "broad-discovery-v1")
+    data["last30days"].setdefault("preset_id", "world-radar-v1")
     data["last30days"].setdefault("mode", "compact")
-    data["last30days"].setdefault("max_items", 7)
+    data["last30days"].setdefault("max_items", 10)
     data["last30days"].setdefault("query_bundle", list(DEFAULT_LAST30DAYS_QUERY_BUNDLE))
     data["last30days"].setdefault("telegram", {})
     data["last30days"]["telegram"].setdefault("topic_name", "last30daysTrend")

@@ -74,6 +74,8 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
         f"status: {digest.status}",
         f"successful_queries: {digest.successful_queries}",
         f"total_queries: {digest.total_queries}",
+        f"global_theme_count: {len(digest.global_themes)}",
+        f"category_count: {len(digest.category_sections)}",
         f"source_summary: {source_summary}",
         "---",
         "",
@@ -81,9 +83,9 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
 
     lines = [f"# {digest.topic_name} — {generated_local.strftime('%Y-%m-%d')}", ""]
     lines.append("## Executive Summary")
-    if digest.themes:
+    if digest.global_themes:
         lines.append(
-            f"Captured {len(digest.themes)} ranked themes from {digest.successful_queries}/{digest.total_queries} compact last30days runs."
+            f"Captured {len(digest.global_themes)} global themes across {len(digest.category_sections)} active categories from {digest.successful_queries}/{digest.total_queries} world-radar runs."
         )
     else:
         lines.append("No ranked themes were captured in this run.")
@@ -91,17 +93,21 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
         lines.append(" ".join(digest.notes))
     lines.append("")
 
-    lines.append("## Themes")
-    if digest.themes:
-        for idx, theme in enumerate(digest.themes, start=1):
+    lines.append("## Global Top Themes")
+    if digest.global_themes:
+        for idx, theme in enumerate(digest.global_themes, start=1):
             lines.append(f"{idx}. **{theme.title}**")
             if theme.snippet:
                 lines.append(theme.snippet)
             meta = []
+            if theme.category:
+                meta.append("category: " + theme.category)
             if theme.sources:
                 meta.append("sources: " + ", ".join(theme.sources))
             if theme.queries:
                 meta.append("queries: " + " | ".join(theme.queries))
+            if theme.global_rank:
+                meta.append(f"global_rank: {theme.global_rank}")
             if meta:
                 lines.append("; ".join(meta))
             if theme.url:
@@ -111,6 +117,29 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
             lines.append("")
     else:
         lines.append("1. No themes yet.")
+        lines.append("")
+
+    lines.append("## Category Sections")
+    if digest.category_sections:
+        for section in digest.category_sections:
+            lines.append(f"### {section.category}")
+            for theme in section.themes[:10]:
+                rank_prefix = f"{theme.category_rank}. " if theme.category_rank else "- "
+                lines.append(f"{rank_prefix}**{theme.title}**")
+                if theme.snippet:
+                    lines.append(theme.snippet)
+                meta = []
+                if theme.primary_source:
+                    meta.append("primary_source: " + theme.primary_source)
+                if theme.sources:
+                    meta.append("sources: " + ", ".join(theme.sources))
+                if theme.url:
+                    meta.append(theme.url)
+                if meta:
+                    lines.append(" | ".join(meta))
+                lines.append("")
+    else:
+        lines.append("- none")
         lines.append("")
 
     lines.append("## Source Coverage")
