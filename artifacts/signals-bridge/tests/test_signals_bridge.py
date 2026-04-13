@@ -152,6 +152,20 @@ class MatchingTests(unittest.TestCase):
     def test_extract_tradingview_username(self) -> None:
         self.assertEqual(extract_tradingview_username("Idea by @AnalystA"), "AnalystA")
 
+    def test_extract_tradingview_username_from_russian_subject(self) -> None:
+        self.assertEqual(
+            extract_tradingview_username("Смотрите, новое мнение от Mamontiara"),
+            "Mamontiara",
+        )
+
+    def test_extract_tradingview_username_from_russian_body(self) -> None:
+        self.assertEqual(
+            extract_tradingview_username(
+                "TradingView\n\nMamontiara\n\nна которого вы подписаны, опубликовал(-а) новое мнение\n\nCNYRUB_TOM"
+            ),
+            "Mamontiara",
+        )
+
     def test_email_tradingview_known_user_matches(self) -> None:
         rule = sample_config()["rule_sets"][0]["rules"][0]
         candidate = match_email_rule(
@@ -170,6 +184,48 @@ class MatchingTests(unittest.TestCase):
             },
         )
         self.assertIsNotNone(candidate)
+
+    def test_email_tradingview_russian_subject_matches(self) -> None:
+        rule = sample_config()["rule_sets"][0]["rules"][0]
+        rule["tradingview_usernames"] = ["Mamontiara"]
+        candidate = match_email_rule(
+            ruleset_id="trading",
+            ruleset_title="Trading",
+            rule=rule,
+            message={
+                "message_id": "msg-ru-1",
+                "timestamp": "2026-04-13T07:37:00+00:00",
+                "from_name": "TradingView",
+                "from_email": "noreply@tradingview.com",
+                "sender_domain": "tradingview.com",
+                "subject": "Смотрите, новое мнение от Mamontiara",
+                "preview": "",
+                "text_excerpt": "CNYRUB_TOM",
+            },
+        )
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.metadata["resolved_username"], "Mamontiara")
+
+    def test_email_tradingview_russian_body_matches(self) -> None:
+        rule = sample_config()["rule_sets"][0]["rules"][0]
+        rule["tradingview_usernames"] = ["Mamontiara"]
+        candidate = match_email_rule(
+            ruleset_id="trading",
+            ruleset_title="Trading",
+            rule=rule,
+            message={
+                "message_id": "msg-ru-2",
+                "timestamp": "2026-04-13T07:37:00+00:00",
+                "from_name": "TradingView",
+                "from_email": "noreply@tradingview.com",
+                "sender_domain": "tradingview.com",
+                "subject": "Смотрите, новое мнение",
+                "preview": "",
+                "text_excerpt": "TradingView\n\nMamontiara\n\nна которого вы подписаны, опубликовал(-а) новое мнение\n\nCNYRUB_TOM",
+            },
+        )
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.metadata["resolved_username"], "Mamontiara")
 
     def test_email_tradingview_unknown_user_ignored(self) -> None:
         rule = sample_config()["rule_sets"][0]["rules"][0]

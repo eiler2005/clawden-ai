@@ -12,6 +12,15 @@ from models import SignalCandidate, SignalEvent
 TRADINGVIEW_USER_PATTERNS = [
     re.compile(r"\b(?:user|author|by)\s*[:\-]?\s*@?(?P<user>[A-Za-z0-9_.-]{3,64})\b", re.IGNORECASE),
     re.compile(r"\bidea by\s*@?(?P<user>[A-Za-z0-9_.-]{3,64})\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:мнение|идея|обзор|анализ|разбор)\s+от\s*@?(?P<user>[A-Za-z0-9_.-]{3,64})\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?P<user>[A-Za-z0-9_.-]{3,64})\s+(?:на\s+которого\s+вы\s+подписаны,\s+)?"
+        r"опубликовал(?:\(-а\))?\s+нов(?:ое|ую)\s+(?:мнение|идею|обзор|анализ|разбор)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b@(?P<user>[A-Za-z0-9_.-]{3,64})\b"),
 ]
 HASHTAG_RE_TEMPLATE = r"(?<!\w){tag}\b"
