@@ -210,7 +210,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 - **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 5× daily
 - **Interest-aware `Пульс дня`** — pulse ranking mixes repeated-signal strength, Denis-fit buckets, novelty, and diversity; bucket profile learns from recent posts and is reusable for future email recaps
 - **AgentMail inbox feed** — Python-first AgentMail adapter polls personal inbox every 5 minutes for internal state/labeling, and the bridge publishes scheduled recaps to `inbox-email` with exact message counts, senders, and subjects
-- **Signals bridge** — standalone `signals-bridge` polls allowlisted email + Telegram sources every 5 minutes, runs deterministic-first matching, and uses only cheap `OmniRoute light` enrichment with local fallback before posting to `signals`; Telegram batches include source links and email batches retain a compact message excerpt
+- **Signals bridge** — standalone `signals-bridge` polls allowlisted email + Telegram sources every 5 minutes, runs deterministic-first matching, and uses only cheap `OmniRoute light` enrichment with local fallback before posting to `signals`; Telegram batches include source links and posts render the source text excerpt when available
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
 - **Voice messages** — transcription is intentionally disabled on this VPS for now; may return later via a lighter CPU path or external API
 - **Smart model routing** — OmniRoute dispatches tasks to the right AI tier (smart/medium/light) with automatic provider fallback
@@ -440,8 +440,14 @@ consuming from the bus — no shared code with the pipeline they feed.
    - `scripts/lightrag.env` — Gemini API key (from `lightrag.env.template`)
    - `workspace/USER.md`, `workspace/MEMORY.md`, `workspace/SOUL.md` — personal bot context
 4. **Deploy workspace** to server: `./scripts/deploy-workspace.sh`
-5. **Provision LightRAG** (first time): `./scripts/setup-lightrag.sh`
-6. **Set up Obsidian sync**: install Syncthing on Mac (`brew install syncthing && brew services start syncthing`) and follow `docs/03-operations.md` → "Obsidian vault sync — Syncthing setup"
+   - This updates only `/opt/openclaw/workspace`
+   - Standalone bridges use separate deploy scripts and artifact roots under `/opt/`
+5. **Deploy bridge artifacts as needed**:
+   - `./scripts/deploy-telethon-digest.sh`
+   - `./scripts/deploy-agentmail-email.sh`
+   - `./scripts/deploy-signals-bridge.sh`
+6. **Provision LightRAG** (first time): `./scripts/setup-lightrag.sh`
+7. **Set up Obsidian sync**: install Syncthing on Mac (`brew install syncthing && brew services start syncthing`) and follow `docs/03-operations.md` → "Obsidian vault sync — Syncthing setup"
 
 ---
 
@@ -452,6 +458,20 @@ export OPENCLAW_HOST="deploy@<server-host>"
 
 # Deploy workspace changes to server
 ./scripts/deploy-workspace.sh
+
+# Deploy standalone bridge artifacts
+./scripts/deploy-telethon-digest.sh
+./scripts/deploy-agentmail-email.sh
+./scripts/deploy-signals-bridge.sh
+```
+
+Notes:
+
+- `deploy-workspace.sh` syncs only `workspace/` markdown files into `/opt/openclaw/workspace`.
+- `telethon-digest`, `agentmail-email`, and `signals-bridge` run from their own live roots under `/opt/`.
+- On the current server, `/opt/openclaw` should be treated as runtime/config state, not as the source of truth for bridge code.
+
+```bash
 
 # Check all services health
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:18789/healthz'         # OpenClaw
