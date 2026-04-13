@@ -51,6 +51,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   internal-only (no Telegram mini-batches in `inbox-email`), while scheduled digests render
   directly from the real mailbox window and include exact message counts, sender counts, and
   per-message subjects for the slot.
+- **`artifacts/agentmail-email/cron_bridge.py`**: the inbox-email 5-minute poll now runs from an
+  internal scheduler inside the bridge instead of an OpenClaw cron job, and a deterministic
+  prefilter skips obvious empty / low-signal windows before any LLM poll analysis.
 - **AgentMail digest windows**: scheduled runs are now anchored to the fixed Moscow schedule
   boundaries (`08:00`, `13:00`, `16:00`, `20:00`) instead of drifting after a manual trigger.
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
@@ -79,9 +82,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`artifacts/agentmail-email/`**: removed embedded OpenClaw runtime path and removed AgentMail MCP
   from the active runtime path; the bridge now reads mailbox data directly over AgentMail HTTP,
   while OpenClaw only handles JSON-only classification and digest generation.
-- **`artifacts/agentmail-email/sync-openclaw-cron-jobs.sh`**: poll cron is now created without
-  `--exact`, which keeps the `*/5` OpenClaw job enabled instead of silently persisting as
-  `enabled=false` after the first run.
+- **`artifacts/agentmail-email/sync-openclaw-cron-jobs.sh`**: the token-spending `*/5` poll cron
+  job was removed entirely; OpenClaw now manages only the four digest slots for inbox-email.
 - **`artifacts/agentmail-email/cron_bridge.py`**: trigger payload now accepts `lookback_minutes`
   for manual catch-up windows; poll/digest status tails include concise runtime summaries; label
   commit now tolerates per-message `404 NotFoundError` instead of failing the whole run.
@@ -89,9 +91,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   thread snapshots / derived events only and explicitly disallow mailbox tools.
 - **`artifacts/openclaw/openclaw.json`**: removed `mcp.servers.agentmail` and tightened
   `tools.profile` back to `"coding"`.
-- **`scripts/deploy-agentmail-email.sh`**: post-deploy validation now checks that the AgentMail
-  poll cron job exists, is enabled, and has a next scheduled run; it also removes stale
-  AgentMail-specific env/config coupling from the shared OpenClaw deployment.
+- **`scripts/deploy-agentmail-email.sh`**: post-deploy validation now checks that the 5-minute
+  poll cron job is absent, that the four digest cron jobs remain enabled with next scheduled runs,
+  and it still removes stale AgentMail-specific env/config coupling from the shared OpenClaw deployment.
 - **Server cleanup**: stale email Redis lock/pending entry removed after embedded-runtime rollback;
   unused Docker build cache cleared and the bridge image size dropped from ~2.78 GB to ~229 MB.
 - **`README.md` / `docs/01-server-state.md` / `docs/02-openclaw-installation.md` / `docs/03-operations.md` / `artifacts/openclaw/env.redacted.example`**:

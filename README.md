@@ -117,7 +117,7 @@ dedicated Python bridges.
 │  │  HTTP /trigger → XADD stream → HTTP 202     │                      │
 │  │  Consumer loop → AgentMail HTTP API         │                      │
 │  │  → thread snapshots → shared OpenClaw LLM   │                      │
-│  │  Poll every 5m → inbox-email mini-batches   │                      │
+│  │  Internal scheduler every 5m                │                      │
 │  │  Digests: 08/13/16/20 Europe/Moscow         │                      │
 │  │  Output: Telegram topic + Redis events      │                      │
 │  └──────────────────────────────────────────────┘                      │
@@ -209,7 +209,7 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 - **Telegram interface** — DM (allowlist) + supergroup (mention-free in designated chat)
 - **Telegram channel digest** — Telethon reads 150–200 subscribed channels and posts scheduled summaries to the `telegram-digest` topic; 5× daily
 - **Interest-aware `Пульс дня`** — pulse ranking mixes repeated-signal strength, Denis-fit buckets, novelty, and diversity; bucket profile learns from recent posts and is reusable for future email recaps
-- **AgentMail inbox feed** — Python-first AgentMail adapter polls personal inbox every 5 minutes for internal state/labeling, and the bridge publishes scheduled recaps to `inbox-email` with exact message counts, senders, and subjects
+- **AgentMail inbox feed** — Python-first AgentMail adapter uses an internal 5-minute scheduler for state/labeling, applies a deterministic prefilter before LLM poll analysis, and publishes scheduled recaps to `inbox-email` with exact message counts, senders, and subjects
 - **Signals bridge** — standalone `signals-bridge` polls allowlisted email + Telegram sources every 5 minutes, runs deterministic-first matching, and uses only cheap `OmniRoute light` enrichment with local fallback before posting to `signals`; Telegram batches include source links and posts render the source text excerpt when available
 - **Async integration bus** — Redis Streams decouples ingestion from delivery; cron triggers return 202 immediately, pipeline runs asynchronously; extensible to email, signals, RAG
 - **Voice messages** — transcription is intentionally disabled on this VPS for now; may return later via a lighter CPU path or external API
@@ -414,7 +414,7 @@ The trigger returns HTTP 202 immediately. The worker processes asynchronously. I
 | Source | Stream | Status |
 |--------|--------|--------|
 | Telegram channel digest | `ingest:jobs:telegram` | ✅ Live — 150–200 channels, 5× daily |
-| AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | ✅ Live — standalone `agentmail-email-bridge` reads AgentMail directly, polls every 5m for internal processing, and posts only scheduled digests at 08/13/16/20 MSK with exact mailbox counts/senders; empty scheduled windows still post an explicit recap instead of silently skipping |
+| AgentMail inbox poll/digest | `ingest:jobs:email`, `ingest:events:email` | ✅ Live — standalone `agentmail-email-bridge` reads AgentMail directly, runs an internal 5-minute poll scheduler with deterministic prefiltering for low-signal windows, and posts only scheduled digests at 08/13/16/20 MSK with exact mailbox counts/senders; empty scheduled windows still post an explicit recap instead of silently skipping |
 | Signals bridge | `ingest:jobs:signals`, `ingest:events:signals` | ✅ Live artifact — standalone `signals-bridge` polls every 5m, loads real rules from local separate files, does deterministic-first matching, and uses only cheap `OmniRoute light` enrichment (or local fallback) before posting to `signals` |
 | LightRAG async ingest | `ingest:rag:queue` | ✅ Live — digest notes pushed after each run, RAG consumer uploads immediately |
 

@@ -786,10 +786,12 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 ## AgentMail Inbox Email
 
 AgentMail Inbox Email polls the personal inbox every 5 minutes through a standalone Python
-bridge that talks to the AgentMail HTTP API directly, uses the 5-minute poll for internal
-state/labeling only, and publishes scheduled recaps to the `inbox-email` topic at `08:00`, `13:00`,
-`16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only poll classification; scheduled digests
-render directly from the mailbox window so they always reflect the actual message count and senders.
+bridge that talks to the AgentMail HTTP API directly, uses an internal 5-minute scheduler for
+poll-based state/labeling only, and publishes scheduled recaps to the `inbox-email` topic at
+`08:00`, `13:00`, `16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only poll
+classification, and the poll path now runs a deterministic prefilter so obvious empty / low-signal
+windows can skip the LLM entirely. Scheduled digests render directly from the mailbox window so
+they always reflect the actual message count and senders.
 
 If a scheduled digest window has no messages, the bridge now still posts a short
 "empty window" message to Telegram instead of silently skipping the slot.
@@ -827,8 +829,8 @@ The deploy script:
 - materializes the real `AGENTMAIL_INBOX_REF` into `/opt/agentmail-email/config.json`
 - removes stale `/opt/agentmail-email/openclaw-config` leftovers from the old embedded-runtime design
 - prunes dangling Docker image/build artifacts after a successful rebuild
-- syncs the five OpenClaw Cron Jobs
-- validates that the poll cron job is still enabled and has a next scheduled run
+- syncs the four digest OpenClaw Cron Jobs
+- validates that no 5-minute poll cron job remains and that each digest cron job still has a next scheduled run
 
 Architecture note:
 
@@ -838,8 +840,7 @@ Architecture note:
   and derived event persistence.
 - The shared `openclaw-openclaw-gateway-1` container is used only for LLM steps over prepared
   thread snapshots or derived events.
-- The poll cron must be created without `--exact`; on the current OpenClaw runtime, `*/5` with `--exact`
-  can end up stored as `enabled=false` after the first run.
+- The 5-minute poll no longer relies on OpenClaw Cron Jobs; it is scheduled internally by the bridge.
 
 Current validation snapshot:
 
@@ -854,7 +855,6 @@ Current validation snapshot:
 
 ### Managed OpenClaw jobs
 
-- `AgentMail Inbox · Poll every 5m`
 - `AgentMail Inbox · 08:00 Morning brief`
 - `AgentMail Inbox · 13:00 Regular digest`
 - `AgentMail Inbox · 16:00 Regular digest`

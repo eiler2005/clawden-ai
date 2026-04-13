@@ -513,27 +513,30 @@ signals-bridge (every 5 minutes, internal scheduler)
 
 ## AgentMail Inbox Email
 
-A separate bridge polls the personal AgentMail inbox every 5 minutes through the
-AgentMail HTTP API and publishes compact mini-batches to the `inbox-email`
-topic. Scheduled recaps run at `08:00`, `13:00`, `16:00`, and `20:00` Moscow
-time from the derived event buffer rather than from Telegram history. The bridge is a
+A separate bridge polls the personal AgentMail inbox every 5 minutes through an
+internal scheduler inside the AgentMail HTTP bridge and publishes scheduled recaps to
+the `inbox-email` topic. Scheduled recaps run at `08:00`, `13:00`, `16:00`, and `20:00`
+Moscow time from the derived event buffer rather than from Telegram history. The bridge is a
 standalone Docker service at `/opt/agentmail-email`, separate from `telethon-digest-cron-bridge`.
 
 ### Architecture
 
 ```text
-OpenClaw Cron Jobs (*/5 + 08:00/13:00/16:00/20:00 МСК)
+OpenClaw Cron Jobs (08:00/13:00/16:00/20:00 МСК)
   └── isolated OpenClaw agent run
         └── HTTP POST /trigger → agentmail-email-bridge
               └── XADD ingest:jobs:email → HTTP 202 (immediate)
+
+agentmail-email-bridge internal scheduler (every 5m)
+  └── XADD ingest:jobs:email → internal poll enqueue
 
                         ↓ async (Redis Streams)
 
               agentmail-email-bridge (consumer loop)
                     ├── poll job:
                     │     AgentMail HTTP API → thread snapshots
-                    │     → shared OpenClaw JSON-only classifier
-                    │     → batch summary → Telegram topic `inbox-email`
+                    │     → deterministic prefilter
+                    │     → shared OpenClaw JSON-only classifier (only for candidate threads)
                     │     → XADD ingest:events:email (derived events)
                     └── digest job:
                           XRANGE ingest:events:email
@@ -550,8 +553,8 @@ OpenClaw Cron Jobs (*/5 + 08:00/13:00/16:00/20:00 МСК)
   and lifecycle tracking without touching read-state.
 - `ingest:events:email` stores only derived summaries and metadata with 7-day retention; raw
   bodies and attachments are excluded.
-- The `*/5` poll job must be synced without `--exact`; with the current OpenClaw runtime, wildcard cron +
-  exact scheduling can leave the job stored as `enabled=false` after its first run.
+- The 5-minute poll is now internal to the bridge, which removes the OpenClaw cron-enqueue token cost
+  and lets obvious low-signal / empty windows skip the LLM entirely.
 - Manual recovery/backfill uses `lookback_minutes` on `/trigger`, which widens the poll or digest
   window without changing the standalone bridge architecture.
 - Live validation on `2026-04-12`: manual `poll lookback=1440` finished with `exit_code=0`,

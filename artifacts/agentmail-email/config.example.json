@@ -3,6 +3,10 @@
   "topic_name": "inbox-email",
   "timezone": "Europe/Moscow",
   "poll_interval_minutes": 5,
+  "scheduler": {
+    "enabled": true,
+    "tick_seconds": 300
+  },
   "poll_bootstrap_lookback_minutes": 720,
   "poll_lag_grace_minutes": 15,
   "digest_bootstrap_lookback_hours": 24,

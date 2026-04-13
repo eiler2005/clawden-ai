@@ -161,7 +161,6 @@ Report:
 
 
 specs = [
-    ("AgentMail Inbox · Poll every 5m", "Near-real-time inbox poll", "*/5 * * * *", "poll", None, "omniroute/light"),
     ("AgentMail Inbox · 08:00 Morning brief", "Morning inbox digest", "0 8 * * *", "digest", "morning", None),
     ("AgentMail Inbox · 13:00 Regular digest", "Midday inbox digest", "0 13 * * *", "digest", "interval", None),
     ("AgentMail Inbox · 16:00 Regular digest", "Afternoon inbox digest", "0 16 * * *", "digest", "interval", None),

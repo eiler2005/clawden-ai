@@ -57,6 +57,24 @@ MAX_MESSAGE_PAGE_SIZE = int(os.environ.get("AGENTMAIL_MESSAGE_PAGE_SIZE", "100")
 TEXT_EXCERPT_LIMIT = int(os.environ.get("AGENTMAIL_TEXT_EXCERPT_LIMIT", "2400") or 2400)
 PREVIEW_LIMIT = int(os.environ.get("AGENTMAIL_PREVIEW_LIMIT", "420") or 420)
 SENDER_RE = re.compile(r"^\s*(?:(?P<name>.*?)\s*)?<(?P<email>[^>]+)>\s*$")
+REPLY_SUBJECT_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:", re.IGNORECASE)
+ACTION_KEYWORDS = (
+    "reply",
+    "respond",
+    "response needed",
+    "deadline",
+    "meeting",
+    "calendar",
+    "call",
+    "approve",
+    "approval",
+    "action required",
+    "asap",
+    "urgent",
+    "invoice",
+    "payment due",
+    "review requested",
+)
 
 
 def load_config() -> dict:
@@ -64,6 +82,9 @@ def load_config() -> dict:
     inbox_ref = os.environ.get("AGENTMAIL_INBOX_REF", "").strip()
     if inbox_ref:
         data["inbox_ref"] = inbox_ref
+    scheduler = data.setdefault("scheduler", {})
+    scheduler.setdefault("enabled", True)
+    scheduler.setdefault("tick_seconds", int(data.get("poll_interval_minutes", 5) or 5) * 60)
     return data
 
 
@@ -95,6 +116,49 @@ def _write_status(r: redis_lib.Redis | None, payload: dict) -> None:
         state_store.set_status(r, payload)
 
 
+def _normalize_status_on_startup() -> None:
+    status = _load_status()
+    if not status.get("running"):
+        return
+
+    payload = dict(status)
+    payload["running"] = False
+    payload["finished_at"] = payload.get("finished_at") or _utc_now()
+    tail = [str(line) for line in (payload.get("tail") or []) if str(line).strip()]
+    tail.append("bridge restart cleared stale running status")
+    payload["tail"] = tail[-12:]
+
+    redis_client = None
+    if REDIS_URL:
+        try:
+            redis_client = _make_redis()
+            redis_client.ping()
+        except redis_lib.exceptions.RedisError:
+            redis_client = None
+    _write_status(redis_client, payload)
+
+
+def _clear_stale_locks_on_startup() -> None:
+    if not REDIS_URL:
+        return
+
+    config = load_config()
+    inbox_ref = str(config.get("inbox_ref", "")).strip()
+    if not inbox_ref:
+        return
+
+    try:
+        redis_client = _make_redis()
+        redis_client.ping()
+        removed = 0
+        for job_type in ("poll", "digest"):
+            removed += int(redis_client.delete(state_store.lock_key(inbox_ref, job_type)) or 0)
+        if removed:
+            logger.info("Cleared %s stale email lock(s) on startup", removed)
+    except redis_lib.exceptions.RedisError as exc:
+        logger.warning("Failed to clear stale email locks on startup: %s", exc)
+
+
 def _tail_union(*tails: list[str]) -> list[str]:
     lines: list[str] = []
     for tail in tails:
@@ -104,6 +168,35 @@ def _tail_union(*tails: list[str]) -> list[str]:
 
 def _event_retention_days(config: dict) -> int:
     return int(config.get("event_retention_days", 7) or 7)
+
+
+def _as_bool(value, default: bool = True) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    lowered = str(value).strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def _scheduler_enabled(config: dict) -> bool:
+    return _as_bool((config.get("scheduler") or {}).get("enabled"), True)
+
+
+def _scheduler_tick_seconds(config: dict) -> int:
+    scheduler = config.get("scheduler") or {}
+    raw = scheduler.get("tick_seconds", int(config.get("poll_interval_minutes", 5) or 5) * 60)
+    try:
+        tick = int(raw or 300)
+    except (TypeError, ValueError):
+        tick = 300
+    return max(tick, 30)
 
 
 def _parse_lookback_minutes(data: dict[str, str]) -> int | None:
@@ -343,6 +436,118 @@ def _flatten_window_messages(*, thread_snapshots: list[dict], config: dict) -> l
     return messages
 
 
+def _message_has_handled_label(message: dict, *, config: dict) -> bool:
+    handled_labels = set(_labels(config).values())
+    message_labels = {str(value).strip() for value in (message.get("labels") or []) if str(value).strip()}
+    return bool(handled_labels & message_labels)
+
+
+def _message_requires_llm_review(message: dict, *, config: dict) -> bool:
+    if bool(message.get("has_attachments", False)):
+        return True
+
+    subject = str(message.get("subject") or "").strip()
+    if subject and REPLY_SUBJECT_RE.match(subject):
+        return True
+
+    haystack = " ".join(
+        [
+            subject,
+            str(message.get("preview") or ""),
+            str(message.get("text_excerpt") or ""),
+        ]
+    ).lower()
+    if any(token in haystack for token in ACTION_KEYWORDS):
+        return True
+
+    return not _looks_low_signal_message(message, config=config)
+
+
+def _merge_label_actions(*actions: dict[str, list[str]]) -> dict[str, list[str]]:
+    merged: dict[str, list[str]] = {}
+    for payload in actions:
+        for label, values in (payload or {}).items():
+            current = merged.setdefault(str(label), [])
+            for value in values:
+                message_id = str(value).strip()
+                if message_id and message_id not in current:
+                    current.append(message_id)
+    return {label: ids for label, ids in merged.items() if ids}
+
+
+def _prefilter_poll_thread_snapshots(thread_snapshots: list[dict], *, config: dict) -> tuple[list[dict], dict[str, list[str]], int, dict[str, int]]:
+    labels = _labels(config)
+    low_signal_label = labels["low_signal"]
+    candidate_threads: list[dict] = []
+    prefilter_label_actions: dict[str, list[str]] = {low_signal_label: []}
+    low_signal_count = 0
+    skipped_handled = 0
+    skipped_low_signal = 0
+
+    for thread in thread_snapshots:
+        messages = list(thread.get("messages", []) or [])
+        if not messages:
+            continue
+
+        if all(_message_has_handled_label(message, config=config) for message in messages):
+            skipped_handled += 1
+            continue
+
+        needs_llm = False
+        thread_low_signal_ids: list[str] = []
+        thread_low_signal_messages = 0
+        for message in messages:
+            if _message_has_handled_label(message, config=config):
+                continue
+            if _message_requires_llm_review(message, config=config):
+                needs_llm = True
+                break
+            if _looks_low_signal_message(message, config=config):
+                thread_low_signal_messages += 1
+                message_labels = {
+                    str(value).strip()
+                    for value in (message.get("labels") or [])
+                    if str(value).strip()
+                }
+                message_id = str(message.get("message_id") or "").strip()
+                if message_id and low_signal_label not in message_labels:
+                    thread_low_signal_ids.append(message_id)
+            else:
+                needs_llm = True
+                break
+
+        if needs_llm:
+            candidate_threads.append(thread)
+            continue
+
+        skipped_low_signal += 1
+        low_signal_count += thread_low_signal_messages
+        prefilter_label_actions[low_signal_label].extend(thread_low_signal_ids)
+
+    return (
+        candidate_threads,
+        _merge_label_actions(prefilter_label_actions),
+        low_signal_count,
+        {
+            "scanned_threads": len(thread_snapshots),
+            "skipped_handled": skipped_handled,
+            "skipped_low_signal": skipped_low_signal,
+            "candidate_threads": len(candidate_threads),
+        },
+    )
+
+
+def _prefilter_tail_line(stats: dict[str, int], *, llm_skipped: bool) -> str:
+    return (
+        "prefilter: "
+        f"scanned_threads={stats.get('scanned_threads', 0)}, "
+        f"skipped_handled={stats.get('skipped_handled', 0)}, "
+        f"skipped_low_signal={stats.get('skipped_low_signal', 0)}, "
+        f"candidate_threads={stats.get('candidate_threads', 0)}, "
+        f"llm_skipped={'true' if llm_skipped else 'false'}"
+    )
+
+
 def _scheduled_digest_window(now: datetime, *, config: dict) -> tuple[datetime, datetime]:
     tz = ZoneInfo(str(config.get("timezone", "Europe/Moscow") or "Europe/Moscow"))
     hours = sorted({int(value) for value in config.get("schedule_hours", [8, 13, 16, 20])})
@@ -439,14 +644,27 @@ def _prepare_poll_result(
         until_dt=until_dt,
     )
     prelude = [f"agentmail api window: messages={scanned_count}, threads={len(thread_snapshots)}, mode={mode}"]
-    if not thread_snapshots:
+    candidate_threads, prefilter_actions, prefilter_low_signal_count, prefilter_stats = _prefilter_poll_thread_snapshots(
+        thread_snapshots,
+        config=config,
+    )
+    prefilter_line = _prefilter_tail_line(prefilter_stats, llm_skipped=not candidate_threads)
+    if not candidate_threads:
         empty = _empty_poll_result(
             run_id=run_id,
             inbox_ref=inbox_ref,
             topic_name=str(config.get("topic_name", "inbox-email")),
         )
         empty.messages_scanned = scanned_count
-        return empty, prelude
+        empty.threads_considered = len(thread_snapshots)
+        empty.low_signal_count = prefilter_low_signal_count
+        empty.label_actions = prefilter_actions
+        empty.prefilter_scanned_threads = prefilter_stats.get("scanned_threads", 0)
+        empty.prefilter_skipped_handled = prefilter_stats.get("skipped_handled", 0)
+        empty.prefilter_skipped_low_signal = prefilter_stats.get("skipped_low_signal", 0)
+        empty.prefilter_candidate_threads = prefilter_stats.get("candidate_threads", 0)
+        empty.llm_skipped = True
+        return empty, _tail_union(prelude, [prefilter_line])
 
     result = run_agent_json(
         build_prepare_poll_analysis_prompt(
@@ -456,7 +674,7 @@ def _prepare_poll_result(
             until_iso=until_dt.isoformat(),
             labels=_labels(config),
             low_signal_hints=[str(v) for v in config.get("low_signal_hints", [])],
-            thread_snapshots=thread_snapshots,
+            thread_snapshots=candidate_threads,
             mode=mode,
         )
     )
@@ -468,7 +686,14 @@ def _prepare_poll_result(
     )
     parsed.messages_scanned = scanned_count
     parsed.threads_considered = len(thread_snapshots)
-    return parsed, _tail_union(prelude, result.output_tail)
+    parsed.low_signal_count += prefilter_low_signal_count
+    parsed.label_actions = _merge_label_actions(parsed.label_actions, prefilter_actions)
+    parsed.prefilter_scanned_threads = prefilter_stats.get("scanned_threads", 0)
+    parsed.prefilter_skipped_handled = prefilter_stats.get("skipped_handled", 0)
+    parsed.prefilter_skipped_low_signal = prefilter_stats.get("skipped_low_signal", 0)
+    parsed.prefilter_candidate_threads = prefilter_stats.get("candidate_threads", 0)
+    parsed.llm_skipped = False
+    return parsed, _tail_union(prelude, [prefilter_line], result.output_tail)
 
 
 def _persist_catchup_if_needed(
@@ -518,7 +743,13 @@ def _poll_summary_lines(
             f"{mode_label} summary: scanned={poll_result.messages_scanned}, "
             f"threads={poll_result.threads_considered}, "
             f"publishable={len(poll_result.publish_events)}, "
-            f"low_signal={poll_result.low_signal_count}, {window_label}"
+            f"low_signal={poll_result.low_signal_count}, "
+            f"prefilter_scanned={poll_result.prefilter_scanned_threads}, "
+            f"skipped_handled={poll_result.prefilter_skipped_handled}, "
+            f"skipped_low_signal={poll_result.prefilter_skipped_low_signal}, "
+            f"candidate_threads={poll_result.prefilter_candidate_threads}, "
+            f"llm_skipped={'true' if poll_result.llm_skipped else 'false'}, "
+            f"{window_label}"
         )
     ]
 
@@ -759,6 +990,64 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+def _scheduler_loop() -> None:
+    logger.info("Email scheduler loop starting (REDIS_URL=%s)", REDIS_URL)
+    while True:
+        sleep_seconds: float = 60
+        try:
+            config = load_config()
+            sleep_seconds = _scheduler_tick_seconds(config)
+            if not _scheduler_enabled(config):
+                time.sleep(sleep_seconds)
+                continue
+
+            inbox_ref = str(config.get("inbox_ref", "")).strip()
+            if not inbox_ref:
+                logger.warning("Email scheduler skipped: inbox_ref is not configured")
+                time.sleep(sleep_seconds)
+                continue
+
+            status = _load_status()
+            if status.get("running") and status.get("job_type") == "poll":
+                time.sleep(min(sleep_seconds, 30))
+                continue
+
+            r = _make_redis()
+            now = datetime.now(timezone.utc)
+            next_due_key = state_store.next_poll_due_key(inbox_ref)
+            next_due = state_store.get_dt(r, next_due_key)
+            if next_due is None:
+                next_due = now
+
+            if next_due <= now:
+                run_id = str(uuid.uuid4())
+                r.xadd(
+                    STREAM_JOBS,
+                    {
+                        "run_id": run_id,
+                        "job_type": "poll",
+                        "digest_type": "",
+                        "inbox_ref": inbox_ref,
+                        "requested_at": _utc_now(),
+                        "requested_by": "scheduler",
+                        "window_hint": "",
+                        "lookback_minutes": "",
+                    },
+                )
+                state_store.set_dt(r, next_due_key, now + timedelta(seconds=sleep_seconds))
+                logger.info("Scheduled email poll run_id=%s", run_id)
+            else:
+                remaining = max((next_due - now).total_seconds(), 1)
+                sleep_seconds = min(sleep_seconds, remaining)
+            time.sleep(sleep_seconds)
+        except redis_lib.exceptions.ConnectionError as exc:
+            logger.error("Email scheduler lost redis connection: %s", exc)
+            time.sleep(max(sleep_seconds, 30))
+        except Exception:
+            logger.exception("Email scheduler loop failed")
+            time.sleep(max(sleep_seconds, 60))
+
+
 def _consumer_loop_inner(r: redis_lib.Redis) -> None:
     try:
         r.xgroup_create(STREAM_JOBS, CONSUMER_GROUP, id="0", mkstream=True)
@@ -877,8 +1166,12 @@ def consumer_loop() -> None:
 
 def main() -> None:
     if not REDIS_URL:
-        logger.warning("REDIS_URL is not set — consumer loop disabled, /trigger will return 503")
+        logger.warning("REDIS_URL is not set — consumer loop and internal scheduler are disabled, /trigger will return 503")
     else:
+        _normalize_status_on_startup()
+        _clear_stale_locks_on_startup()
+        scheduler = threading.Thread(target=_scheduler_loop, daemon=True, name="email-scheduler")
+        scheduler.start()
         thread = threading.Thread(target=consumer_loop, daemon=True, name="email-consumer")
         thread.start()
 

@@ -153,6 +153,9 @@ data = json.loads(config_path.read_text())
 if env.get("AGENTMAIL_INBOX_REF"):
     data["inbox_ref"] = env["AGENTMAIL_INBOX_REF"]
 data.setdefault("topic_name", "inbox-email")
+data.setdefault("scheduler", {})
+data["scheduler"].setdefault("enabled", True)
+data["scheduler"].setdefault("tick_seconds", int(data.get("poll_interval_minutes", 5) or 5) * 60)
 data.setdefault("poll_bootstrap_lookback_minutes", 720)
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
@@ -211,15 +214,25 @@ if store_path is None:
 data = json.loads(store_path.read_text())
 jobs = data.get("jobs", [])
 poll_jobs = [job for job in jobs if job.get("name") == "AgentMail Inbox · Poll every 5m"]
-if not poll_jobs:
-    raise SystemExit("AgentMail poll cron job missing after sync.")
+if poll_jobs:
+    raise SystemExit("AgentMail poll cron job should not exist after sync.")
 
-poll = poll_jobs[-1]
-state = poll.get("state", {})
-if not poll.get("enabled", False):
-    raise SystemExit("AgentMail poll cron job is disabled after sync.")
-if not state.get("nextRunAtMs"):
-    raise SystemExit("AgentMail poll cron job has no nextRunAtMs after sync.")
+expected_names = [
+    "AgentMail Inbox · 08:00 Morning brief",
+    "AgentMail Inbox · 13:00 Regular digest",
+    "AgentMail Inbox · 16:00 Regular digest",
+    "AgentMail Inbox · 20:00 Evening editorial",
+]
+for name in expected_names:
+    matches = [job for job in jobs if job.get("name") == name]
+    if not matches:
+        raise SystemExit(f"AgentMail digest cron job missing after sync: {name}")
+    job = matches[-1]
+    state = job.get("state", {})
+    if not job.get("enabled", False):
+        raise SystemExit(f"AgentMail digest cron job is disabled after sync: {name}")
+    if not state.get("nextRunAtMs"):
+        raise SystemExit(f"AgentMail digest cron job has no nextRunAtMs after sync: {name}")
 PY
 '
 
@@ -227,7 +240,7 @@ cat <<'EOF'
 AgentMail inbox-email pipeline deployed.
 
 Scheduled:
-  - poll every 5 minutes
+  - internal scheduler poll every 5 minutes
   - digests at 08:00 / 13:00 / 16:00 / 20:00 MSK
 
 Useful commands:

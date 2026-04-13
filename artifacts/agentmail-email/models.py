@@ -74,6 +74,11 @@ class PollPrepResult:
     publish_events: list[EmailEvent]
     label_actions: dict[str, list[str]]
     model_meta: ModelMeta
+    prefilter_scanned_threads: int = 0
+    prefilter_skipped_handled: int = 0
+    prefilter_skipped_low_signal: int = 0
+    prefilter_candidate_threads: int = 0
+    llm_skipped: bool = False
 
     @classmethod
     def from_payload(
@@ -120,6 +125,11 @@ class PollPrepResult:
             threads_considered=int(payload.get("threads_considered", 0) or 0),
             threads_selected=int(payload.get("threads_selected", len(events)) or len(events)),
             low_signal_count=int(payload.get("low_signal_count", 0) or 0),
+            prefilter_scanned_threads=int(payload.get("prefilter_scanned_threads", 0) or 0),
+            prefilter_skipped_handled=int(payload.get("prefilter_skipped_handled", 0) or 0),
+            prefilter_skipped_low_signal=int(payload.get("prefilter_skipped_low_signal", 0) or 0),
+            prefilter_candidate_threads=int(payload.get("prefilter_candidate_threads", 0) or 0),
+            llm_skipped=bool(payload.get("llm_skipped", False)),
             batch_lead=[str(v) for v in payload.get("batch_lead", []) if str(v).strip()],
             publish_events=events,
             label_actions=label_actions,

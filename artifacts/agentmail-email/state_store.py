@@ -23,6 +23,10 @@ def last_poll_success_key(inbox_ref: str) -> str:
     return f"state:email:{_normalize_inbox_ref(inbox_ref)}:last_poll_success_at"
 
 
+def next_poll_due_key(inbox_ref: str) -> str:
+    return f"state:email:{_normalize_inbox_ref(inbox_ref)}:next_poll_due_at"
+
+
 def lock_key(inbox_ref: str, job_type: str) -> str:
     return f"lock:email:{_normalize_inbox_ref(inbox_ref)}:{job_type}"
 
