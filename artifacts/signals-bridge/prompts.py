@@ -20,11 +20,7 @@ Keep the output compact. Prefer one short title, one short summary, 1-4 tags, an
 
 Important:
 - These items already passed deterministic prefilter.
-- For email items with metadata.needs_llm_username_resolution=true:
-  - inspect subject/excerpt and resolve the TradingView username only if explicitly visible
-  - keep=false if the visible username is not one of metadata.allowed_usernames
-  - keep=false if no visible username can be determined
-- For all other items, keep=true unless the text is clearly empty/noise.
+- Keep=true unless the text is clearly empty/noise.
 - Do not invent facts not visible in the candidate text.
 
 JSON schema:

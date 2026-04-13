@@ -84,12 +84,13 @@ def match_email_rule(*, ruleset_id: str, ruleset_title: str, rule: dict, message
         str(message.get("text_excerpt", "")),
     )
     allowed = {str(value).lower() for value in rule.get("tradingview_usernames", [])}
-    if username and username.lower() not in allowed:
+    if not username:
+        return None
+    if username.lower() not in allowed:
         return None
     metadata = {
-        "needs_llm_username_resolution": not bool(username),
         "allowed_usernames": list(rule.get("tradingview_usernames", [])),
-        "resolved_username": username or "",
+        "resolved_username": username,
         "message_id": str(message.get("message_id", "")).strip(),
     }
     return SignalCandidate(

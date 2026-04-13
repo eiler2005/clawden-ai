@@ -250,6 +250,26 @@ class MatchingTests(unittest.TestCase):
         )
         self.assertIsNone(candidate)
 
+    def test_email_tradingview_without_visible_username_ignored(self) -> None:
+        rule = sample_config()["rule_sets"][0]["rules"][0]
+        rule["tradingview_usernames"] = ["Mamontiara", "vesperfin"]
+        candidate = match_email_rule(
+            ruleset_id="trading",
+            ruleset_title="Trading",
+            rule=rule,
+            message={
+                "message_id": "msg-no-user",
+                "timestamp": "2026-04-13T09:00:01+00:00",
+                "from_name": "TradingView",
+                "from_email": "noreply@tradingview.com",
+                "sender_domain": "tradingview.com",
+                "subject": "Si 30m bullish RYGEL",
+                "preview": "",
+                "text_excerpt": "Si 30m bullish RYGEL 2026-04-13T09:00:01Z",
+            },
+        )
+        self.assertIsNone(candidate)
+
     def test_non_tradingview_sender_ignored(self) -> None:
         rule = sample_config()["rule_sets"][0]["rules"][0]
         candidate = match_email_rule(
