@@ -10,8 +10,6 @@ from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
-import aiohttp
-
 from models import Last30DaysDigest, ModelMeta, SignalEvent
 
 logger = logging.getLogger(__name__)
@@ -69,13 +67,12 @@ def render_batch(*, ruleset_title: str, events: list[SignalEvent], model_meta: M
     for event in sorted(events, key=lambda item: item.occurred_at):
         source_label = "email" if event.source_type == "email" else "telegram"
         tags = ", ".join(escape(tag) for tag in event.tags[:4])
+        body_text = _compact_excerpt(event.source_excerpt or event.summary)
         lines.append("")
         lines.append(
             f"• <b>{escape(event.title)}</b> <i>[{escape(source_label)} · {_fmt_dt(event.occurred_at)}]</i>"
         )
-        lines.append(f"{escape(event.summary)}")
-        if event.source_type == "email" and event.source_excerpt:
-            lines.append(f"<i>Текст письма:</i> {escape(_compact_excerpt(event.source_excerpt))}")
+        lines.append(f"{escape(body_text)}")
         if event.source_type == "telegram" and event.source_link:
             lines.append(f"<i>Ссылка:</i> {escape(event.source_link)}")
         meta_line = f"<i>{escape(event.author)}"
@@ -157,6 +154,8 @@ def _source_coverage_line(source_counts: dict[str, int]) -> str:
 
 
 async def post_html_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:
+    import aiohttp
+
     chunks = _split_text(text)
     resolved_chat_id = int(chat_id if chat_id is not None else SUPERGROUP_ID)
     resolved_topic_id = topic_id if topic_id is not None else TOPIC_ID

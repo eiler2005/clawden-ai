@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -11,13 +12,16 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
+os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-100123")
 
 from config_store import normalize_config, validate_config
 from event_store import append_events, append_new_events
 from last30days_runner import build_digest
 from matching import build_telegram_message_link, extract_tradingview_username, keyword_matches, local_event_from_candidate, match_email_rule, match_telegram_rule
-from models import SignalEvent
+from models import ModelMeta, SignalEvent
 from omniroute_client import _local_fallback_batch
+from poster import render_batch
 from telegram_adapter import resolve_telegram_window
 
 
@@ -690,6 +694,53 @@ class DeliveryAndStateTests(unittest.TestCase):
         batch = _local_fallback_batch(candidates=[email_candidate, tg_candidate], topic_name="signals")
         self.assertEqual(batch.events[0].source_excerpt, "Full email excerpt about SI and setup")
         self.assertEqual(batch.events[1].source_link, "https://t.me/c/1/5")
+
+    def test_render_batch_prefers_source_text_for_email_and_telegram(self) -> None:
+        text = render_batch(
+            ruleset_title="Trading SI",
+            model_meta=ModelMeta(model_id="local", tier="light"),
+            events=[
+                SignalEvent(
+                    event_id="email-1",
+                    ruleset_id="trading-si",
+                    rule_id="email-rule",
+                    source_type="email",
+                    source_id="email-tradingview",
+                    external_ref="msg-1",
+                    occurred_at="2026-04-13T07:37:00+00:00",
+                    captured_at="2026-04-13T07:38:00+00:00",
+                    author="TradingView",
+                    title="Mamontiara SI Trend Analysis",
+                    summary="TradingView signal about SI trend reversal detected",
+                    source_excerpt="CNYRUB_TOM\nMamontiara ожидает разворот тренда по SI.",
+                    tags=["si", "fx"],
+                    confidence=0.8,
+                ),
+                SignalEvent(
+                    event_id="tg-1",
+                    ruleset_id="trading-si",
+                    rule_id="telegram-rule",
+                    source_type="telegram",
+                    source_id="telegram-trader-speki",
+                    external_ref="chat:5",
+                    occurred_at="2026-04-13T07:40:00+00:00",
+                    captured_at="2026-04-13T07:41:00+00:00",
+                    author="Trader",
+                    title="SI intraday update",
+                    summary="Short AI summary should not be primary",
+                    source_excerpt="Сам текст сигнала по #si с уровнями и сценарием.",
+                    source_link="https://t.me/c/1/5",
+                    tags=["si"],
+                    confidence=0.76,
+                ),
+            ],
+        )
+
+        self.assertIn("Mamontiara ожидает разворот тренда по SI.", text)
+        self.assertIn("Сам текст сигнала по #si с уровнями и сценарием.", text)
+        self.assertNotIn("Текст письма:", text)
+        self.assertNotIn("Short AI summary should not be primary", text)
+        self.assertIn("https://t.me/c/1/5", text)
 
 
 class Last30DaysDigestTests(unittest.TestCase):
