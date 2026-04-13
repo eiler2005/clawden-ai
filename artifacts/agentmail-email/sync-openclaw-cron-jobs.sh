@@ -5,8 +5,14 @@ OPENCLAW_CRON_AGENT="${OPENCLAW_CRON_AGENT:-main}"
 OPENCLAW_CRON_TZ="${OPENCLAW_CRON_TZ:-Europe/Moscow}"
 OPENCLAW_CRON_STORE="${OPENCLAW_CRON_STORE:-}"
 EMAIL_ENV_FILE="${EMAIL_ENV_FILE:-/opt/agentmail-email/email.env}"
+EMAIL_CONFIG_FILE="${EMAIL_CONFIG_FILE:-/opt/agentmail-email/config.json}"
 EMAIL_BRIDGE_URL="${EMAIL_BRIDGE_URL:-http://agentmail-email-bridge:8092/trigger}"
 EMAIL_CRON_TIMEOUT_SECONDS="${EMAIL_CRON_TIMEOUT_SECONDS:-300}"
+EMAIL_CRON_MANAGED_PREFIX="${EMAIL_CRON_MANAGED_PREFIX:-AgentMail Inbox}"
+EMAIL_CRON_BRIDGE_LABEL="${EMAIL_CRON_BRIDGE_LABEL:-AgentMail inbox-email bridge}"
+EMAIL_CRON_MORNING_TITLE="${EMAIL_CRON_MORNING_TITLE:-Morning brief}"
+EMAIL_CRON_INTERVAL_TITLE="${EMAIL_CRON_INTERVAL_TITLE:-Regular digest}"
+EMAIL_CRON_EDITORIAL_TITLE="${EMAIL_CRON_EDITORIAL_TITLE:-Evening editorial}"
 
 EMAIL_BRIDGE_TOKEN="${EMAIL_BRIDGE_TOKEN:-}"
 if [[ -z "$EMAIL_BRIDGE_TOKEN" && -r "$EMAIL_ENV_FILE" ]]; then
@@ -63,8 +69,14 @@ sudo env \
   OPENCLAW_CRON_AGENT="$OPENCLAW_CRON_AGENT" \
   OPENCLAW_CRON_TZ="$OPENCLAW_CRON_TZ" \
   EMAIL_CRON_TIMEOUT_SECONDS="$EMAIL_CRON_TIMEOUT_SECONDS" \
+  EMAIL_CONFIG_FILE="$EMAIL_CONFIG_FILE" \
   EMAIL_BRIDGE_URL="$EMAIL_BRIDGE_URL" \
   EMAIL_BRIDGE_TOKEN="$EMAIL_BRIDGE_TOKEN" \
+  EMAIL_CRON_MANAGED_PREFIX="$EMAIL_CRON_MANAGED_PREFIX" \
+  EMAIL_CRON_BRIDGE_LABEL="$EMAIL_CRON_BRIDGE_LABEL" \
+  EMAIL_CRON_MORNING_TITLE="$EMAIL_CRON_MORNING_TITLE" \
+  EMAIL_CRON_INTERVAL_TITLE="$EMAIL_CRON_INTERVAL_TITLE" \
+  EMAIL_CRON_EDITORIAL_TITLE="$EMAIL_CRON_EDITORIAL_TITLE" \
   python3 - <<'PYCODE_AGENTMAIL_SYNC'
 import json
 import os
@@ -74,19 +86,26 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-managed_prefix = "AgentMail Inbox"
+managed_prefix = os.environ["EMAIL_CRON_MANAGED_PREFIX"]
 store_path = Path(os.environ["CRON_STORE_PATH"]).expanduser()
+config_path = Path(os.environ["EMAIL_CONFIG_FILE"]).expanduser()
 agent_id = os.environ["OPENCLAW_CRON_AGENT"]
 tz_name = os.environ["OPENCLAW_CRON_TZ"]
 bridge_url = os.environ["EMAIL_BRIDGE_URL"]
 bridge_token = os.environ["EMAIL_BRIDGE_TOKEN"]
 timeout_seconds = int(os.environ["EMAIL_CRON_TIMEOUT_SECONDS"])
+bridge_label = os.environ["EMAIL_CRON_BRIDGE_LABEL"]
+title_map = {
+    "morning": os.environ["EMAIL_CRON_MORNING_TITLE"],
+    "interval": os.environ["EMAIL_CRON_INTERVAL_TITLE"],
+    "editorial": os.environ["EMAIL_CRON_EDITORIAL_TITLE"],
+}
 
 if not store_path.exists():
     raise SystemExit(f"Cron store not found: {store_path}")
 
 raw = json.loads(store_path.read_text())
-jobs = raw.get("jobs", raw if isinstance(raw, list) else [])
+jobs = raw.get("jobs", []) if isinstance(raw, dict) else raw
 
 existing_by_name = {}
 for job in jobs:
@@ -99,17 +118,39 @@ for job in jobs:
 backup_path = store_path.with_name(store_path.name + ".bak-" + str(int(time.time())))
 backup_path.write_text(store_path.read_text())
 
+config = {}
+if config_path.exists():
+    config = json.loads(config_path.read_text())
+
+
+def normalize_slot(raw: str) -> str:
+    value = str(raw).strip()
+    if not value:
+        raise ValueError("empty schedule slot")
+    hour_s, minute_s = (value.split(":", 1) + ["00"])[:2]
+    hour = max(0, min(23, int(hour_s)))
+    minute = max(0, min(59, int(minute_s)))
+    return f"{hour:02d}:{minute:02d}"
+
+
+raw_slots = list(config.get("schedule_slots", []) or [])
+if not raw_slots:
+    raw_slots = [f"{int(value):02d}:00" for value in config.get("schedule_hours", [8, 13, 16, 20])]
+slot_keys = [normalize_slot(value) for value in raw_slots]
+
+digest_types_raw = config.get("digest_types", {}) or {}
+digest_types = {}
+for key, value in digest_types_raw.items():
+    key_s = str(key).strip()
+    if ":" in key_s:
+        digest_types[normalize_slot(key_s)] = str(value).strip() or "interval"
+    elif key_s:
+        digest_types[f"{int(key_s):02d}:00"] = str(value).strip() or "interval"
+
 
 def next_run_ms(expr: str) -> int:
     now = datetime.now(ZoneInfo(tz_name))
     minute_s, hour_s, *_ = expr.split()
-    if minute_s.startswith("*/"):
-        step = int(minute_s[2:])
-        candidate = now.replace(second=0, microsecond=0)
-        remainder = candidate.minute % step
-        candidate += timedelta(minutes=(step - remainder) if remainder else step)
-        return int(candidate.timestamp() * 1000)
-
     hour = int(hour_s)
     minute = int(minute_s)
     candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
@@ -123,7 +164,7 @@ def build_message(job_type: str, digest_type: str | None) -> str:
     if digest_type:
         payload["digest_type"] = digest_type
     payload_json = json.dumps(payload, ensure_ascii=False)
-    return f"""/compact Trigger the AgentMail inbox-email bridge and report only the enqueue result.
+    return f"""/compact Trigger the {bridge_label} and report only the enqueue result.
 
 Rules:
 - Work only on this task.
@@ -160,12 +201,28 @@ Report:
 - whether the job was enqueued"""
 
 
-specs = [
-    ("AgentMail Inbox · 08:00 Morning brief", "Morning inbox digest", "0 8 * * *", "digest", "morning", None),
-    ("AgentMail Inbox · 13:00 Regular digest", "Midday inbox digest", "0 13 * * *", "digest", "interval", None),
-    ("AgentMail Inbox · 16:00 Regular digest", "Afternoon inbox digest", "0 16 * * *", "digest", "interval", None),
-    ("AgentMail Inbox · 20:00 Evening editorial", "Evening inbox digest", "0 20 * * *", "digest", "editorial", None),
-]
+specs = []
+for idx, slot_key in enumerate(slot_keys):
+    hour_s, minute_s = slot_key.split(":", 1)
+    digest_type = digest_types.get(slot_key)
+    if digest_type not in title_map:
+        if idx == 0:
+            digest_type = "morning"
+        elif idx == len(slot_keys) - 1:
+            digest_type = "editorial"
+        else:
+            digest_type = "interval"
+    title = title_map.get(digest_type, title_map["interval"])
+    specs.append(
+        (
+            f"{managed_prefix} · {slot_key} {title}",
+            f"{title} for {managed_prefix}",
+            f"{int(minute_s)} {int(hour_s)} * * *",
+            "digest",
+            digest_type,
+            None,
+        )
+    )
 
 filtered_jobs = [job for job in jobs if not str(job.get("name", "")).startswith(managed_prefix)]
 now_ms = int(time.time() * 1000)
@@ -224,4 +281,4 @@ for job in new_jobs:
 PYCODE_AGENTMAIL_SYNC
 
 restart_gateway_if_present
-echo "OpenClaw cron jobs synced for AgentMail Inbox."
+echo "OpenClaw cron jobs synced for $EMAIL_CRON_MANAGED_PREFIX."

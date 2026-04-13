@@ -41,13 +41,14 @@ PORT = int(os.environ.get("EMAIL_BRIDGE_PORT", "8092"))
 TOKEN = os.environ.get("EMAIL_BRIDGE_TOKEN", "").strip()
 REDIS_URL = os.environ.get("REDIS_URL", "").strip()
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/app/config.json"))
-STATE_DIR = Path("/app/state")
-STATUS_PATH = STATE_DIR / "email-bridge-status.json"
+STATE_DIR = Path(os.environ.get("EMAIL_STATE_DIR", "/app/state"))
+STATUS_PATH = Path(os.environ.get("EMAIL_STATUS_PATH", str(STATE_DIR / "email-bridge-status.json")))
 
-STREAM_JOBS = "ingest:jobs:email"
-STREAM_DLQ = "dlq:failed"
-CONSUMER_GROUP = "email-workers"
-CONSUMER_NAME = "agentmail-email-worker"
+STREAM_JOBS = os.environ.get("EMAIL_STREAM_JOBS", "ingest:jobs:email").strip() or "ingest:jobs:email"
+STREAM_DLQ = os.environ.get("EMAIL_STREAM_DLQ", "dlq:failed").strip() or "dlq:failed"
+CONSUMER_GROUP = os.environ.get("EMAIL_CONSUMER_GROUP", "email-workers").strip() or "email-workers"
+CONSUMER_NAME = os.environ.get("EMAIL_CONSUMER_NAME", "agentmail-email-worker").strip() or "agentmail-email-worker"
+DLQ_SOURCE = os.environ.get("EMAIL_DLQ_SOURCE", "email").strip() or "email"
 BLOCK_MS = 5000
 
 VALID_JOB_TYPES = {"poll", "digest"}
@@ -85,6 +86,9 @@ def load_config() -> dict:
     scheduler = data.setdefault("scheduler", {})
     scheduler.setdefault("enabled", True)
     scheduler.setdefault("tick_seconds", int(data.get("poll_interval_minutes", 5) or 5) * 60)
+    if "schedule_slots" not in data:
+        hours = [int(value) for value in data.get("schedule_hours", [8, 13, 16, 20])]
+        data["schedule_slots"] = [f"{hour:02d}:00" for hour in hours]
     return data
 
 
@@ -197,6 +201,27 @@ def _scheduler_tick_seconds(config: dict) -> int:
     except (TypeError, ValueError):
         tick = 300
     return max(tick, 30)
+
+
+def _schedule_slots(config: dict) -> list[tuple[int, int]]:
+    raw_slots = list(config.get("schedule_slots", []) or [])
+    if not raw_slots:
+        raw_slots = [f"{int(value):02d}:00" for value in config.get("schedule_hours", [8, 13, 16, 20])]
+
+    slots: list[tuple[int, int]] = []
+    for raw in raw_slots:
+        value = str(raw).strip()
+        if not value:
+            continue
+        hour_s, minute_s = (value.split(":", 1) + ["00"])[:2]
+        hour = max(0, min(23, int(hour_s)))
+        minute = max(0, min(59, int(minute_s)))
+        slots.append((hour, minute))
+
+    slots = sorted(set(slots))
+    if not slots:
+        slots = [(8, 0), (13, 0), (16, 0), (20, 0)]
+    return slots
 
 
 def _parse_lookback_minutes(data: dict[str, str]) -> int | None:
@@ -550,14 +575,14 @@ def _prefilter_tail_line(stats: dict[str, int], *, llm_skipped: bool) -> str:
 
 def _scheduled_digest_window(now: datetime, *, config: dict) -> tuple[datetime, datetime]:
     tz = ZoneInfo(str(config.get("timezone", "Europe/Moscow") or "Europe/Moscow"))
-    hours = sorted({int(value) for value in config.get("schedule_hours", [8, 13, 16, 20])})
+    slots = _schedule_slots(config)
     local_now = now.astimezone(tz)
 
     points: list[datetime] = []
     for day_offset in (-1, 0, 1):
         day = local_now.date() + timedelta(days=day_offset)
-        for hour in hours:
-            points.append(datetime(day.year, day.month, day.day, hour, 0, tzinfo=tz))
+        for hour, minute in slots:
+            points.append(datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz))
     points.sort()
 
     end_local = max(point for point in points if point <= local_now)
@@ -1131,7 +1156,7 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
                 r.xadd(
                     STREAM_DLQ,
                     {
-                        "source": "email",
+                        "source": DLQ_SOURCE,
                         "job_type": job_type,
                         "digest_type": digest_type,
                         "msg_id": msg_id,

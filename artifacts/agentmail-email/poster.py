@@ -21,6 +21,10 @@ BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 SUPERGROUP_ID = int(os.environ["EMAIL_DIGEST_SUPERGROUP_ID"])
 TOPIC_ID = int(os.environ["EMAIL_DIGEST_TOPIC_ID"])
 TIMEZONE = ZoneInfo(os.environ.get("EMAIL_DIGEST_TIMEZONE", "Europe/Moscow"))
+DISPLAY_NAME = os.environ.get("EMAIL_DIGEST_DISPLAY_NAME", "Inbox Email").strip() or "Inbox Email"
+MORNING_TITLE = os.environ.get("EMAIL_DIGEST_MORNING_TITLE", "Morning brief").strip() or "Morning brief"
+INTERVAL_TITLE = os.environ.get("EMAIL_DIGEST_INTERVAL_TITLE", "Regular digest").strip() or "Regular digest"
+EDITORIAL_TITLE = os.environ.get("EMAIL_DIGEST_EDITORIAL_TITLE", "Evening editorial").strip() or "Evening editorial"
 
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 MAX_MSG_LEN = 3900
@@ -111,7 +115,7 @@ def _event_line(event: EmailEvent) -> str:
 
 def render_poll_batch(result: PollPrepResult, *, window_start: datetime, window_end: datetime) -> str:
     lines = [
-        f"📬 <b>Inbox Email</b> | {_fmt_window(window_start, window_end)}",
+        f"📬 <b>{escape(DISPLAY_NAME)}</b> | {_fmt_window(window_start, window_end)}",
         (
             f"• Всего писем в окне: <b>{result.messages_scanned}</b>; "
             f"новых тредов: <b>{result.threads_selected}</b> из <b>{result.threads_considered}</b>; "
@@ -191,11 +195,11 @@ def render_digest(document: DigestPrepResult, events: list[EmailEvent], *, windo
 
 def _digest_title(digest_type: str) -> str:
     titles = {
-        "morning": "Inbox Email · Morning brief",
-        "interval": "Inbox Email · Regular digest",
-        "editorial": "Inbox Email · Evening editorial",
+        "morning": f"{DISPLAY_NAME} · {MORNING_TITLE}",
+        "interval": f"{DISPLAY_NAME} · {INTERVAL_TITLE}",
+        "editorial": f"{DISPLAY_NAME} · {EDITORIAL_TITLE}",
     }
-    return titles.get(digest_type, "Inbox Email")
+    return titles.get(digest_type, DISPLAY_NAME)
 
 
 def _sender_counts(messages: list[dict]) -> list[tuple[str, int]]:

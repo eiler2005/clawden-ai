@@ -814,8 +814,8 @@ secrets/agentmail-email/email.env
 
 Do not place real AgentMail keys in tracked docs, templates, or repo-root shell history. The only
 allowed locations are the gitignored local secret file above and `/opt/agentmail-email/email.env`
-on the server. If a future `work-email` bridge is introduced, it should follow the same pattern
-under a separate gitignored root such as `secrets/agentmail-work-email/`.
+on the server. The live `work-email` bridge follows the same pattern under
+`secrets/agentmail-work-email/email.env` locally and `/opt/agentmail-work-email/email.env` on the server.
 
 Required local keys:
 
@@ -862,7 +862,7 @@ Current validation snapshot:
   in `poll summary` (`prefilter_scanned`, `skipped_handled`, `skipped_low_signal`,
   `candidate_threads`, `llm_skipped`)
 - on `2026-04-13`, server-side image tests passed: `python -m unittest discover -s /app/tests`
-  → `Ran 4 tests ... OK`
+  → `Ran 5 tests ... OK`
 
 ### Managed OpenClaw jobs
 
@@ -870,6 +870,82 @@ Current validation snapshot:
 - `AgentMail Inbox · 13:00 Regular digest`
 - `AgentMail Inbox · 16:00 Regular digest`
 - `AgentMail Inbox · 20:00 Evening editorial`
+
+## AgentMail Work Email
+
+AgentMail Work Email is a second live runtime that reuses the same Python bridge codebase but runs
+separately from the personal inbox at `/opt/agentmail-work-email`. It talks directly to the
+AgentMail HTTP API for `workmail.denny@agentmail.to`, uses its own internal 5-minute scheduler for
+poll-based state/labeling, and publishes scheduled digests to Telegram topic `work-email` at
+`08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, and `19:00` MSK.
+
+Isolation guarantees:
+
+- separate Redis jobs stream: `ingest:jobs:email:work`
+- separate derived events stream: `ingest:events:email:work`
+- separate DLQ stream: `dlq:failed:email:work`
+- separate consumer group: `email-workers-work`
+- separate Redis status key: `status:email:work:latest`
+- separate labels: `workmail/polled`, `workmail/low-signal`, `workmail/digested`
+- separate Docker container / volume / localhost port (`agentmail-work-email-bridge`, `8094`)
+
+### Deploy
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+bash scripts/deploy-agentmail-work-email.sh
+```
+
+Local gitignored secret source:
+
+```text
+secrets/agentmail-work-email/email.env
+```
+
+Required local keys:
+
+- `AGENTMAIL_API_KEY`
+- `AGENTMAIL_INBOX_REF`
+- `EMAIL_DIGEST_SUPERGROUP_ID`
+- `EMAIL_DIGEST_TOPIC_ID`
+
+Current validation snapshot:
+
+- on `2026-04-13`, `/opt/agentmail-work-email` deployed successfully with eight managed cron jobs
+- `agentmail-work-email-bridge` came up healthy on `127.0.0.1:8094`
+- internal scheduler ran a successful poll with `exit_code=0`, scanned `10` threads, emitted `6`
+  derived events into `ingest:events:email:work`, and applied `workmail/polled` / `workmail/low-signal`
+- server-side image tests passed: `python -m unittest discover -s /app/tests` → `Ran 5 tests ... OK`
+- a manual `digest interval lookback=240` trigger finished with `exit_code=0` and applied
+  `workmail/digested=1`
+
+### Managed OpenClaw jobs
+
+- `AgentMail Work Email · 08:30 Morning triage`
+- `AgentMail Work Email · 10:00 Regular digest`
+- `AgentMail Work Email · 11:30 Regular digest`
+- `AgentMail Work Email · 13:00 Regular digest`
+- `AgentMail Work Email · 14:30 Regular digest`
+- `AgentMail Work Email · 16:00 Regular digest`
+- `AgentMail Work Email · 17:30 Regular digest`
+- `AgentMail Work Email · 19:00 End-of-day wrap-up`
+
+### Bridge diagnostics
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
+  'curl -s http://127.0.0.1:8094/health && echo && curl -s http://127.0.0.1:8094/status'
+```
+
+### Integration bus checks
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email:work
+  docker exec integration-bus-redis redis-cli XLEN ingest:events:email:work
+  docker exec integration-bus-redis redis-cli GET status:email:work:latest
+'
+```
 
 ### Bridge diagnostics
 

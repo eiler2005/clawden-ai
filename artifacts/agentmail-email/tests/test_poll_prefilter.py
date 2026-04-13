@@ -43,6 +43,18 @@ def make_thread(thread_id: str, *messages: dict) -> dict:
 
 
 class PollPrefilterTests(unittest.TestCase):
+    def test_scheduled_digest_window_supports_slot_minutes(self) -> None:
+        config = {
+            "timezone": "Europe/Moscow",
+            "schedule_slots": ["08:30", "10:00", "11:30", "13:00", "14:30", "16:00", "17:30", "19:00"],
+        }
+        now = cron_bridge.datetime(2026, 4, 13, 13, 7, tzinfo=cron_bridge.timezone.utc)
+
+        start_dt, end_dt = cron_bridge._scheduled_digest_window(now, config=config)
+
+        self.assertEqual(start_dt, cron_bridge.datetime(2026, 4, 13, 11, 30, tzinfo=cron_bridge.timezone.utc))
+        self.assertEqual(end_dt, cron_bridge.datetime(2026, 4, 13, 13, 0, tzinfo=cron_bridge.timezone.utc))
+
     def test_prepare_poll_result_skips_llm_for_obvious_low_signal_thread(self) -> None:
         config = sample_config()
         thread_snapshots = [

@@ -424,8 +424,10 @@ while the underlying `jobs.json` store and scheduler keep working.
 |--------|--------|--------|
 | `ingest:jobs:telegram` | ✅ Live | `digest-consumer` thread → `digest_worker.py` |
 | `ingest:jobs:email` | ✅ Live | `agentmail-email-bridge` trigger queue for poll/digest jobs |
+| `ingest:jobs:email:work` | ✅ Live | `agentmail-work-email-bridge` trigger queue for work poll/digest jobs |
 | `ingest:jobs:signals` | ✅ Live artifact | `signals-bridge` internal 5-minute scheduler + worker queue |
 | `ingest:events:email` | ✅ Live | derived inbox-event buffer for scheduled recaps |
+| `ingest:events:email:work` | ✅ Live | derived work-email event buffer for work digest/state tracking |
 | `ingest:events:signals` | ✅ Live artifact | 14-day derived signal log for dedup / future analytics |
 | `ingest:rag:queue` | ✅ Live | `rag-consumer` thread → LightRAG `/documents/upload` |
 | `ingest:events:telegram` | Planned | real-time Telethon listener (v2) |
@@ -520,9 +522,9 @@ Moscow time and are rendered directly from the mailbox window so counts, senders
 subjects reflect the real inbox state. The bridge is a standalone Docker service at
 `/opt/agentmail-email`, separate from `telethon-digest-cron-bridge`.
 
-The `work-email` Telegram topic already exists as a reserved surface in the ops supergroup,
-but a separate work-mail bridge is not live yet. When introduced, it should use the same
-standalone-bridge pattern with its own gitignored secret source and isolated runtime env.
+The `work-email` Telegram topic is now backed by a second live bridge at `/opt/agentmail-work-email`.
+It reuses the same shared codebase, but runs with isolated Redis streams, labels, status key, Docker
+container, and secret env.
 
 ### Architecture
 
@@ -565,6 +567,29 @@ agentmail-email-bridge internal scheduler (every 5m)
 - Live validation on `2026-04-13`: the bridge self-enqueued a poll via the internal scheduler,
   the poll finished with `exit_code=0`, and `/status` exposed prefilter counters directly in the
   final `poll summary`. The four OpenClaw cron jobs remained digest-only (`08:00/13:00/16:00/20:00`).
+
+## AgentMail Work Email
+
+The work-email runtime mirrors the same standalone-bridge architecture, but targets
+`workmail.denny@agentmail.to`, listens on `127.0.0.1:8094`, and publishes into Telegram topic
+`work-email`.
+
+### Work runtime specifics
+
+- internal poll scheduler every 5 minutes
+- scheduled digest slots: `08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, `19:00`
+  Europe/Moscow
+- Redis jobs stream: `ingest:jobs:email:work`
+- Redis events stream: `ingest:events:email:work`
+- consumer group: `email-workers-work`
+- labels: `workmail/polled`, `workmail/low-signal`, `workmail/digested`
+
+### Live validation
+
+- on `2026-04-13`, the work bridge deployed successfully to `/opt/agentmail-work-email`
+- internal scheduler poll finished with `exit_code=0`, scanned `10` threads, and emitted `6`
+  derived events into `ingest:events:email:work`
+- manual `digest interval lookback=240` finished with `exit_code=0` on `127.0.0.1:8094`
 
 ### Scoring
 

@@ -27,11 +27,11 @@ def build_prepare_poll_analysis_prompt(
         else "No Telegram posting and no mailbox side effects in this phase."
     )
     batch_note = (
-        "Prepare one compact mini-batch for Telegram topic inbox-email."
+        f"Prepare one compact ingestion batch for downstream processing of Telegram topic {topic_name}."
         if mode == "poll"
         else "This is catch-up mode for a future digest. batch_lead may be empty."
     )
-    return f"""You are preparing Benka's inbox-email ingestion window from already-fetched AgentMail data.
+    return f"""You are preparing Benka's AgentMail ingestion window from already-fetched mailbox data.
 
 Inbox: {inbox_ref}
 Window start (inclusive): {since_iso}
@@ -129,7 +129,7 @@ def build_digest_prompt(
         }
         for event in sorted(events, key=lambda item: item.importance, reverse=True)
     ]
-    return f"""Prepare a high-level inbox-email recap for Telegram topic {topic_name}.
+    return f"""Prepare a high-level AgentMail recap for Telegram topic {topic_name}.
 
 Digest type: {digest_type}
 Window start: {window_start.isoformat()}

@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 from models import EmailEvent
 
-STREAM_EVENTS = "ingest:events:email"
+STREAM_EVENTS = os.environ.get("EMAIL_STREAM_EVENTS", "ingest:events:email").strip() or "ingest:events:email"
 
 
 def _event_to_fields(event: EmailEvent) -> dict[str, str]:

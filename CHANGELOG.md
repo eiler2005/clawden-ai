@@ -22,6 +22,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   listing, message listing, thread reads, and mailbox label updates.
 - **`scripts/deploy-agentmail-email.sh`**: deployment helper for `/opt/agentmail-email`,
   Python-first bridge deployment, central OpenClaw cleanup, cron sync, and post-deploy Docker cleanup.
+- **`scripts/deploy-agentmail-work-email.sh`**: deployment helper for `/opt/agentmail-work-email`;
+  deploys the live work-email runtime with isolated streams, labels, status key, and work-specific
+  digest slots (`08:30` → `19:00` MSK).
 - **Telegram topology**: new `inbox-email` topic/surface added to policy/config docs next to
   `work-email` and `telegram-digest`.
 - **`skills/`**: repo-managed project skill catalog added, starting with
@@ -54,6 +57,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`artifacts/agentmail-email/cron_bridge.py`**: the inbox-email 5-minute poll now runs from an
   internal scheduler inside the bridge instead of an OpenClaw cron job, and a deterministic
   prefilter skips obvious empty / low-signal windows before any LLM poll analysis.
+- **`artifacts/agentmail-email/*`**: the shared AgentMail bridge codebase is now runtime-parameterized
+  by env for streams, consumer group, status key, digest display titles, and slot-based schedules,
+  which allows personal `inbox-email` and live `work-email` runtimes to coexist cleanly.
+- **Work Email**: `work-email` is now live in production as a second standalone AgentMail runtime
+  backed by `workmail.denny@agentmail.to`, with its own container `agentmail-work-email-bridge`,
+  streams `ingest:jobs:email:work` / `ingest:events:email:work`, labels `workmail/*`, internal
+  5-minute scheduler, and eight digest cron jobs from `08:30` to `19:00` Europe/Moscow.
 - **AgentMail digest windows**: scheduled runs are now anchored to the fixed Moscow schedule
   boundaries (`08:00`, `13:00`, `16:00`, `20:00`) instead of drifting after a manual trigger.
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими

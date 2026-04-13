@@ -17,7 +17,7 @@ clean operational channels, conservative memory, and a path from noisy inputs to
 | `Benka_Clawbot_base` | Keep as the primary DM | DM | Most privileged owner control channel | Denis only | Responds directly, can ask approvals, can create tasks, can propose memory writes. Does not silently execute destructive/sensitive actions. | Control |
 | `Benka_Clawbot_SuperGroup` | Keep as a private forum supergroup with topics | Supergroup/forum | Operational control hub | Denis, optionally trusted operators later | Handles approvals, task status, alerts, system logs, RAG logs. Reads only operational topics by policy. | Control / publish |
 | `Inbox Email` | Topic in the supergroup for personal AgentMail inbox | Topic | Scheduled personal email recap surface | Denis | Posts scheduled digests only. Internal 5-minute polling is service-side and not posted to Telegram. Does not publish raw full emails. | Publish / derived ingestion |
-| `Work Email` | Keep as a reserved topic in the supergroup; split into private channel if volume grows | Topic | Future processed work email summaries and triage | Denis | Reserved for a future standalone work-email pipeline. When enabled, it should post summaries/actionable triage only and never raw full emails by default. | Publish / derived ingestion |
+| `Work Email` | Keep as a topic in the supergroup; split into private channel if volume grows | Topic | Processed work email summaries and triage | Denis | Live standalone work-email pipeline posts summaries/actionable triage only and never raw full emails by default. | Publish / derived ingestion |
 | `Telegram Digest` | Start as a topic in the supergroup; split into private channel if it becomes noisy | Topic | Summaries from selected Telegram sources | Denis | Posts daily/periodic digests only. Source chats are separate allowlisted inputs, not the digest surface itself. | Publish |
 | `Signals` | Topic in the supergroup, optionally mirrored to DM for critical items | Topic | Time-sensitive alerts from email and Telegram | Denis | Speaks proactively only for high-importance, time-sensitive signals. Can pin critical alerts if allowed. | Alert / publish |
 | `Family` | Fully separate private group/supergroup, not a topic in ops | Separate group | Family domain and personal/family context | Family members and Denis | Conservative: by default requires mention or reply. Does not read the whole stream unless explicitly enabled for a narrow period. | Ingestion / family |
@@ -38,7 +38,7 @@ Use a single operational forum supergroup with these topics:
 | `system` | Deploys, restarts, health, incidents | Operational log; promote root causes to raw if meaningful |
 | `rag-log` | RAG ingestion decisions and failures | Operational log; no raw content unless curated |
 | `inbox-email` | Personal inbox scheduled digests | Summaries only; no raw email bodies by default |
-| `work-email` | Reserved topic for future work-email summaries | Summaries only; no raw email bodies by default |
+| `work-email` | Live topic for work-email summaries | Summaries only; no raw email bodies by default |
 | `telegram-digest` | Digest output from selected channels/chats | Digest summaries only |
 
 ### Merge / Split Recommendations

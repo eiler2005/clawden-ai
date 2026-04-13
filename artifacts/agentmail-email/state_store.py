@@ -4,6 +4,7 @@ Redis-backed state keys and locks for the AgentMail inbox pipeline.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 
 
@@ -32,7 +33,7 @@ def lock_key(inbox_ref: str, job_type: str) -> str:
 
 
 def status_key() -> str:
-    return "status:email:latest"
+    return os.environ.get("EMAIL_STATUS_KEY", "status:email:latest").strip() or "status:email:latest"
 
 
 def get_dt(r, key: str) -> datetime | None:

@@ -95,6 +95,14 @@ PY
     printf "EMAIL_BRIDGE_TOKEN=%s\n" "$token" | sudo tee -a email.env >/dev/null
   fi
 
+  if ! sudo grep -Eq "^EMAIL_CONTAINER_NAME=.+" email.env; then
+    printf "EMAIL_CONTAINER_NAME=agentmail-email-bridge\n" | sudo tee -a email.env >/dev/null
+  fi
+
+  if ! sudo grep -Eq "^EMAIL_STATE_VOLUME=.+" email.env; then
+    printf "EMAIL_STATE_VOLUME=agentmail-email-state\n" | sudo tee -a email.env >/dev/null
+  fi
+
   sudo grep -Eq "^TELEGRAM_BOT_TOKEN=.+" email.env || {
     echo "Missing TELEGRAM_BOT_TOKEN in email.env and /opt/openclaw/.env" >&2
     exit 1
@@ -156,6 +164,7 @@ data.setdefault("topic_name", "inbox-email")
 data.setdefault("scheduler", {})
 data["scheduler"].setdefault("enabled", True)
 data["scheduler"].setdefault("tick_seconds", int(data.get("poll_interval_minutes", 5) or 5) * 60)
+data.setdefault("schedule_slots", ["08:00", "13:00", "16:00", "20:00"])
 data.setdefault("poll_bootstrap_lookback_minutes", 720)
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
@@ -178,12 +187,15 @@ PY
   fi
 
   cd /opt/agentmail-email
-  sudo docker compose build
-  sudo docker compose down 2>/dev/null || true
-  sudo docker compose up -d agentmail-email-bridge
+  sudo docker compose --env-file email.env build
+  sudo docker compose --env-file email.env down 2>/dev/null || true
+  sudo docker compose --env-file email.env up -d agentmail-email-bridge
   sudo docker image prune -f >/dev/null 2>&1 || true
   sudo docker builder prune -f >/dev/null 2>&1 || true
-  /opt/agentmail-email/sync-openclaw-cron-jobs.sh
+  sudo env \
+    EMAIL_ENV_FILE=/opt/agentmail-email/email.env \
+    EMAIL_CONFIG_FILE=/opt/agentmail-email/config.json \
+    /opt/agentmail-email/sync-openclaw-cron-jobs.sh
 
   ready=0
   for _ in $(seq 1 75); do
@@ -212,7 +224,7 @@ if store_path is None:
     raise SystemExit("OpenClaw cron store not found after sync.")
 
 data = json.loads(store_path.read_text())
-jobs = data.get("jobs", [])
+jobs = data.get("jobs", []) if isinstance(data, dict) else data
 poll_jobs = [job for job in jobs if job.get("name") == "AgentMail Inbox · Poll every 5m"]
 if poll_jobs:
     raise SystemExit("AgentMail poll cron job should not exist after sync.")

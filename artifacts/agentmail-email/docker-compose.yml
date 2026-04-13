@@ -1,6 +1,6 @@
 services:
   agentmail-email-bridge:
-    container_name: agentmail-email-bridge
+    container_name: ${EMAIL_CONTAINER_NAME:-agentmail-email-bridge}
     build: .
     restart: unless-stopped
     env_file: email.env
@@ -8,7 +8,7 @@ services:
     environment:
       REDIS_URL: redis://integration-bus-redis:6379
     ports:
-      - "127.0.0.1:8092:8092"
+      - "127.0.0.1:${EMAIL_BRIDGE_PORT:-8092}:${EMAIL_BRIDGE_PORT:-8092}"
     volumes:
       - agentmail-email-state:/app/state
       - ./config.json:/app/config.json
@@ -22,4 +22,4 @@ networks:
 
 volumes:
   agentmail-email-state:
-    name: agentmail-email-state
+    name: ${EMAIL_STATE_VOLUME:-agentmail-email-state}
