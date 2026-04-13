@@ -368,8 +368,8 @@ OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
  cron /trigger ────────┤    {run_id, digest_type, config_ref}        │    → digest_worker.py --now
                        │                                              │
                        │  ingest:jobs:email ──────────────────────────┼──► agentmail-email-bridge
- email-trigger ────────┤    {run_id, job_type, digest_type}          │    → openclaw agent → AgentMail
-                       │                                              │    → inbox-email topic + derived events
+ email-trigger ────────┤    {run_id, job_type, digest_type}          │    → AgentMail HTTP bridge
+                       │                                              │    → poll labels / derived events / scheduled digest post
                        │  ingest:jobs:signals ────────────────────────┼──► signals-bridge
  signals scheduler ────┤    {run_id, ruleset_id, source_id?}         │    → AgentMail + Telethon
                        │                                              │    → deterministic filter
@@ -516,8 +516,13 @@ signals-bridge (every 5 minutes, internal scheduler)
 A separate bridge polls the personal AgentMail inbox every 5 minutes through an
 internal scheduler inside the AgentMail HTTP bridge and publishes scheduled recaps to
 the `inbox-email` topic. Scheduled recaps run at `08:00`, `13:00`, `16:00`, and `20:00`
-Moscow time from the derived event buffer rather than from Telegram history. The bridge is a
-standalone Docker service at `/opt/agentmail-email`, separate from `telethon-digest-cron-bridge`.
+Moscow time and are rendered directly from the mailbox window so counts, senders, and
+subjects reflect the real inbox state. The bridge is a standalone Docker service at
+`/opt/agentmail-email`, separate from `telethon-digest-cron-bridge`.
+
+The `work-email` Telegram topic already exists as a reserved surface in the ops supergroup,
+but a separate work-mail bridge is not live yet. When introduced, it should use the same
+standalone-bridge pattern with its own gitignored secret source and isolated runtime env.
 
 ### Architecture
 
@@ -539,8 +544,8 @@ agentmail-email-bridge internal scheduler (every 5m)
                     │     → shared OpenClaw JSON-only classifier (only for candidate threads)
                     │     → XADD ingest:events:email (derived events)
                     └── digest job:
-                          XRANGE ingest:events:email
-                          → shared OpenClaw recap
+                          AgentMail HTTP API → mailbox window
+                          → direct digest render
                           → Telegram topic `inbox-email`
                           → label underlying emails as `benka/digested`
 ```
@@ -551,15 +556,15 @@ agentmail-email-bridge internal scheduler (every 5m)
   prepared thread snapshots or derived events.
 - Internal labels `benka/polled`, `benka/low-signal`, and `benka/digested` are used for dedup
   and lifecycle tracking without touching read-state.
-- `ingest:events:email` stores only derived summaries and metadata with 7-day retention; raw
-  bodies and attachments are excluded.
+- `ingest:events:email` stores only derived poll summaries and metadata with 7-day retention; raw
+  bodies and attachments are excluded, and scheduled digests no longer depend on Telegram history.
 - The 5-minute poll is now internal to the bridge, which removes the OpenClaw cron-enqueue token cost
   and lets obvious low-signal / empty windows skip the LLM entirely.
 - Manual recovery/backfill uses `lookback_minutes` on `/trigger`, which widens the poll or digest
   window without changing the standalone bridge architecture.
-- Live validation on `2026-04-12`: manual `poll lookback=1440` finished with `exit_code=0`,
-  scanned 32 threads, emitted one publishable event, and the follow-up `editorial` digest also
-  finished with `exit_code=0` from the derived buffer.
+- Live validation on `2026-04-13`: the bridge self-enqueued a poll via the internal scheduler,
+  the poll finished with `exit_code=0`, and `/status` exposed prefilter counters directly in the
+  final `poll summary`. The four OpenClaw cron jobs remained digest-only (`08:00/13:00/16:00/20:00`).
 
 ### Scoring
 

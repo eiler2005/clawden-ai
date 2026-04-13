@@ -812,6 +812,11 @@ Local gitignored secret source:
 secrets/agentmail-email/email.env
 ```
 
+Do not place real AgentMail keys in tracked docs, templates, or repo-root shell history. The only
+allowed locations are the gitignored local secret file above and `/opt/agentmail-email/email.env`
+on the server. If a future `work-email` bridge is introduced, it should follow the same pattern
+under a separate gitignored root such as `secrets/agentmail-work-email/`.
+
 Required local keys:
 
 - `AGENTMAIL_API_KEY`
@@ -851,7 +856,13 @@ Current validation snapshot:
 - on `2026-04-12`, a manual `poll lookback=1440` finished with `exit_code=0`, scanned `32` threads,
   produced `1` publishable event, and tolerated one missing message id during label commit
 - on `2026-04-12`, a manual `editorial` digest finished with `exit_code=0`, rendered from the
-  derived event buffer, and applied `benka/digested=1`
+  mailbox window, and applied `benka/digested=1`
+- on `2026-04-13`, the internal scheduler successfully self-enqueued a poll after bridge restart,
+  the run finished with `exit_code=0`, and `/status` showed the new prefilter diagnostics directly
+  in `poll summary` (`prefilter_scanned`, `skipped_handled`, `skipped_low_signal`,
+  `candidate_threads`, `llm_skipped`)
+- on `2026-04-13`, server-side image tests passed: `python -m unittest discover -s /app/tests`
+  → `Ran 4 tests ... OK`
 
 ### Managed OpenClaw jobs
 
