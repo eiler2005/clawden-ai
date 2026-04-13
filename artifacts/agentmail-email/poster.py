@@ -32,6 +32,22 @@ _MODEL_LABELS = {
     "agentmail-direct": "OpenClaw Agent",
     "openclaw": "OpenClaw Agent",
 }
+_TAIL_TOPIC_RULES = [
+    ("чеки", ["чек", "receipt", "invoice"]),
+    ("подарки", ["подарок", "gift", "bonus"]),
+    ("отмены", ["отмен", "cancel", "cancellation"]),
+    ("возвраты", ["возврат", "refund", "returned money"]),
+    ("покупки", ["order", "заказ", "ozon"]),
+    ("вакансии", ["ваканс", "job", "hiring", "career opportunity"]),
+    ("карьера", ["карьер", "career", "interview", "resume", "cv", "linkedin", "invitation", "message", "network", "getmatch"]),
+    ("инвестиции", ["инвест", "broker", "finance", "market", "spx", "trade", "trading", "finam", "aton", "mancini", "wall st"]),
+    ("обучение", ["course", "skill", "learn", "training", "study", "education", "edx", "vocabulary", "bytebytego"]),
+    ("промо", ["sale", "discount", "promo", "new collection", "new arrival", "капсула", "поступление", "giglio", "brandshop", "lime shop"]),
+    ("доставка", ["delivery", "shipment", "tracking", "order shipped"]),
+    ("банкинг", ["bank", "card", "payment", "счёт", "счет", "пополнен", "payment received"]),
+    ("дайджесты", ["newsletter", "digest", "weekly", "substack", "bitly"]),
+    ("сервисы", ["grammarly", "uber", "bitly"]),
+]
 
 
 def _sanitize_html(text: str) -> str:
@@ -255,6 +271,121 @@ def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
     return lines[:limit]
 
 
+def _compact_subject(subject: str, *, limit: int = 42) -> str:
+    return _compact_text(subject, limit=limit)
+
+
+def _ru_plural(count: int, one: str, few: str, many: str) -> str:
+    rem100 = count % 100
+    rem10 = count % 10
+    if rem10 == 1 and rem100 != 11:
+        return one
+    if rem10 in {2, 3, 4} and rem100 not in {12, 13, 14}:
+        return few
+    return many
+
+
+def _tail_topics(messages: list[dict], *, limit: int = 4) -> list[str]:
+    counter: Counter[str] = Counter()
+    for message in messages:
+        haystack = " ".join(
+            [
+                str(message.get("subject") or ""),
+                str(message.get("preview") or ""),
+                str(message.get("sender_display") or ""),
+            ]
+        ).lower()
+        matched = False
+        for label, tokens in _TAIL_TOPIC_RULES:
+            if any(token in haystack for token in tokens):
+                counter[label] += 1
+                matched = True
+        if not matched:
+            counter["прочее"] += 1
+    ordered = [label for label, _ in counter.most_common()]
+    if "прочее" in ordered and len(ordered) > 1:
+        ordered = [label for label in ordered if label != "прочее"]
+    return ordered[:limit]
+
+
+def _tail_sender_names(messages: list[dict], *, limit: int = 4) -> list[str]:
+    return [sender for sender, _ in _sender_counts(messages)[:limit]]
+
+
+def _remaining_tail_summary(messages: list[dict]) -> str:
+    if not messages:
+        return ""
+    total = len(messages)
+    topics = _tail_topics(messages, limit=4)
+    senders = _tail_sender_names(messages, limit=4)
+    total_senders = len(_sender_counts(messages))
+    topics_text = ", ".join(escape(topic) for topic in topics)
+    senders_text = ", ".join(escape(sender) for sender in senders)
+    sender_suffix = " и других" if total_senders > len(senders) else ""
+    return (
+        f"остальные {total} — письма на темы: {topics_text} "
+        f"от {senders_text}{sender_suffix}"
+    )
+
+
+def _topics_summary_for_messages(messages: list[dict], *, limit: int = 4) -> list[str]:
+    return _tail_topics(messages, limit=limit)
+
+
+def _remaining_messages_line(messages: list[dict]) -> str:
+    if not messages:
+        return ""
+
+    grouped: dict[str, list[dict]] = {}
+    for message in messages:
+        sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+        grouped.setdefault(sender, []).append(message)
+
+    ordered = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0].lower()))
+    parts: list[str] = []
+    covered_messages = 0
+    covered_senders = 0
+
+    for sender, sender_messages in ordered[:3]:
+        covered_messages += len(sender_messages)
+        covered_senders += 1
+        subjects: list[str] = _topics_summary_for_messages(sender_messages, limit=4)
+        if not subjects:
+            seen_subjects: set[str] = set()
+            fallback_subjects: list[str] = []
+            for message in sender_messages:
+                subject = str(message.get("subject") or "(no subject)").strip() or "(no subject)"
+                normalized = subject.lower()
+                if normalized in seen_subjects:
+                    continue
+                seen_subjects.add(normalized)
+                compact = _compact_subject(subject, limit=32)
+                if compact:
+                    fallback_subjects.append(compact)
+                if len(fallback_subjects) == 3:
+                    break
+            subjects = fallback_subjects
+        topic_suffix = ""
+        if subjects:
+            topic_suffix = f" ({', '.join(escape(subject) for subject in subjects)})"
+        parts.append(f"{escape(sender)} — {len(sender_messages)}{topic_suffix}")
+
+    remaining_messages = len(messages) - covered_messages
+    remaining_senders = len(grouped) - covered_senders
+    if remaining_messages > 0 and remaining_senders > 0:
+        tail_messages = [
+            message
+            for _, sender_messages in ordered[covered_senders:]
+            for message in sender_messages
+        ]
+        tail_summary = _remaining_tail_summary(tail_messages)
+        if tail_summary:
+            parts.append(tail_summary)
+
+    total = len(messages)
+    return f"• Ещё {total} {_ru_plural(total, 'письмо', 'письма', 'писем')}: " + "; ".join(parts)
+
+
 def render_mailbox_digest(
     *,
     digest_type: str,
@@ -296,13 +427,17 @@ def render_mailbox_digest(
 
     lines.append("")
     lines.append("<b>Письма</b>")
-    for message in messages[:12]:
+    visible_messages = messages[:12]
+    remaining_messages = messages[12:]
+    for message in visible_messages:
         lines.extend(_message_line(message, include_preview=False))
         snippet = _message_snippet(message, limit=110)
         if snippet:
             lines.append(escape(snippet))
-    if len(messages) > 12:
-        lines.append(f"• Ещё писем: {len(messages) - 12}")
+    if remaining_messages:
+        remaining_line = _remaining_messages_line(remaining_messages)
+        if remaining_line:
+            lines.append(remaining_line)
 
     lines.append("")
     lines.append("<b>Что важного</b>")
