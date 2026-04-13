@@ -15,6 +15,7 @@ CLAUDE.local.md
 # Python cache
 __pycache__/
 *.py[cod]
+.venv/
 
 # Temporary notes
 tmp/
