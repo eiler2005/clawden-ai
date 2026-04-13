@@ -223,6 +223,76 @@ OpenAI gpt-5.4 is Denis's **primary model** in OpenClaw — it handles the main 
 
 ---
 
+## Telegram Surfaces
+
+This is the fastest way to understand how the Telegram side of the system works.
+
+```mermaid
+flowchart TD
+    Denis[Denis]
+    DM[DM: Benka_Clawbot_base]
+    SG[Private forum supergroup]
+
+    Denis --> DM
+    Denis --> SG
+
+    OC[OpenClaw main conversation]
+    TD[telethon-digest]
+    AE[agentmail-email-bridge]
+    AWE[agentmail-work-email-bridge]
+    SB[signals-bridge]
+
+    OC --> Inbox[inbox]
+    OC --> Approvals[approvals]
+    OC --> Tasks[tasks]
+    OC --> System[system]
+    OC --> RagLog[rag-log]
+
+    TD --> TelegramDigest[telegram-digest]
+    AE --> InboxEmail[inbox-email]
+    AWE --> WorkEmail[work-email]
+    SB --> Signals[signals]
+
+    Inbox --> SG
+    Approvals --> SG
+    Tasks --> SG
+    System --> SG
+    RagLog --> SG
+    TelegramDigest --> SG
+    InboxEmail --> SG
+    WorkEmail --> SG
+    Signals --> SG
+```
+
+### What Each Surface Is For
+
+| Surface | Why it exists | What the bot posts there | What it does not post |
+|---|---|---|---|
+| `Benka_Clawbot_base` (DM) | Most direct owner control channel | conversation, ad hoc requests, approvals when convenient | bulk digests by default |
+| `inbox` | General ops intake | short operational dialogue, commands, coordination | scheduled feed noise |
+| `approvals` | Human confirmation lane | explicit approval requests for sensitive actions | regular digests |
+| `tasks` | Execution tracking | progress updates, task lifecycle, completion notes | inbox/news digests |
+| `system` | Runtime visibility | deploy notes, health status, incident breadcrumbs | personal/work content |
+| `rag-log` | Memory/RAG observability | ingestion decisions, indexing notes, failures | raw secrets or full private content |
+| `inbox-email` | Personal email recap surface | scheduled personal email digests from `agentmail-email-bridge` | raw full emails, 5-minute poll chatter |
+| `work-email` | Work email recap surface | scheduled work-email digests from `agentmail-work-email-bridge` | raw full emails, personal mailbox content |
+| `telegram-digest` | Curated channel reading surface | scheduled Telegram channel digests from `telethon-digest` | raw channel firehose |
+| `signals` | Time-sensitive alert surface | compact actionable alerts from `signals-bridge` | broad recap dumps |
+
+### How It Works
+
+| Pipeline | Input | Output topic | Cadence | Main job |
+|---|---|---|---|---|
+| `telethon-digest` | 150–200 Telegram channels | `telegram-digest` | `08:00 / 11:00 / 14:00 / 17:00 / 21:00` MSK | editorial digest |
+| `agentmail-email-bridge` | personal AgentMail inbox | `inbox-email` | internal poll every 5m, Telegram digests at `08:00 / 13:00 / 16:00 / 20:00` | personal inbox recap |
+| `agentmail-work-email-bridge` | work AgentMail inbox | `work-email` | internal poll every 5m, Telegram digests at `08:30 / 10:00 / 11:30 / 13:00 / 14:30 / 16:00 / 17:30 / 19:00` | work inbox recap |
+| `signals-bridge` | allowlisted email + Telegram sources | `signals` | internal poll every 5m | urgent / actionable signal routing |
+| `OpenClaw main` | Denis messages + ops context | `inbox`, `approvals`, `tasks`, `system`, `rag-log` | on demand | control plane and assistant interaction |
+
+The detailed policy version lives in [docs/12-telegram-channel-architecture.md](docs/12-telegram-channel-architecture.md).
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

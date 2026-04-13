@@ -32,6 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   maintenance and hanging-CLI recovery.
 - **`docs/14-codex-skills.md`**: new catalog for custom Codex skills, their scope boundaries,
   install/sync pattern, and the planned next skill set for this deployment.
+- **`README.md` Telegram surfaces overview**: added a Mermaid high-level diagram plus a concise
+  `what/why/how it works` section for DM, ops topics, inbox-email, work-email, telegram-digest,
+  and signals so the Telegram architecture is understandable directly from the repo front page.
 
 ### Changed
 - **Signals architecture**: `signals-bridge` now uses its own internal **5-minute** scheduler
