@@ -20,7 +20,7 @@ sys.modules.setdefault(
 )
 
 from models import ModelMeta, PollPrepResult
-from poster import render_poll_batch
+from poster import render_mailbox_digest, render_poll_batch
 
 
 class FooterRenderingTests(unittest.TestCase):
@@ -36,9 +36,9 @@ class FooterRenderingTests(unittest.TestCase):
             model_meta=ModelMeta(
                 model_id="agentmail-direct",
                 tier="primary",
-                model_label="OpenClaw Agent",
-                complexity="standard",
-                memory_mode="memory",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
             ),
         )
 
@@ -48,7 +48,7 @@ class FooterRenderingTests(unittest.TestCase):
             window_end=datetime(2026, 4, 13, 8, 5, tzinfo=timezone.utc),
         )
 
-        self.assertIn("primary (OpenClaw Agent) · standard · memory", html)
+        self.assertIn("маршрут: прямой рендер · модель: без LLM · сложность: шаблонный обзор · контекст: окно почты", html)
 
     def test_rich_footer_renders_optional_details(self) -> None:
         line = render_poll_batch(
@@ -74,7 +74,63 @@ class FooterRenderingTests(unittest.TestCase):
             window_end=datetime(2026, 4, 13, 8, 5, tzinfo=timezone.utc),
         )
 
-        self.assertIn("smart (Claude Sonnet 4.5) · fallback · 13% · standard · memory", line)
+        self.assertIn("маршрут: OmniRoute smart · модель: Claude Sonnet 4.5 · резервная модель · контекст: 13% · сложность: обычная · память: включена", line)
+
+    def test_mailbox_digest_renders_compact_message_lines_and_sender_first_highlights(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 14, 10, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 14, 11, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m1",
+                    "thread_id": "t1",
+                    "timestamp": "2026-04-14T11:26:00+03:00",
+                    "subject": "FW: Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект",
+                    "sender_display": "portal@cinimex.ru",
+                    "preview": "От: portal@cinimex.ru\nОтправлено: 14 апреля 2026 г.\nКомпания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m2",
+                    "thread_id": "t2",
+                    "timestamp": "2026-04-14T11:17:00+03:00",
+                    "subject": "FW: Онлайн-встреча с Генеральным директором Синимекс",
+                    "sender_display": "Козко Сергей Петрович",
+                    "preview": "От: Козко Сергей Петрович\nОтправлено: 14 апреля 2026 г.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[
+                {
+                    "message_id": "m1",
+                    "thread_id": "t1",
+                    "timestamp": "2026-04-14T11:26:00+03:00",
+                    "subject": "FW: Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект",
+                    "sender_display": "portal@cinimex.ru",
+                    "preview": "От: portal@cinimex.ru\nОтправлено: 14 апреля 2026 г.\nКомпания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                }
+            ],
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertNotIn("<b>От кого</b>", html)
+        self.assertIn("• 11:26 — <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект. Вложения: 1.", html)
+        self.assertIn("• <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект.", html)
+        self.assertNotIn("Отправлено:", html)
 
 
 if __name__ == "__main__":

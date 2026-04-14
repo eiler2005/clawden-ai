@@ -32,9 +32,33 @@ MAX_MSG_LEN = 3900
 _ALLOWED_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "code", "pre"}
 _TAG_RE = re.compile(r"<(/?)(\w+)([^>]*)>", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://\S+")
+_REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
+_FORWARDED_META_RE = re.compile(r"(?im)^\s*(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:\s*.*$")
+_SEPARATOR_RE = re.compile(r"[_-]{6,}")
 _MODEL_LABELS = {
-    "agentmail-direct": "OpenClaw Agent",
-    "openclaw": "OpenClaw Agent",
+    "agentmail-direct": "без LLM",
+    "openclaw": "GPT-5.4",
+    "gpt-5.4": "GPT-5.4",
+    "claude-sonnet-4-5": "Claude Sonnet 4.5",
+    "claude-haiku-4.5": "Claude Haiku 4.5",
+    "gemini-2.0-flash": "Gemini 2.0 Flash",
+}
+_TIER_LABELS = {
+    "primary": "OpenClaw primary",
+    "smart": "OmniRoute smart",
+    "medium": "OmniRoute medium",
+    "light": "OmniRoute light",
+}
+_COMPLEXITY_LABELS = {
+    "simple": "простая",
+    "standard": "обычная",
+    "complex": "сложная",
+    "template": "шаблонный обзор",
+}
+_MEMORY_MODE_LABELS = {
+    "memory": "память: включена",
+    "mailbox-window": "контекст: окно почты",
+    "no-memory": "память: без memory-файлов",
 }
 _TAIL_TOPIC_RULES = [
     ("чеки", ["чек", "receipt", "invoice"]),
@@ -84,19 +108,23 @@ def _fmt_clock(value: str | None) -> str:
 
 
 def _model_line(meta: ModelMeta) -> str:
+    route = _TIER_LABELS.get(meta.tier.strip() or "primary", meta.tier.strip() or "primary")
     label = (meta.model_label or _MODEL_LABELS.get(meta.model_id) or meta.model_id).strip()
-    route = meta.tier.strip() or "primary"
-    parts = [f"{route} ({label})" if label else route]
+    if meta.model_id == "agentmail-direct":
+        route = "прямой рендер"
+    if label == "OpenClaw Agent":
+        label = "GPT-5.4"
+    parts = [f"маршрут: {route}", f"модель: {label or 'неизвестно'}"]
     if meta.provider_fallback:
-        parts.append("fallback")
+        parts.append("резервная модель")
     if meta.local_fallback:
-        parts.append("local")
+        parts.append("локальный fallback")
     if meta.score_pct is not None:
-        parts.append(f"{meta.score_pct}%")
+        parts.append(f"контекст: {meta.score_pct}%")
     if meta.complexity:
-        parts.append(meta.complexity)
+        parts.append(f"сложность: {_COMPLEXITY_LABELS.get(meta.complexity, meta.complexity)}")
     if meta.memory_mode:
-        parts.append(meta.memory_mode)
+        parts.append(_MEMORY_MODE_LABELS.get(meta.memory_mode, f"контекст: {meta.memory_mode}"))
     return f"<i>{' · '.join(parts)}</i>"
 
 
@@ -212,14 +240,14 @@ def _sender_counts(messages: list[dict]) -> list[tuple[str, int]]:
 
 def _message_line(message: dict, *, include_preview: bool) -> list[str]:
     sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
-    subject = str(message.get("subject") or "(no subject)").strip() or "(no subject)"
     timestamp = _fmt_clock(str(message.get("timestamp") or ""))
+    summary = _message_summary(message, limit=170)
     attachment = ""
     if message.get("has_attachments"):
-        attachment = f" · вложения: {int(message.get('attachment_count') or 0)}"
-    lines = [f"• {timestamp} — <b>{escape(sender)}</b> — {escape(subject)}{attachment}"]
+        attachment = f" Вложения: {int(message.get('attachment_count') or 0)}."
+    lines = [f"• {timestamp} — <b>{escape(sender)}</b> — {escape(summary)}{escape(attachment)}"]
     if include_preview:
-        preview = str(message.get("preview") or "").strip()
+        preview = _message_snippet(message, limit=110)
         if preview:
             lines.append(escape(preview))
     return lines
@@ -237,8 +265,56 @@ def _compact_text(value: str | None, *, limit: int) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
+def _clean_subject(subject: str | None) -> str:
+    value = _compact_text(subject, limit=180)
+    value = _REPLY_PREFIX_RE.sub("", value).strip()
+    value = re.sub(r"^[^\wА-Яа-я0-9]+", "", value)
+    return value.strip()
+
+
+def _clean_preview_text(value: str | None, *, limit: int) -> str:
+    text = str(value or "")
+    text = _FORWARDED_META_RE.sub(" ", text)
+    text = _SEPARATOR_RE.sub(" ", text)
+    return _compact_text(text, limit=limit)
+
+
+def _normalized_compare(value: str) -> str:
+    return re.sub(r"[^a-zа-я0-9]+", "", value.lower())
+
+
+def _ensure_sentence(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    if text[-1] in ".!?…":
+        return text
+    return text + "."
+
+
+def _message_summary(message: dict, *, limit: int = 170) -> str:
+    subject = _clean_subject(str(message.get("subject") or ""))
+    snippet = _clean_preview_text(message.get("preview"), limit=limit)
+    if not subject and not snippet:
+        return "(no subject)"
+    if not subject:
+        return _ensure_sentence(snippet)
+    if not snippet:
+        return _ensure_sentence(subject)
+
+    normalized_subject = _normalized_compare(subject)
+    normalized_snippet = _normalized_compare(snippet)
+    if not normalized_snippet:
+        return _ensure_sentence(subject)
+    if normalized_subject and (normalized_snippet in normalized_subject or normalized_subject in normalized_snippet):
+        return _ensure_sentence(subject)
+    if len(normalized_subject) < 14:
+        return _ensure_sentence(snippet)
+    return _ensure_sentence(f"{subject}. {snippet}")
+
+
 def _message_snippet(message: dict, *, limit: int = 120) -> str:
-    preview = str(message.get("preview") or "").strip()
+    preview = _clean_preview_text(message.get("preview"), limit=limit)
     if not preview:
         return ""
     preview = preview.replace("View this post on the web at", "Web:")
@@ -248,12 +324,8 @@ def _message_snippet(message: dict, *, limit: int = 120) -> str:
 
 def _important_line(message: dict) -> str:
     sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
-    subject = str(message.get("subject") or "(no subject)").strip() or "(no subject)"
-    timestamp = _fmt_clock(str(message.get("timestamp") or ""))
-    snippet = _message_snippet(message, limit=150)
-    if snippet:
-        return f"• {timestamp} — <b>{escape(sender)}</b>: {escape(subject)}. {escape(snippet)}"
-    return f"• {timestamp} — <b>{escape(sender)}</b>: {escape(subject)}."
+    summary = _message_summary(message, limit=170)
+    return f"• <b>{escape(sender)}</b> — {escape(summary)}"
 
 
 def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
@@ -263,7 +335,9 @@ def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
 
     senders = [str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender" for message in low_signal_messages]
     top_senders = ", ".join(escape(sender) for sender, _ in Counter(senders).most_common(3))
-    lines = [f"• Остальной фон окна: {len(low_signal_messages)} low-signal писем, в основном от {top_senders}."]
+    low_signal_count = len(low_signal_messages)
+    low_signal_label = _ru_plural(low_signal_count, "low-signal письмо", "low-signal письма", "low-signal писем")
+    lines = [f"• Остальной фон окна: {low_signal_count} {low_signal_label}, в основном от {top_senders}."]
 
     if len(messages) > len(low_signal_messages):
         important_senders = len({str(message.get('sender_display') or '').strip() for message in messages if not bool(message.get('is_low_signal')) and str(message.get('sender_display') or '').strip()})
@@ -420,24 +494,12 @@ def render_mailbox_digest(
         lines.append(_model_line(model_meta))
         return _sanitize_html("\n".join(lines).strip())
 
-    sender_counts = _sender_counts(messages)
-    lines.append("")
-    lines.append("<b>От кого</b>")
-    for sender, count in sender_counts[:10]:
-        suffix = "писем" if count != 1 else "письмо"
-        lines.append(f"• <b>{escape(sender)}</b> — {count} {suffix}")
-    if len(sender_counts) > 10:
-        lines.append(f"• Ещё отправителей: {len(sender_counts) - 10}")
-
     lines.append("")
     lines.append("<b>Письма</b>")
     visible_messages = messages[:12]
     remaining_messages = messages[12:]
     for message in visible_messages:
         lines.extend(_message_line(message, include_preview=False))
-        snippet = _message_snippet(message, limit=110)
-        if snippet:
-            lines.append(escape(snippet))
     if remaining_messages:
         remaining_line = _remaining_messages_line(remaining_messages)
         if remaining_line:

@@ -354,9 +354,9 @@ def _empty_poll_result(*, run_id: str, inbox_ref: str, topic_name: str) -> PollP
         model_meta=ModelMeta(
             model_id="agentmail-direct",
             tier="primary",
-            model_label="OpenClaw Agent",
-            complexity="standard",
-            memory_mode="memory",
+            model_label="без LLM",
+            complexity="template",
+            memory_mode="mailbox-window",
         ),
     )
 
@@ -925,9 +925,9 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
             model_meta=ModelMeta(
                 model_id="agentmail-direct",
                 tier="primary",
-                model_label="OpenClaw Agent",
-                complexity="standard",
-                memory_mode="memory",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
             ),
         )
         posted = asyncio.run(post_html_message(html))
