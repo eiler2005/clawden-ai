@@ -129,8 +129,83 @@ class FooterRenderingTests(unittest.TestCase):
 
         self.assertNotIn("<b>От кого</b>", html)
         self.assertIn("• 11:26 — <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект. Вложения: 1.", html)
-        self.assertIn("• <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект.", html)
+        self.assertIn("• 11:26 — <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект.", html)
         self.assertNotIn("Отправлено:", html)
+
+    def test_mailbox_digest_renders_distilled_important_summaries_with_sender_email(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 14, 14, 30, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 14, 16, 0, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m1",
+                    "thread_id": "t1",
+                    "timestamp": "2026-04-14T18:31:00+03:00",
+                    "subject": "Отпуск Селищев 16-17 апреля",
+                    "sender_display": "Дмитрий Селищев",
+                    "from_email": "d.selishev@cinimex.ru",
+                    "preview": "Коллеги, с 16 апреля на два дня в отпуске, по срочным вопросам на телефоне, изредка смотрю VK Teams.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m2",
+                    "thread_id": "t2",
+                    "timestamp": "2026-04-14T17:58:00+03:00",
+                    "subject": "Updated invitation: Cinimex | Еженедельная встреча @ Weekly from 2pm to 3pm on Tuesday",
+                    "sender_display": "Google Calendar от имени Sergei Mazin",
+                    "from_email": "sergei.mazin@cinimex.ru",
+                    "preview": "Updated invitation: Cinimex | Еженедельная встреча @ Weekly from 2pm to 3pm on Tuesday",
+                    "has_attachments": True,
+                    "attachment_count": 2,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[
+                {
+                    "message_id": "m1",
+                    "thread_id": "t1",
+                    "timestamp": "2026-04-14T18:31:00+03:00",
+                    "subject": "Отпуск Селищев 16-17 апреля",
+                    "sender_display": "Дмитрий Селищев",
+                    "from_email": "d.selishev@cinimex.ru",
+                    "preview": "Коллеги, с 16 апреля на два дня в отпуске, по срочным вопросам на телефоне, изредка смотрю VK Teams.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m2",
+                    "thread_id": "t2",
+                    "timestamp": "2026-04-14T17:58:00+03:00",
+                    "subject": "Updated invitation: Cinimex | Еженедельная встреча @ Weekly from 2pm to 3pm on Tuesday",
+                    "sender_display": "Google Calendar от имени Sergei Mazin",
+                    "from_email": "sergei.mazin@cinimex.ru",
+                    "preview": "Updated invitation: Cinimex | Еженедельная встреча @ Weekly from 2pm to 3pm on Tuesday",
+                    "has_attachments": True,
+                    "attachment_count": 2,
+                    "is_low_signal": False,
+                },
+            ],
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn(
+            "• 18:31 — <b>Дмитрий Селищев (d.selishev@cinimex.ru)</b> — Будет в отпуске 16–17 апреля; по срочным вопросам лучше звонить; в VK Teams будет появляться нерегулярно.",
+            html,
+        )
+        self.assertIn(
+            "• 17:58 — <b>Google Calendar от имени Sergei Mazin (sergei.mazin@cinimex.ru)</b> — Обновлён или переотправлен инвайт на встречу «Cinimex | Еженедельная встреча».",
+            html,
+        )
 
 
 if __name__ == "__main__":

@@ -292,6 +292,82 @@ def _ensure_sentence(value: str) -> str:
     return text + "."
 
 
+def _capitalize_first(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    return text[:1].upper() + text[1:]
+
+
+def _sender_label(message: dict, *, include_email: bool) -> str:
+    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+    if not include_email:
+        return sender
+    email = str(message.get("from_email") or "").strip()
+    if not email:
+        return sender
+    if sender.lower() == email.lower():
+        return email
+    if email.lower() in sender.lower():
+        return sender
+    return f"{sender} ({email})"
+
+
+def _strip_greeting(text: str) -> str:
+    return re.sub(r"^(?:коллеги|добрый день|доброе утро|добрый вечер)[,!\s]+", "", text, flags=re.IGNORECASE).strip()
+
+
+def _compact_clauses(text: str, *, limit: int = 170) -> str:
+    cleaned = _strip_greeting(text)
+    parts = [part.strip(" ,;") for part in re.split(r"[.!?]+", cleaned) if part.strip(" ,;")]
+    if not parts:
+        return _compact_text(cleaned, limit=limit)
+    summary = parts[0]
+    if len(parts) > 1 and len(summary) < limit - 40:
+        summary = f"{summary}; {parts[1]}"
+    return _ensure_sentence(_capitalize_first(_compact_text(summary, limit=limit)))
+
+
+def _extract_subject_date_range(subject: str) -> str:
+    match = re.search(r"(\d{1,2}\s*[-–]\s*\d{1,2}\s+[А-Яа-яA-Za-z]+)", subject)
+    if not match:
+        return ""
+    return re.sub(r"\s*[-–]\s*", "–", match.group(1).strip())
+
+
+def _calendar_update_summary(subject: str) -> str:
+    title = subject
+    if ":" in title:
+        title = title.split(":", 1)[1].strip()
+    title = re.sub(r"\s+@ Weekly.*$", "", title, flags=re.IGNORECASE).strip()
+    title = _clean_subject(title)
+    if not title:
+        return "обновлён или переотправлен инвайт на встречу."
+    return f"Обновлён или переотправлен инвайт на встречу «{title}»."
+
+
+def _vacation_summary(subject: str, preview: str) -> str:
+    date_range = _extract_subject_date_range(subject)
+    contact_hint = ""
+    preview_lower = preview.lower()
+    if "срочн" in preview_lower and ("телефон" in preview_lower or "звон" in preview_lower):
+        contact_hint = "по срочным вопросам лучше звонить"
+    teams_hint = ""
+    if "vk teams" in preview_lower:
+        teams_hint = "в VK Teams будет появляться нерегулярно"
+
+    parts: list[str] = []
+    if date_range:
+        parts.append(f"будет в отпуске {date_range}")
+    else:
+        parts.append("сообщил об отпуске")
+    if contact_hint:
+        parts.append(contact_hint)
+    if teams_hint:
+        parts.append(teams_hint)
+    return _ensure_sentence(_capitalize_first("; ".join(parts)))
+
+
 def _message_summary(message: dict, *, limit: int = 170) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
     snippet = _clean_preview_text(message.get("preview"), limit=limit)
@@ -313,6 +389,20 @@ def _message_summary(message: dict, *, limit: int = 170) -> str:
     return _ensure_sentence(f"{subject}. {snippet}")
 
 
+def _important_summary(message: dict, *, limit: int = 170) -> str:
+    subject = _clean_subject(str(message.get("subject") or ""))
+    preview = _clean_preview_text(message.get("preview"), limit=260)
+    lowered = " ".join([subject, preview]).lower()
+
+    if "updated invitation" in lowered:
+        return _calendar_update_summary(subject)
+    if "отпуск" in lowered:
+        return _vacation_summary(subject, preview)
+    if preview:
+        return _compact_clauses(preview, limit=limit)
+    return _message_summary(message, limit=limit)
+
+
 def _message_snippet(message: dict, *, limit: int = 120) -> str:
     preview = _clean_preview_text(message.get("preview"), limit=limit)
     if not preview:
@@ -323,9 +413,10 @@ def _message_snippet(message: dict, *, limit: int = 120) -> str:
 
 
 def _important_line(message: dict) -> str:
-    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
-    summary = _message_summary(message, limit=170)
-    return f"• <b>{escape(sender)}</b> — {escape(summary)}"
+    sender = _sender_label(message, include_email=True)
+    timestamp = _fmt_clock(str(message.get("timestamp") or ""))
+    summary = _important_summary(message, limit=170)
+    return f"• {timestamp} — <b>{escape(sender)}</b> — {escape(summary)}"
 
 
 def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
