@@ -22,6 +22,7 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-1001")
 
 from config_store import normalize_config, validate_config
+from email_adapter import _window_messages
 from event_store import append_events, append_new_events
 from last30days_persistence import _render_expanded_markdown
 from last30days_runner import build_digest
@@ -351,6 +352,33 @@ class MatchingTests(unittest.TestCase):
             },
         )
         self.assertIsNone(candidate)
+
+    def test_email_window_prefers_extracted_body_over_preview(self) -> None:
+        messages = _window_messages(
+            thread={
+                "subject": "Смотрите, новое мнение от Mamontiara",
+                "preview": "Смотрите, новое мнение от Mamontiara",
+                "messages": [
+                    {
+                        "message_id": "msg-body",
+                        "thread_id": "thread-1",
+                        "timestamp": "2026-04-14T14:01:00+00:00",
+                        "from": "TradingView <noreply@tradingview.com>",
+                        "subject": "Смотрите, новое мнение от Mamontiara",
+                        "preview": "Смотрите, новое мнение от Mamontiara",
+                        "extracted_text": "Фьючерс SI тестирует зону выноса. Сценарий: откат к 114000, затем продолжение.",
+                    }
+                ],
+            },
+            since_dt=datetime(2026, 4, 14, 13, 55, tzinfo=timezone.utc),
+            until_dt=datetime(2026, 4, 14, 14, 5, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(
+            messages[0]["text_excerpt"],
+            "Фьючерс SI тестирует зону выноса. Сценарий: откат к 114000, затем продолжение.",
+        )
 
     def test_telegram_hashtag_match(self) -> None:
         rule = sample_config()["rule_sets"][0]["rules"][1]

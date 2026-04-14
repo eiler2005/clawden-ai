@@ -95,10 +95,18 @@ def _window_messages(*, thread: dict, since_dt: datetime, until_dt: datetime) ->
                 "sender_domain": sender_domain,
                 "subject": str(item.get("subject") or thread.get("subject") or "(no subject)"),
                 "preview": truncate(str(item.get("preview") or thread.get("preview") or ""), 320),
-                "text_excerpt": truncate(str(item.get("text_excerpt") or item.get("text") or ""), 1200),
+                "text_excerpt": truncate(_resolve_text_excerpt(item=item, thread=thread), 1200),
             }
         )
     return prepared
+
+
+def _resolve_text_excerpt(*, item: dict, thread: dict) -> str:
+    for key in ("text_excerpt", "extracted_text", "text", "body_text", "body_plain", "plain_text", "content_text"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return str(item.get("preview") or thread.get("preview") or "").strip()
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -127,4 +135,3 @@ def _parse_sender(raw: str | None) -> tuple[str, str, str]:
         name, email = value, ""
     domain = email.split("@", 1)[1].lower() if "@" in email else ""
     return name.strip(), email.strip().lower(), domain
-
