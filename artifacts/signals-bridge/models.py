@@ -119,16 +119,40 @@ class Last30DaysCategorySection:
 
 
 @dataclass
+class Last30DaysPlatformSection:
+    platform: str
+    post_count: int = 0
+    raw_post_count: int = 0
+    repeat_filtered_count: int = 0
+    themes: list[Last30DaysTheme] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "platform": self.platform,
+            "post_count": self.post_count,
+            "raw_post_count": self.raw_post_count,
+            "repeat_filtered_count": self.repeat_filtered_count,
+            "themes": [theme.to_dict() for theme in self.themes],
+        }
+
+
+@dataclass
 class Last30DaysDigest:
     preset_id: str
-    mode: str
-    generated_at: str
-    topic_name: str
-    topic_id: int
-    query_bundle: list[str]
+    canonical_preset_id: str = ""
+    profile: str = "personal-feed"
+    display_name: str = "Personal Feed"
+    mode: str = "compact"
+    generated_at: str = ""
+    topic_name: str = "last30daysTrend"
+    topic_id: int = 0
+    query_bundle: list[str] = field(default_factory=list)
+    core_sources: list[str] = field(default_factory=list)
+    experimental_sources: list[str] = field(default_factory=list)
     themes: list[Last30DaysTheme] = field(default_factory=list)
     global_themes: list[Last30DaysTheme] = field(default_factory=list)
     category_sections: list[Last30DaysCategorySection] = field(default_factory=list)
+    platform_sections: list[Last30DaysPlatformSection] = field(default_factory=list)
     source_counts: dict[str, int] = field(default_factory=dict)
     errors_by_source: dict[str, str] = field(default_factory=dict)
     query_errors: dict[str, str] = field(default_factory=dict)
@@ -145,4 +169,5 @@ class Last30DaysDigest:
         payload["themes"] = [theme.to_dict() for theme in self.themes]
         payload["global_themes"] = [theme.to_dict() for theme in self.global_themes]
         payload["category_sections"] = [section.to_dict() for section in self.category_sections]
+        payload["platform_sections"] = [section.to_dict() for section in self.platform_sections]
         return payload

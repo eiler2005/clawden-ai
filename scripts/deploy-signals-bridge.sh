@@ -51,7 +51,13 @@ ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" '
   sudo mkdir -p /opt/signals-bridge /opt/signals-bridge/rules
 '
 
-rsync -avz --delete --exclude config.json --exclude signals.env --exclude rules \
+rsync -avz --delete \
+  --exclude config.json \
+  --exclude signals.env \
+  --exclude rules \
+  --exclude '__pycache__/' \
+  --exclude '.pytest_cache/' \
+  --exclude 'tests/' \
   -e "$RSYNC_SSH" --rsync-path="sudo rsync" \
   "$ROOT_DIR/artifacts/signals-bridge/" \
   "$OPENCLAW_HOST":/opt/signals-bridge/

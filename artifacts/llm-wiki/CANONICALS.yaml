@@ -1,0 +1,105 @@
+canonicals:
+  - slug: openclaw
+    type: entity
+    subtype: service
+    name: OpenClaw
+    aliases:
+      - OpenClaw runtime
+      - OpenClaw gateway
+      - openclaw
+    tags: [openclaw, runtime, agents]
+    themes: [runtime, operations, wiki]
+    preferred_folder: entities
+
+  - slug: lightrag
+    type: entity
+    subtype: service
+    name: LightRAG
+    aliases:
+      - LightRAG
+      - light rag
+      - graph retrieval
+    tags: [lightrag, retrieval, graph]
+    themes: [retrieval, memory, operations]
+    preferred_folder: entities
+
+  - slug: obsidian
+    type: entity
+    subtype: tool
+    name: Obsidian
+    aliases:
+      - Obsidian Vault
+      - obsidian vault
+      - obsidian
+    tags: [obsidian, wiki]
+    themes: [wiki, memory, sync]
+    preferred_folder: entities
+
+  - slug: syncthing
+    type: entity
+    subtype: service
+    name: Syncthing
+    aliases:
+      - syncthing
+      - bidirectional sync
+    tags: [syncthing, sync]
+    themes: [sync, operations]
+    preferred_folder: entities
+
+  - slug: signals-bridge
+    type: entity
+    subtype: service
+    name: Signals Bridge
+    aliases:
+      - signals bridge
+      - signals-bridge
+      - signal bridge
+    tags: [signals, bridge]
+    themes: [signals, operations, routing]
+    preferred_folder: entities
+
+  - slug: last30days
+    type: entity
+    subtype: service
+    name: Last30Days
+    aliases:
+      - last30days
+      - last 30 days
+      - world radar
+    tags: [signals, digest, last30days]
+    themes: [signals, operations]
+    preferred_folder: entities
+
+  - slug: omniroute
+    type: entity
+    subtype: service
+    name: OmniRoute
+    aliases:
+      - omniroute
+      - model routing
+    tags: [routing, omniroute]
+    themes: [routing, operations, runtime]
+    preferred_folder: entities
+
+  - slug: benka
+    type: entity
+    subtype: person
+    name: Benka
+    aliases:
+      - Benka
+      - Бенька
+    tags: [agent, benka]
+    themes: [runtime, wiki]
+    preferred_folder: entities
+
+  - slug: llm-wiki
+    type: concept
+    subtype: pattern
+    name: LLM-Wiki
+    aliases:
+      - LLM Wiki
+      - llm wiki
+      - LLM-Wiki
+    tags: [wiki, llm, knowledge-base]
+    themes: [wiki, memory]
+    preferred_folder: concepts

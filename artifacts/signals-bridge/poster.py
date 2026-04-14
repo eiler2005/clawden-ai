@@ -125,10 +125,40 @@ _CATEGORY_EMOJI = {
     "World / Culture": "🌐",
 }
 
-SUPPRESS_ERROR_SOURCES = {"reddit"}  # broken at API level; remove when RSS works
+SUPPRESS_ERROR_SOURCES: set[str] = set()
+
+_PLATFORM_LABELS = {
+    "reddit": "Reddit",
+    "hn": "Hacker News",
+    "hackernews": "Hacker News",
+    "x": "X",
+    "bluesky": "Bluesky",
+    "github": "GitHub",
+    "youtube": "YouTube",
+    "polymarket": "Polymarket",
+    "web": "Web",
+}
+
+_PLATFORM_EMOJI = {
+    "reddit": "👽",
+    "hn": "🟠",
+    "hackernews": "🟠",
+    "x": "𝕏",
+    "bluesky": "🦋",
+    "github": "🐙",
+    "youtube": "▶️",
+    "polymarket": "📊",
+    "web": "🌐",
+}
 
 
 def render_last30days_digest(digest: Last30DaysDigest) -> str:
+    if digest.profile == "platform-pulse":
+        return _render_platform_pulse_digest(digest)
+    return _render_personal_feed_digest(digest)
+
+
+def _render_personal_feed_digest(digest: Last30DaysDigest) -> str:
     try:
         dt = datetime.fromisoformat(digest.generated_at).astimezone(TIMEZONE)
         date_label = dt.strftime("%-d %b")
@@ -136,7 +166,7 @@ def render_last30days_digest(digest: Last30DaysDigest) -> str:
         date_label = digest.generated_at[:10]
 
     lines = [
-        f"🌍 <b>Радар · {date_label}</b>  |  {digest.successful_queries}/{digest.total_queries}  |  {_source_coverage_line(digest.source_counts)}",
+        f"🌍 <b>{escape(digest.display_name)} · {date_label}</b>  <code>{escape(_digest_tag(digest))}</code>  |  {digest.successful_queries}/{digest.total_queries}  |  {_source_coverage_line(digest.source_counts)}",
     ]
 
     for section in digest.category_sections:
@@ -169,11 +199,69 @@ def render_last30days_digest(digest: Last30DaysDigest) -> str:
     return _sanitize_html("\n".join(lines).strip())
 
 
+def _render_platform_pulse_digest(digest: Last30DaysDigest) -> str:
+    try:
+        dt = datetime.fromisoformat(digest.generated_at).astimezone(TIMEZONE)
+        date_label = dt.strftime("%-d %b")
+    except (ValueError, AttributeError):
+        date_label = digest.generated_at[:10]
+
+    lines = [
+        f"🧭 <b>{escape(digest.display_name)} · {date_label}</b>  <code>{escape(_digest_tag(digest))}</code>  |  {digest.successful_queries}/{digest.total_queries}",
+        f"<i>Core: {escape(', '.join(_platform_display_name(source) for source in digest.core_sources) or 'none')}</i>",
+    ]
+    if digest.experimental_sources:
+        lines.append(f"<i>Experimental: {escape(', '.join(_platform_display_name(source) for source in digest.experimental_sources))}</i>")
+
+    for section in digest.platform_sections:
+        emoji = _PLATFORM_EMOJI.get(section.platform, "•")
+        platform_name = _platform_display_name(section.platform)
+        lines.append("")
+        lines.append(f"{emoji} <b>{escape(platform_name)}</b>  <i>({section.post_count} posts)</i>")
+        if section.repeat_filtered_count and section.themes:
+            lines.append(f"<i>{section.repeat_filtered_count} repeats hidden from the prior 7 days.</i>")
+        if not section.themes:
+            if section.repeat_filtered_count and section.raw_post_count:
+                lines.append(f"<i>All {section.raw_post_count} posts repeated from the prior 7 days.</i>")
+                continue
+            lines.append("<i>No surfaced stories in this run.</i>")
+            continue
+        for index, theme in enumerate(section.themes, start=1):
+            title_clean = " ".join(escape(theme.title).split())
+            lines.append("")
+            lines.append(f"{index}. <b>{title_clean}</b>")
+            if theme.url:
+                lines.append(theme.url)
+            if theme.snippet:
+                lines.append(escape(_compact_excerpt(theme.snippet, limit=220)))
+
+    if digest.errors_by_source:
+        visible_errors = {s: e for s, e in digest.errors_by_source.items() if s not in SUPPRESS_ERROR_SOURCES}
+        if visible_errors:
+            lines.append("")
+            lines.append("<i>Partial gaps:</i>")
+            for source, error in list(visible_errors.items())[:4]:
+                lines.append(escape(f"{_platform_display_name(source)}: {error[:120]}"))
+
+    return _sanitize_html("\n".join(lines).strip())
+
+
 def _source_coverage_line(source_counts: dict[str, int]) -> str:
     if not source_counts:
         return "no source coverage"
     parts = [f"{source}:{count}" for source, count in list(source_counts.items())[:5]]
     return "sources " + ", ".join(parts)
+
+
+def _digest_tag(digest: Last30DaysDigest) -> str:
+    tag = (digest.profile or digest.canonical_preset_id or "").strip().lower()
+    if tag.endswith("-v1"):
+        tag = tag[:-3]
+    return tag or "last30days"
+
+
+def _platform_display_name(source: str) -> str:
+    return _PLATFORM_LABELS.get(source, source)
 
 
 async def post_html_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:

@@ -7,21 +7,16 @@ import json
 import os
 from pathlib import Path
 
+from last30days_presets import (
+    DEFAULT_PERSONAL_FEED_QUERY_BUNDLE,
+    ensure_last30days_presets,
+)
+
 
 CONFIG_PATH = Path(os.environ.get("CONFIG_PATH", "/app/config.json"))
 VALID_SOURCE_TYPES = {"email", "telegram", "web"}
 VALID_TELEGRAM_RULE_KINDS = {"hashtag", "author_keywords", "content_keywords"}
 VALID_EMAIL_RULE_KINDS = {"tradingview_user"}
-DEFAULT_LAST30DAYS_QUERY_BUNDLE = [
-    "OpenAI Anthropic Google Meta xAI Nvidia Apple Microsoft Amazon launches product roadmap",
-    "markets macro inflation tariffs antitrust regulation geopolitics elections trade oil chips",
-    "X TikTok YouTube Instagram Reddit Bluesky consumer apps platform changes viral products",
-    "creator economy Veo Runway Pika Sora Midjourney YouTube media workflows",
-    "startup funding acquisitions IPO venture capital big tech deals unicorns",
-    "robotics humanoids autonomous vehicles space biotech semiconductors frontier tech",
-    "GitHub open source MCP agents developer tools infrastructure repos",
-    "internet culture memes controversies movements essays podcasts viral narratives",
-]
 
 
 def load_config() -> dict:
@@ -44,15 +39,15 @@ def normalize_config(data: dict, *, base_path: Path | None = None) -> dict:
     data["last30days"].setdefault("enabled", False)
     data["last30days"].setdefault("schedule_expr", "0 7 * * *")
     data["last30days"].setdefault("timezone", data.get("timezone", "Europe/Moscow"))
-    data["last30days"].setdefault("preset_id", "world-radar-v1")
     data["last30days"].setdefault("mode", "compact")
     data["last30days"].setdefault("max_items", 10)
-    data["last30days"].setdefault("query_bundle", list(DEFAULT_LAST30DAYS_QUERY_BUNDLE))
+    data["last30days"].setdefault("query_bundle", list(DEFAULT_PERSONAL_FEED_QUERY_BUNDLE))
     data["last30days"].setdefault("telegram", {})
     data["last30days"]["telegram"].setdefault("topic_name", "last30daysTrend")
     data["last30days"]["telegram"].setdefault("topic_id", 0)
     data["last30days"].setdefault("obsidian", {})
     data["last30days"]["obsidian"].setdefault("root", "Last30Days")
+    data["last30days"] = ensure_last30days_presets(data["last30days"])
     data.setdefault("sources", {})
     for key in VALID_SOURCE_TYPES:
         data["sources"].setdefault(key, [])
@@ -149,9 +144,10 @@ def _validate_email_rule(rule: dict) -> None:
 
 def _validate_last30days(data: dict) -> None:
     current = dict(data or {})
+    current = ensure_last30days_presets(current)
     current.setdefault("mode", "compact")
     current.setdefault("schedule_expr", "0 7 * * *")
-    current.setdefault("query_bundle", list(DEFAULT_LAST30DAYS_QUERY_BUNDLE))
+    current.setdefault("query_bundle", list(DEFAULT_PERSONAL_FEED_QUERY_BUNDLE))
     current.setdefault("telegram", {})
     current["telegram"].setdefault("topic_id", 0)
     if str(current.get("mode", "compact")).strip() != "compact":
@@ -167,6 +163,23 @@ def _validate_last30days(data: dict) -> None:
         int(topic_id or 0)
     except (TypeError, ValueError) as exc:
         raise ValueError("last30days.telegram.topic_id must be an integer") from exc
+
+    for preset_id, preset in dict(current.get("presets", {}) or {}).items():
+        _validate_last30days_preset(preset_id, dict(preset or {}))
+
+
+def _validate_last30days_preset(preset_id: str, preset: dict) -> None:
+    mode = str(preset.get("mode", "compact")).strip()
+    if mode != "compact":
+        raise ValueError(f"last30days preset {preset_id}.mode must currently be compact")
+    topic_id = preset.get("telegram", {}).get("topic_id", 0)
+    try:
+        int(topic_id or 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"last30days preset {preset_id}.telegram.topic_id must be an integer") from exc
+    query_bundle = [str(item).strip() for item in preset.get("query_bundle", []) if str(item).strip()]
+    if not query_bundle:
+        raise ValueError(f"last30days preset {preset_id}.query_bundle must not be empty")
 
 
 def get_ruleset(config: dict, ruleset_id: str) -> dict:

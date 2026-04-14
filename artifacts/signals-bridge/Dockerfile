@@ -5,6 +5,7 @@ ARG LAST30DAYS_COMMIT=01812ec1851e5c3d92a9049a41b7da4adbfbcb5d
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     git \
     nodejs \
     npm \
@@ -13,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt yt-dlp
+
+COPY last30days_patches /app/last30days_patches
 
 RUN git clone https://github.com/mvanhorn/last30days-skill.git /opt/last30days-skill \
  && cd /opt/last30days-skill \
@@ -30,6 +33,8 @@ if insert not in text:
     text = text.replace(needle, needle + insert, 1)
     path.write_text(text)
 PY
+
+RUN python /app/last30days_patches/patch_last30days_skill.py /opt/last30days-skill
 
 COPY *.py ./
 COPY entrypoint.sh ./

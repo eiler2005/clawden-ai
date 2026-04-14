@@ -2,6 +2,9 @@
 
 ## Overview
 
+For a full end-to-end explanation of how LLM-Wiki, LightRAG, and OpenClaw interact during answer
+generation, see `docs/15-llm-wiki-query-flow.md`.
+
 The OpenClaw bot (Бенька) uses a multi-layer external memory system. The LLM remembers nothing
 between sessions by itself — all persistence lives in files and a knowledge graph.
 
@@ -84,15 +87,16 @@ Executed at the start of every session. Total context budget: **~5–8KB**.
 
 ```
 1. Read MEMORY.md         (~2KB, always)
-2. Read memory/INDEX.md   (~1KB, find today + yesterday)
-3. Read today's daily     (if exists and topic is relevant)
-4. Read yesterday's daily (only if today has <3 entries)
-5. GET http://lightrag:9621/health  (non-blocking, log status)
-6. Mark unclosed tasks from previous session
-7. Confirm ready: "Гав. Слушаю."
+2. Read wiki/OVERVIEW.md  (~1–2KB, hubs + recent updates + active decisions)
+3. Read memory/INDEX.md   (~1KB, find today + yesterday)
+4. Read today's daily     (if exists and topic is relevant)
+5. Read yesterday's daily (only if today has <3 entries)
+6. GET http://lightrag:9621/health  (non-blocking, log status)
+7. Mark unclosed tasks from previous session
+8. Confirm ready: "Гав. Слушаю."
 ```
 
-**Never load raw/ at boot. Never scan memory/ blindly — always go through INDEX.**
+**Never load raw/ at boot. Read `wiki/OVERVIEW.md`, not the full `wiki/INDEX.md`, on cold start. Never scan memory/ blindly — always go through INDEX.**
 
 ---
 
@@ -160,7 +164,7 @@ Compression is triggered by weekly HEARTBEAT check, not per-message.
 
 ## LightRAG: Knowledge Graph Brain
 
-LightRAG indexes all markdown content (workspace files + Obsidian vault) and provides
+LightRAG indexes curated markdown (workspace + LLM-Wiki + raw signal digests) and provides
 dual-mode retrieval: vector similarity + knowledge graph traversal.
 
 **What it replaces:** bulk-reading archive files to find context.
@@ -186,7 +190,8 @@ LightRAG ingests markdown from:
 | Source | Server path | Typical content |
 |--------|-------------|-----------------|
 | OpenClaw workspace | `/opt/openclaw/workspace` | identity, tool docs, curated memory, daily notes, raw decision threads |
-| Obsidian vault | `/opt/obsidian-vault` | external wiki, reading notes, project notes, long-form knowledge |
+| Obsidian wiki | `/opt/obsidian-vault/wiki` | curated entity/concept/decision/research/session pages |
+| Raw signal digests | `/opt/obsidian-vault/raw/signals` | daily Last30Days signal snapshots |
 
 Ingestion is batch-oriented:
 
@@ -194,6 +199,11 @@ Ingestion is batch-oriented:
 2. `/opt/lightrag/scripts/lightrag-ingest.sh` uploads markdown files with `POST /documents/upload`.
 3. The script calls `POST /documents/reprocess_failed` to retry pending/failed docs.
 4. LightRAG extracts chunks, entities, relationships, vectors, and document statuses.
+
+Explicitly out of scope for LightRAG ingest v1:
+- `/opt/obsidian-vault/raw/articles`
+- `/opt/obsidian-vault/raw/documents`
+- legacy vault material outside `wiki/`
 
 Cron runs the ingest script every 30 minutes. Manual re-index is useful after bulk edits.
 
@@ -252,6 +262,11 @@ the LLM does the heavy lifting via LightRAG.
 **Sync method:** Syncthing bidirectional sync between Mac iCloud vault and server
 **LightRAG mount:** vault mounted read-only into LightRAG container
 **Re-index:** cron job (`scripts/lightrag-ingest.sh`) runs every 30 minutes
+
+The vault now has a split role:
+- `wiki/` — bot-maintained curated knowledge
+- `raw/signals/` — indexed raw inputs
+- `raw/articles/` and `raw/documents/` — stored but not indexed until curated import materializes them into `wiki/`
 
 **Priority pyramid for what goes into Obsidian:**
 

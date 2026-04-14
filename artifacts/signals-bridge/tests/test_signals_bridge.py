@@ -25,9 +25,9 @@ from config_store import normalize_config, validate_config
 from email_adapter import _window_messages
 from event_store import append_events, append_new_events
 from last30days_persistence import _render_expanded_markdown
-from last30days_runner import build_digest
+from last30days_runner import build_digest, write_signal_digest
 from matching import build_telegram_message_link, extract_tradingview_username, keyword_matches, local_event_from_candidate, match_email_rule, match_telegram_rule
-from models import Last30DaysCategorySection, Last30DaysDigest, Last30DaysTheme, ModelMeta, SignalEvent
+from models import Last30DaysCategorySection, Last30DaysDigest, Last30DaysPlatformSection, Last30DaysTheme, ModelMeta, SignalEvent
 from omniroute_client import _local_fallback_batch
 from poster import render_batch, render_last30days_digest
 from telegram_adapter import resolve_telegram_window
@@ -203,6 +203,8 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(normalized["last30days"]["preset_id"], "world-radar-v1")
         self.assertEqual(normalized["last30days"]["max_items"], 10)
         self.assertEqual(len(normalized["last30days"]["query_bundle"]), 8)
+        self.assertIn("personal-feed-v1", normalized["last30days"]["presets"])
+        self.assertIn("platform-pulse-v1", normalized["last30days"]["presets"])
 
     def test_invalid_last30days_mode_raises(self) -> None:
         config = sample_config()
@@ -883,6 +885,8 @@ class Last30DaysDigestTests(unittest.TestCase):
         self.assertEqual(digest.total_queries, 4)
         self.assertEqual(digest.successful_queries, 3)
         self.assertEqual(digest.status, "partial")
+        self.assertEqual(digest.profile, "personal-feed")
+        self.assertEqual(digest.canonical_preset_id, "personal-feed-v1")
         self.assertTrue(digest.themes)
         self.assertTrue(digest.global_themes)
         self.assertTrue(digest.category_sections)
@@ -1083,7 +1087,7 @@ class Last30DaysDigestTests(unittest.TestCase):
         telegram_text = render_last30days_digest(digest)
         markdown_text = _render_expanded_markdown(digest, datetime(2026, 4, 12, 7, 0, tzinfo=timezone.utc))
 
-        self.assertIn("Радар", telegram_text)
+        self.assertIn("Personal Feed", telegram_text)
         self.assertIn("🤖", telegram_text)
         self.assertIn("Big Tech &amp; AI", telegram_text)
         self.assertIn("OpenAI launches new model", telegram_text)
@@ -1351,7 +1355,8 @@ class RadarRedesignTests(unittest.TestCase):
         digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])], source_counts={"hn": 10}, successful_queries=8, total_queries=8)
         text = render_last30days_digest(digest)
         self.assertIn("🌍", text)
-        self.assertIn("Радар", text)
+        self.assertIn("Personal Feed", text)
+        self.assertIn("<code>personal-feed</code>", text)
         self.assertIn("13", text)  # day in date
 
     def test_render_category_emoji_present(self) -> None:
@@ -1360,11 +1365,11 @@ class RadarRedesignTests(unittest.TestCase):
         text = render_last30days_digest(digest)
         self.assertIn("📈", text)
 
-    def test_render_suppresses_reddit_errors(self) -> None:
+    def test_render_shows_reddit_errors(self) -> None:
         theme = Last30DaysTheme(theme_id="t1", title="Story", snippet="Some story snippet here.", url="https://example.com", sources=["hn"], queries=["q"], score=90.0, category="Big Tech & AI", primary_source="hn", global_score=100.0, global_rank=1, category_rank=1)
         digest = Last30DaysDigest(preset_id="world-radar-v1", mode="compact", generated_at="2026-04-13T04:00:00+00:00", topic_name="last30daysTrend", topic_id=1, query_bundle=["q"], themes=[theme], global_themes=[theme], category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])], source_counts={"hn": 5}, errors_by_source={"reddit": "API access denied", "youtube": "rate limited"}, successful_queries=8, total_queries=8)
         text = render_last30days_digest(digest)
-        self.assertNotIn("reddit: API access denied", text)
+        self.assertIn("reddit", text)
         self.assertIn("youtube", text)
 
     def test_render_shows_source_badge(self) -> None:
@@ -1379,6 +1384,526 @@ class RadarRedesignTests(unittest.TestCase):
         text = render_last30days_digest(digest)
         self.assertIn("4.", text)
         self.assertNotIn("5.", text)
+
+    def test_render_platform_pulse_groups_by_platform(self) -> None:
+        reddit_theme = Last30DaysTheme(
+            theme_id="r1",
+            title="Humanoid robot half-marathon in China",
+            snippet="Reddit discusses the coming humanoid robot half-marathon and how autonomous the field really is.",
+            url="https://reddit.example/1",
+            sources=["reddit"],
+            queries=["robotics"],
+            score=90.0,
+            category="Science / Hardware",
+            primary_source="reddit",
+            global_score=100.0,
+            global_rank=1,
+        )
+        x_theme = Last30DaysTheme(
+            theme_id="x1",
+            title="Meta ramps AI spending again",
+            snippet="X is full of posts about Meta spending aggressively to catch OpenAI and Google.",
+            url="https://x.example/1",
+            sources=["x"],
+            queries=["ai labs"],
+            score=88.0,
+            category="Big Tech & AI",
+            primary_source="x",
+            global_score=98.0,
+            global_rank=2,
+        )
+        digest = Last30DaysDigest(
+            preset_id="platform-pulse-v1",
+            canonical_preset_id="platform-pulse-v1",
+            profile="platform-pulse",
+            display_name="Platform Pulse",
+            mode="compact",
+            generated_at="2026-04-13T04:00:00+00:00",
+            topic_name="platformPulse",
+            topic_id=1,
+            query_bundle=["ai labs", "robotics"],
+            core_sources=["reddit", "x"],
+            experimental_sources=["github"],
+            themes=[reddit_theme, x_theme],
+            global_themes=[reddit_theme, x_theme],
+            platform_sections=[
+                Last30DaysPlatformSection(platform="reddit", post_count=12, themes=[reddit_theme]),
+                Last30DaysPlatformSection(platform="x", post_count=9, themes=[x_theme]),
+            ],
+            source_counts={"reddit": 12, "x": 9},
+            successful_queries=2,
+            total_queries=2,
+        )
+        text = render_last30days_digest(digest)
+        markdown_text = _render_expanded_markdown(digest, datetime(2026, 4, 13, 7, 0, tzinfo=timezone.utc))
+        self.assertIn("Platform Pulse", text)
+        self.assertIn("<code>platform-pulse</code>", text)
+        self.assertIn("Reddit", text)
+        self.assertIn("(12 posts)", text)
+        self.assertIn("Humanoid robot half-marathon in China", text)
+        self.assertIn("https://reddit.example/1", text)
+        self.assertIn("## Platform Sections", markdown_text)
+        self.assertIn("### reddit (12 posts)", markdown_text)
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_pulse_renders_all_platform_sections_and_normalizes_hn(self, mock_run) -> None:
+        reddit_payload = last30days_payload(
+            title="Humanoid robot half-marathon in China",
+            query_source="reddit",
+            candidate_id="reddit-1",
+            url="https://reddit.example/1",
+            snippet="Reddit discusses the coming humanoid robot half-marathon and how autonomous the field really is.",
+            sources=["reddit"],
+            source_titles=["Reddit ref"],
+        )
+        x_payload = last30days_payload(
+            title="Meta ramps AI spending again",
+            query_source="x",
+            candidate_id="x-1",
+            url="https://x.example/1",
+            snippet="X is full of posts about Meta spending aggressively to catch OpenAI and Google.",
+            sources=["x"],
+            source_titles=["X ref"],
+        )
+
+        def fake_run(cmd, **kwargs):
+            query = cmd[2]
+            if query == "ai labs":
+                return Mock(returncode=0, stdout=json.dumps(reddit_payload), stderr="")
+            if query == "robotics":
+                return Mock(returncode=0, stdout=json.dumps(x_payload), stderr="")
+            return Mock(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "provider_runtime": {
+                            "reasoning_provider": "local",
+                            "planner_model": "deterministic",
+                            "rerank_model": "deterministic",
+                        },
+                        "clusters": [],
+                        "ranked_candidates": [],
+                        "items_by_source": {"hackernews": [], "bluesky": [], "github": [], "youtube": [], "polymarket": []},
+                        "errors_by_source": {},
+                        "warnings": [],
+                    }
+                ),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        config = normalize_config(sample_config())
+        config["last30days"]["presets"]["platform-pulse-v1"] = {
+            "profile": "platform-pulse",
+            "display_name": "Platform Pulse",
+            "mode": "compact",
+            "telegram": {"topic_name": "last30daysTrend", "topic_id": 414},
+            "max_items": 12,
+            "query_bundle": ["ai labs", "robotics"],
+            "core_sources": ["reddit", "hackernews", "x", "bluesky"],
+            "experimental_sources": ["github", "youtube", "polymarket"],
+            "platform_sources": {
+                "search": "reddit,hackernews,x,bluesky,github,youtube,polymarket",
+            },
+        }
+
+        digest = build_digest(
+            config,
+            preset_id="platform-pulse-v1",
+            now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc),
+        )
+        text = render_last30days_digest(digest)
+        markdown_text = _render_expanded_markdown(digest, datetime(2026, 4, 12, 7, 0, tzinfo=timezone.utc))
+
+        self.assertEqual(
+            [section.platform for section in digest.platform_sections],
+            ["reddit", "hn", "x", "bluesky", "github", "youtube", "polymarket"],
+        )
+        self.assertIn("Core: Reddit, Hacker News, X, Bluesky", text)
+        self.assertIn("Experimental: GitHub, YouTube, Polymarket", text)
+        self.assertIn("🟠 <b>Hacker News</b>  <i>(0 posts)</i>", text)
+        self.assertIn("🦋 <b>Bluesky</b>  <i>(0 posts)</i>", text)
+        self.assertIn("🐙 <b>GitHub</b>  <i>(0 posts)</i>", text)
+        self.assertIn("▶️ <b>YouTube</b>  <i>(0 posts)</i>", text)
+        self.assertIn("📊 <b>Polymarket</b>  <i>(0 posts)</i>", text)
+        self.assertGreaterEqual(text.count("No surfaced stories in this run."), 5)
+        self.assertIn("### hn (0 posts)", markdown_text)
+        self.assertIn("- No surfaced stories in this run.", markdown_text)
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_pulse_shows_all_ranked_posts_without_four_post_cap(self, mock_run) -> None:
+        clusters = []
+        candidates = []
+        items = []
+        for idx in range(6):
+            cid = f"reddit-{idx}"
+            clusters.append(
+                {
+                    "cluster_id": f"cluster-{cid}",
+                    "title": f"Reddit story {idx}",
+                    "candidate_ids": [cid],
+                    "representative_ids": [cid],
+                    "sources": ["reddit"],
+                    "score": 95.0 - idx,
+                }
+            )
+            candidates.append(
+                {
+                    "candidate_id": cid,
+                    "item_id": f"item-{cid}",
+                    "source": "reddit",
+                    "title": f"Reddit story {idx}",
+                    "url": f"https://reddit.example/{idx}",
+                    "snippet": f"Detailed Reddit snippet {idx} with enough context to exceed the minimum length requirement.",
+                    "sources": ["reddit"],
+                    "source_items": [{"title": f"Reddit ref {idx}", "url": f"https://reddit.example/{idx}"}],
+                    "final_score": 95.0 - idx,
+                    "cluster_id": f"cluster-{cid}",
+                }
+            )
+            items.append({"item_id": f"item-{cid}"})
+
+        payload = last30days_payload(
+            title="unused",
+            clusters=clusters,
+            ranked_candidates=candidates,
+            items_by_source={"reddit": items},
+        )
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["presets"]["platform-pulse-v1"] = {
+            "profile": "platform-pulse",
+            "display_name": "Platform Pulse",
+            "mode": "compact",
+            "telegram": {"topic_name": "last30daysTrend", "topic_id": 414},
+            "max_items": 12,
+            "query_bundle": ["ai labs"],
+            "core_sources": ["reddit"],
+            "experimental_sources": [],
+            "platform_sources": {"search": "reddit"},
+        }
+
+        digest = build_digest(config, preset_id="platform-pulse-v1", now=datetime(2026, 4, 14, 4, 0, tzinfo=timezone.utc))
+        reddit_section = next(section for section in digest.platform_sections if section.platform == "reddit")
+
+        self.assertEqual(reddit_section.post_count, 6)
+        self.assertEqual(reddit_section.raw_post_count, 6)
+        self.assertEqual(reddit_section.repeat_filtered_count, 0)
+        self.assertEqual(len(reddit_section.themes), 6)
+        self.assertEqual(len(digest.themes), 6)
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_pulse_filters_posts_seen_in_prior_week(self, mock_run) -> None:
+        clusters = []
+        candidates = []
+        for idx, url in enumerate(["https://reddit.example/repeat", "https://reddit.example/new"]):
+            cid = f"reddit-{idx}"
+            clusters.append(
+                {
+                    "cluster_id": f"cluster-{cid}",
+                    "title": f"Reddit story {idx}",
+                    "candidate_ids": [cid],
+                    "representative_ids": [cid],
+                    "sources": ["reddit"],
+                    "score": 90.0 - idx,
+                }
+            )
+            candidates.append(
+                {
+                    "candidate_id": cid,
+                    "item_id": f"item-{cid}",
+                    "source": "reddit",
+                    "title": f"Reddit story {idx}",
+                    "url": url,
+                    "snippet": f"Detailed Reddit snippet {idx} with enough context to exceed the minimum length requirement.",
+                    "sources": ["reddit"],
+                    "source_items": [{"title": f"Reddit ref {idx}", "url": url}],
+                    "final_score": 90.0 - idx,
+                    "cluster_id": f"cluster-{cid}",
+                }
+            )
+
+        payload = last30days_payload(
+            title="unused",
+            clusters=clusters,
+            ranked_candidates=candidates,
+            items_by_source={"reddit": [{"item_id": "item-reddit-0"}, {"item_id": "item-reddit-1"}]},
+        )
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["presets"]["platform-pulse-v1"] = {
+            "profile": "platform-pulse",
+            "display_name": "Platform Pulse",
+            "mode": "compact",
+            "telegram": {"topic_name": "last30daysTrend", "topic_id": 414},
+            "max_items": 12,
+            "query_bundle": ["ai labs"],
+            "core_sources": ["reddit"],
+            "experimental_sources": [],
+            "obsidian": {"root": "PlatformPulse"},
+            "platform_sources": {"search": "reddit"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            history_dir = Path(tmp) / "PlatformPulse" / "Derived" / "2026-04-13"
+            history_dir.mkdir(parents=True)
+            history_payload = {
+                "platform_sections": [
+                    {
+                        "platform": "reddit",
+                        "themes": [
+                            {
+                                "title": "Yesterday repeated Reddit story",
+                                "url": "https://reddit.example/repeat",
+                            }
+                        ],
+                    }
+                ],
+                "reports": [],
+                "global_themes": [],
+            }
+            (history_dir / "0700-compact.json").write_text(json.dumps(history_payload), encoding="utf-8")
+            with patch("last30days_runner.LAST30DAYS_OBSIDIAN_ROOT", Path(tmp)):
+                digest = build_digest(
+                    config,
+                    preset_id="platform-pulse-v1",
+                    now=datetime(2026, 4, 14, 4, 0, tzinfo=timezone.utc),
+                )
+
+        reddit_section = next(section for section in digest.platform_sections if section.platform == "reddit")
+        text = render_last30days_digest(digest)
+
+        self.assertEqual(reddit_section.raw_post_count, 2)
+        self.assertEqual(reddit_section.repeat_filtered_count, 1)
+        self.assertEqual(reddit_section.post_count, 1)
+        self.assertEqual(len(reddit_section.themes), 1)
+        self.assertEqual(reddit_section.themes[0].url, "https://reddit.example/new")
+        self.assertIn("1 repeats hidden from the prior 7 days.", text)
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_pulse_filters_fuzzy_title_repeats_from_prior_week(self, mock_run) -> None:
+        candidates = [
+            {
+                "candidate_id": "reddit-fuzzy",
+                "item_id": "item-reddit-fuzzy",
+                "source": "reddit",
+                "title": "China humanoid robot half marathon draws more than 70 teams with autonomous navigation",
+                "url": "https://reddit.example/fuzzy-new",
+                "snippet": "A long Reddit snippet about the China humanoid half marathon and the growing number of autonomous teams.",
+                "sources": ["reddit"],
+                "source_items": [{"title": "Reddit ref fuzzy", "url": "https://reddit.example/fuzzy-new"}],
+                "final_score": 91.0,
+                "cluster_id": "cluster-reddit-fuzzy",
+            },
+            {
+                "candidate_id": "reddit-fresh",
+                "item_id": "item-reddit-fresh",
+                "source": "reddit",
+                "title": "Anthropic delays wider release of its cyber model",
+                "url": "https://reddit.example/fresh",
+                "snippet": "A long Reddit snippet about Anthropic keeping its cyber model under tighter commercial controls.",
+                "sources": ["reddit"],
+                "source_items": [{"title": "Reddit ref fresh", "url": "https://reddit.example/fresh"}],
+                "final_score": 88.0,
+                "cluster_id": "cluster-reddit-fresh",
+            },
+        ]
+        payload = last30days_payload(
+            title="unused",
+            ranked_candidates=candidates,
+            clusters=[
+                {
+                    "cluster_id": "cluster-reddit-fuzzy",
+                    "title": candidates[0]["title"],
+                    "candidate_ids": ["reddit-fuzzy"],
+                    "representative_ids": ["reddit-fuzzy"],
+                    "sources": ["reddit"],
+                    "score": 91.0,
+                },
+                {
+                    "cluster_id": "cluster-reddit-fresh",
+                    "title": candidates[1]["title"],
+                    "candidate_ids": ["reddit-fresh"],
+                    "representative_ids": ["reddit-fresh"],
+                    "sources": ["reddit"],
+                    "score": 88.0,
+                },
+            ],
+            items_by_source={"reddit": [{"item_id": "item-reddit-fuzzy"}, {"item_id": "item-reddit-fresh"}]},
+        )
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["presets"]["platform-pulse-v1"] = {
+            "profile": "platform-pulse",
+            "display_name": "Platform Pulse",
+            "mode": "compact",
+            "telegram": {"topic_name": "last30daysTrend", "topic_id": 414},
+            "max_items": 12,
+            "query_bundle": ["robotics"],
+            "core_sources": ["reddit"],
+            "experimental_sources": [],
+            "obsidian": {"root": "PlatformPulse"},
+            "platform_sources": {"search": "reddit"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            history_dir = Path(tmp) / "PlatformPulse" / "Derived" / "2026-04-13"
+            history_dir.mkdir(parents=True)
+            history_payload = {
+                "platform_sections": [
+                    {
+                        "platform": "reddit",
+                        "themes": [
+                            {
+                                "title": "More than 70 robot teams are gearing up for China's humanoid robot half-marathon with autonomous navigation",
+                                "url": "https://reddit.example/fuzzy-old",
+                            }
+                        ],
+                    }
+                ],
+                "reports": [],
+                "global_themes": [],
+            }
+            (history_dir / "0700-compact.json").write_text(json.dumps(history_payload), encoding="utf-8")
+            with patch("last30days_runner.LAST30DAYS_OBSIDIAN_ROOT", Path(tmp)):
+                digest = build_digest(
+                    config,
+                    preset_id="platform-pulse-v1",
+                    now=datetime(2026, 4, 14, 4, 0, tzinfo=timezone.utc),
+                )
+
+        reddit_section = next(section for section in digest.platform_sections if section.platform == "reddit")
+
+        self.assertEqual(reddit_section.raw_post_count, 2)
+        self.assertEqual(reddit_section.repeat_filtered_count, 1)
+        self.assertEqual(reddit_section.post_count, 1)
+        self.assertEqual(reddit_section.themes[0].url, "https://reddit.example/fresh")
+
+    @patch("last30days_runner.subprocess.run")
+    def test_platform_pulse_keeps_same_title_on_different_platform(self, mock_run) -> None:
+        payload = last30days_payload(
+            title="unused",
+            ranked_candidates=[
+                {
+                    "candidate_id": "x-1",
+                    "item_id": "item-x-1",
+                    "source": "x",
+                    "title": "Humanoid robot half marathon in China draws 70 teams",
+                    "url": "https://x.example/1",
+                    "snippet": "A long X snippet about the same robotics story, but on a different platform.",
+                    "sources": ["x"],
+                    "source_items": [{"title": "X ref", "url": "https://x.example/1"}],
+                    "final_score": 87.0,
+                    "cluster_id": "cluster-x-1",
+                }
+            ],
+            clusters=[
+                {
+                    "cluster_id": "cluster-x-1",
+                    "title": "Humanoid robot half marathon in China draws 70 teams",
+                    "candidate_ids": ["x-1"],
+                    "representative_ids": ["x-1"],
+                    "sources": ["x"],
+                    "score": 87.0,
+                }
+            ],
+            items_by_source={"x": [{"item_id": "item-x-1"}]},
+        )
+        mock_run.return_value = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
+
+        config = normalize_config(sample_config())
+        config["last30days"]["presets"]["platform-pulse-v1"] = {
+            "profile": "platform-pulse",
+            "display_name": "Platform Pulse",
+            "mode": "compact",
+            "telegram": {"topic_name": "last30daysTrend", "topic_id": 414},
+            "max_items": 12,
+            "query_bundle": ["robotics"],
+            "core_sources": ["x"],
+            "experimental_sources": [],
+            "obsidian": {"root": "PlatformPulse"},
+            "platform_sources": {"search": "x"},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            history_dir = Path(tmp) / "PlatformPulse" / "Derived" / "2026-04-13"
+            history_dir.mkdir(parents=True)
+            history_payload = {
+                "platform_sections": [
+                    {
+                        "platform": "reddit",
+                        "themes": [
+                            {
+                                "title": "Humanoid robot half marathon in China draws 70 teams",
+                                "url": "https://reddit.example/old",
+                            }
+                        ],
+                    }
+                ],
+                "reports": [],
+                "global_themes": [],
+            }
+            (history_dir / "0700-compact.json").write_text(json.dumps(history_payload), encoding="utf-8")
+            with patch("last30days_runner.LAST30DAYS_OBSIDIAN_ROOT", Path(tmp)):
+                digest = build_digest(
+                    config,
+                    preset_id="platform-pulse-v1",
+                    now=datetime(2026, 4, 14, 4, 0, tzinfo=timezone.utc),
+                )
+
+        x_section = next(section for section in digest.platform_sections if section.platform == "x")
+
+        self.assertEqual(x_section.raw_post_count, 1)
+        self.assertEqual(x_section.repeat_filtered_count, 0)
+        self.assertEqual(x_section.post_count, 1)
+        self.assertEqual(x_section.themes[0].url, "https://x.example/1")
+
+    def test_write_signal_digest_persists_daily_markdown(self) -> None:
+        theme = Last30DaysTheme(
+            theme_id="t1",
+            title="OpenAI launches new model",
+            snippet="OpenAI launches a new model and shifts expectations for the rest of the market.",
+            url="https://example.com/openai",
+            sources=["hn", "reddit"],
+            queries=["openai"],
+            score=92.0,
+            category="Big Tech & AI",
+            primary_source="hn",
+            global_score=101.0,
+            global_rank=1,
+        )
+        digest = Last30DaysDigest(
+            preset_id="world-radar-v1",
+            canonical_preset_id="personal-feed-v1",
+            profile="personal-feed",
+            display_name="Personal Feed",
+            mode="compact",
+            generated_at="2026-04-14T04:00:00+00:00",
+            topic_name="last30daysTrend",
+            topic_id=1,
+            query_bundle=["openai"],
+            themes=[theme],
+            global_themes=[theme],
+            category_sections=[Last30DaysCategorySection(category="Big Tech & AI", themes=[theme])],
+            source_counts={"hn": 3, "reddit": 2},
+            successful_queries=1,
+            total_queries=1,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = write_signal_digest(digest, obsidian_vault_path=Path(tmp))
+            text = path.read_text(encoding="utf-8")
+
+        self.assertEqual(path.name, "2026-04-14.md")
+        self.assertIn("type: signal-digest", text)
+        self.assertIn("preset_id: personal-feed-v1", text)
+        self.assertIn("OpenAI launches new model", text)
+        self.assertIn("[hn · reddit](https://example.com/openai)", text)
+        self.assertIn("## Source Coverage", text)
 
 
 if __name__ == "__main__":

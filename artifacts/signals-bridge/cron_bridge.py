@@ -23,7 +23,7 @@ from config_store import get_ruleset, index_sources, load_config
 from email_adapter import collect_email_candidates, resolve_email_window
 from event_store import append_events, append_new_events, trim_old_events
 from last30days_persistence import persist_last30days_digest
-from last30days_runner import build_digest
+from last30days_runner import build_digest, write_signal_digest
 from omniroute_client import prepare_signal_batch
 from poster import post_html_message, render_batch, render_last30days_digest
 import state_store
@@ -658,6 +658,12 @@ def _process_last30days_job(r, data: dict[str, str]) -> dict:
             post_ok = asyncio.run(post_html_message(body, topic_id=digest.topic_id))
             if not post_ok:
                 post_tail.append("telegram_post_failed")
+            else:
+                try:
+                    signal_digest_path = write_signal_digest(digest)
+                    paths["obsidian_signal_digest_md"] = str(signal_digest_path)
+                except Exception as exc:
+                    post_tail.append(f"signal_digest_write_failed:{exc.__class__.__name__}")
         else:
             post_tail.append("telegram_topic_id_missing")
 

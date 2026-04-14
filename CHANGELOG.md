@@ -8,6 +8,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **LLM-Wiki canonical registry v1.2**: added bot-maintained `CANONICALS.yaml` and `TOPICS.md`
+  plus theme metadata, so importer now resolves core entities canonically before writing pages and
+  exposes thematic navigation separately from typed folders.
+- **wiki-import repair path**: `wiki_lint(repair=true)` can now merge duplicate canonical entities,
+  rename colliding concept/research pages, remove low-signal auto decisions, normalize aliases and
+  themes, and rebuild `INDEX.md`, `OVERVIEW.md`, and `TOPICS.md`.
+- **LLM-Wiki storage model doc**: added `docs/16-llm-wiki-storage-model.md` to explain canonical
+  identity, thematic metadata, topic maps, and the repair policy.
+- **LLM-Wiki scaffold v2**: added bot-maintained `OVERVIEW.md` and `IMPORT-QUEUE.md` to
+  `artifacts/llm-wiki/`, extending the schema from static templates to a real cold-start and
+  curated-import workflow.
+- **`wiki-import` bridge**: new internal service under `artifacts/wiki-import/` with `POST /trigger`,
+  `POST /lint`, `GET /status`, deterministic source normalization (`url` / `text` / `server_path`),
+  bot-owned queue state, and wiki/index/overview regeneration.
+- **`scripts/deploy-wiki-import.sh`**: deployment helper for `/opt/wiki-import`; generates an
+  internal token on first deploy, builds the service, and validates `GET /health`.
+- **`scripts/bootstrap-llm-wiki.sh`**: bootstrap helper that submits the first curated imports from
+  repo docs plus the external LLM-Wiki and Graphify references once `wiki-import` is online.
+- **`docs/15-llm-wiki-query-flow.md`**: new end-to-end explainer for the LLM-Wiki stack covering
+  canonical storage, narrowed ingest, curated import, LightRAG retrieval, and how OpenClaw uses
+  retrieved context to assemble answers.
+- **Last30Days raw signal export**: `signals-bridge` now writes
+  `/opt/obsidian-vault/raw/signals/YYYY-MM-DD.md` after a successful Telegram post, keeping the
+  signal digest inside the vault as a first-class raw source.
+- **Last30Days preset split**: added `personal-feed-v1` and `platform-pulse-v1` preset structure,
+  while keeping `world-radar-v1` as a compatibility alias to `personal-feed-v1`.
+- **Platform Pulse renderer**: `signals-bridge` can now render a platform-first digest grouped by
+  source with per-platform post counts plus English story titles and direct links.
+- **Free Reddit hybrid adapter**: `signals-bridge` now patches the pinned upstream
+  `last30days-skill` during Docker build and routes Reddit through `old.reddit.com` JSON first,
+  native RSS fallback second, and `SCRAPECREATORS_API_KEY` only as an optional tertiary backup.
+- **Reddit build-time patch set**: added
+  `artifacts/signals-bridge/last30days_patches/reddit_hybrid.py` and
+  `artifacts/signals-bridge/last30days_patches/patch_last30days_skill.py` so the external
+  checkout can be upgraded deterministically without forking the whole upstream repo.
+- **Reddit adapter tests**: added focused coverage for the patcher and hybrid enrichment path in
+  `artifacts/signals-bridge/tests/test_last30days_patches.py`.
 - **README redesign**: full rewrite with Mermaid architecture diagram (main graph LR + signals flow TD + Last30Days flow TD), services table, source coverage status table (including YouTube frozen status), model routing table, updated repository structure. Replaces ASCII art with GitHub-renderable diagrams.
 - **docs/07-architecture-and-security.md**: added "Signals Bridge & Last30Days Architecture" section — HN companion pass, provider config table, source priority, per-source caps, YouTube frozen status.
 - **docs/01-server-state.md**: added Signals Bridge state entry — ports, volumes, env vars, Last30Days metrics.
@@ -50,6 +87,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and signals so the Telegram architecture is understandable directly from the repo front page.
 
 ### Changed
+- **LLM-Wiki cutover strategy**: rollout is now safe by default — no destructive `rm -rf
+  /opt/obsidian-vault/*`; legacy vault content can remain on disk but stays out of the active
+  LightRAG ingest boundary.
+- **LightRAG ingest boundary**: the tracked `scripts/lightrag-ingest.sh` now indexes only
+  workspace markdown, `/opt/obsidian-vault/wiki/**/*.md`, and `/opt/obsidian-vault/raw/signals/**/*.md`.
+- **Boot context**: cold start now reads `wiki/OVERVIEW.md` instead of the full `wiki/INDEX.md`,
+  keeping startup context compact while preserving `INDEX.md` for maintenance/import logic.
+- **Memory and architecture docs**: `README.md`, `docs/07-architecture-and-security.md`,
+  `docs/10-memory-architecture.md`, `docs/11-lightrag-setup.md`, `workspace/AGENTS.md`,
+  `workspace/MEMORY.md`, and `workspace/TOOLS.md` now describe the LLM-Wiki + wiki-import flow.
+- **Last30Days naming model**: `world-radar` is now treated as the legacy name for
+  `personal-feed`; docs and config examples now describe the split between `personal-feed`
+  (our focused radar) and `platform-pulse` (what platforms are talking about).
+- **Live and example config**: `last30days.preset_id` now points to `personal-feed-v1`, and both
+  config files carry a `presets` map with core/experimental source layout for `platform-pulse-v1`.
+- **Reddit source status**: the live `world-radar-v1` config now includes curated
+  `platform_sources.reddit.feeds` subreddit seeds:
+  `worldnews`, `technology`, `science`, `Futurology`, `economics`, `geopolitics`,
+  `artificial`, `MachineLearning`, `OutOfTheLoop`.
+- **Reddit error visibility**: `poster.py` no longer blanket-suppresses Reddit source failures, so
+  real source-level issues now surface in digest diagnostics instead of being hidden.
+- **README.md / docs/07-architecture-and-security.md / config.example.json**: expanded with the
+  new Reddit hybrid retrieval order, curated subreddit configuration, diagnostics guidance, and
+  updated repository structure/test counts.
 - **Signals architecture**: `signals-bridge` now uses its own internal **5-minute** scheduler
   instead of any 30-second loop or OpenClaw cron job, and the enrichment path is explicitly limited
   to cheap `OmniRoute light` calls with low token settings plus a local fallback; GPT-5.4 is not

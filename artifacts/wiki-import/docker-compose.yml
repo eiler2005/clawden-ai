@@ -1,0 +1,31 @@
+services:
+  wiki-import:
+    build: .
+    container_name: wiki-import
+    env_file:
+      - wiki-import.env
+    ports:
+      - "127.0.0.1:8095:8095"
+    volumes:
+      - /opt/obsidian-vault:/app/obsidian
+      - /opt:/host-opt:ro
+      - wiki-import-state:/app/state
+    restart: unless-stopped
+    networks:
+      default:
+      openclaw_default:
+        aliases:
+          - wiki-import
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8095/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  openclaw_default:
+    external: true
+
+volumes:
+  wiki-import-state:

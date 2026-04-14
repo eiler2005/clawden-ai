@@ -76,7 +76,7 @@ echo "[3/6] Uploading docker-compose.override.yml and .env..."
 ${SSH} "${OPENCLAW_HOST}" 'cat > /opt/lightrag/docker-compose.override.yml' << 'COMPOSE_EOF'
 services:
   lightrag:
-    image: lightrag-local:latest
+    image: ghcr.io/hkuds/lightrag:latest
     networks:
       default:
       openclaw_default:
@@ -109,51 +109,20 @@ echo "  .env — uploaded"
 # 4. Upload ingestion script
 echo ""
 echo "[4/6] Uploading lightrag-ingest.sh..."
-${SSH} "${OPENCLAW_HOST}" 'cat > /opt/lightrag/scripts/lightrag-ingest.sh' << 'INGEST_EOF'
-#!/bin/bash
-set -euo pipefail
-API="http://127.0.0.1:8020"
-LOG_FILE="/var/log/lightrag-ingest.log"
-UPLOADED=0
-FAILED=0
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] LightRAG ingest started" | tee -a "${LOG_FILE}"
-
-# Check LightRAG is running
-if ! curl -sf "${API}/health" > /dev/null 2>&1; then
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: LightRAG not reachable" | tee -a "${LOG_FILE}"
-  exit 1
-fi
-
-upload_dir() {
-  local DIR="$1"
-  while IFS= read -r -d "" file; do
-    curl -sf -X POST "${API}/documents/upload" \
-      -F "file=@${file}" > /dev/null 2>&1 && UPLOADED=$((UPLOADED+1)) || FAILED=$((FAILED+1))
-  done < <(find "${DIR}" -name "*.md" -not -path "*/archive/*" -print0)
-}
-
-upload_dir "/opt/openclaw/workspace"
-upload_dir "/opt/obsidian-vault"
-
-if [ "${FAILED}" -eq 0 ]; then
-  curl -sf -X POST "${API}/documents/reprocess_failed" > /dev/null 2>&1 || true
-fi
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Done: ${UPLOADED} uploaded, ${FAILED} failed" | tee -a "${LOG_FILE}"
-INGEST_EOF
-
-${SSH} "${OPENCLAW_HOST}" 'chmod +x /opt/lightrag/scripts/lightrag-ingest.sh'
+${SCP} "${SCRIPT_DIR}/lightrag-ingest.sh" "${OPENCLAW_HOST}:/tmp/lightrag-ingest.sh"
+${SSH} "${OPENCLAW_HOST}" '
+  install -m 0755 /tmp/lightrag-ingest.sh /opt/lightrag/scripts/lightrag-ingest.sh
+  rm -f /tmp/lightrag-ingest.sh
+'
 echo "  lightrag-ingest.sh — uploaded"
 
-# 5. Build and start LightRAG
+# 5. Pull and start LightRAG
 echo ""
-echo "[5/6] Building and starting LightRAG (from Dockerfile.lite)..."
+echo "[5/6] Pulling and starting LightRAG..."
 ${SSH} "${OPENCLAW_HOST}" '
   cd /opt/lightrag
-  docker build -f Dockerfile.lite -t lightrag-local:latest . 2>&1 | tail -10
-  echo "  Image built: lightrag-local:latest"
-  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
+  docker compose -f docker-compose.yml -f docker-compose.override.yml pull lightrag
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --no-build
   echo "  LightRAG container started"
   sleep 5
   # Quick health check

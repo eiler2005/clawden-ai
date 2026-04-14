@@ -1,9 +1,10 @@
 # LightRAG Setup And Usage
 
-LightRAG is the knowledge graph brain for the memory system. It indexes all markdown content
-(workspace files + Obsidian vault) and provides hybrid retrieval (vector + graph traversal).
+LightRAG is the knowledge graph brain for the memory system. It indexes curated markdown
+(workspace files + LLM-Wiki + raw signal digests) and provides hybrid retrieval (vector + graph traversal).
 
-See `docs/10-memory-architecture.md` for the full memory system context.
+See `docs/10-memory-architecture.md` for the full memory system context and
+`docs/15-llm-wiki-query-flow.md` for the end-to-end retrieval/answer path.
 
 ---
 
@@ -59,11 +60,17 @@ LightRAG indexes markdown from two source trees:
 | Source | Server path | Purpose | Write owner |
 |--------|-------------|---------|-------------|
 | OpenClaw workspace | `/opt/openclaw/workspace` | bot identity, boot rules, curated memory, daily notes, raw decision threads | OpenClaw / deploy scripts |
-| Obsidian vault | `/opt/obsidian-vault` | external AI wiki, personal/project notes, reading lists, long-form context | Syncthing from Mac and bot writes |
+| Obsidian wiki | `/opt/obsidian-vault/wiki` | curated entity/concept/decision/research/session pages | Syncthing from Mac and bot writes |
+| Raw signal digests | `/opt/obsidian-vault/raw/signals` | daily Last30Days digests written by `signals-bridge` | `signals-bridge` |
 
 The LightRAG container mounts both paths read-only under `/app/data/inputs/`. The source files
 remain the canonical human-editable records; LightRAG stores only its derived graph/vector/index
 state under `/opt/lightrag/data/rag_storage/`.
+
+Explicitly excluded from LightRAG ingest v1:
+- `/opt/obsidian-vault/raw/articles`
+- `/opt/obsidian-vault/raw/documents`
+- legacy vault material outside `wiki/`
 
 ### How data is ingested
 
@@ -71,7 +78,7 @@ state under `/opt/lightrag/data/rag_storage/`.
 manually after bulk edits. It:
 
 1. Checks `GET http://127.0.0.1:8020/health`.
-2. Finds markdown files in `/opt/openclaw/workspace` and `/opt/obsidian-vault`.
+2. Finds markdown files in `/opt/openclaw/workspace`, `/opt/obsidian-vault/wiki`, and `/opt/obsidian-vault/raw/signals`.
 3. Uploads each file with `POST /documents/upload`.
 4. Calls `POST /documents/reprocess_failed` so pending or previously failed documents are retried.
 
@@ -149,7 +156,12 @@ Get key: https://aistudio.google.com/app/apikey
 └── scripts/
     └── lightrag-ingest.sh      ← manual/cron re-index trigger
 
-/opt/obsidian-vault/            ← rsync target from Mac iCloud vault
+/opt/obsidian-vault/
+├── wiki/                      ← curated LLM-Wiki pages (indexed)
+└── raw/
+    ├── signals/               ← indexed signal digests
+    ├── articles/              ← stored only; imported later via wiki-import
+    └── documents/             ← stored only; imported later via wiki-import
 ```
 
 ---
@@ -287,7 +299,7 @@ File: `/opt/lightrag/scripts/lightrag-ingest.sh`
 
 ```bash
 #!/bin/bash
-# Uploads workspace + Obsidian markdown files to LightRAG one by one
+# Uploads workspace + curated wiki markdown files to LightRAG one by one
 set -euo pipefail
 API="http://127.0.0.1:8020"
 UPLOADED=0
@@ -302,7 +314,8 @@ upload_dir() {
 }
 
 upload_dir "/opt/openclaw/workspace"
-upload_dir "/opt/obsidian-vault"
+upload_dir "/opt/obsidian-vault/wiki"
+upload_dir "/opt/obsidian-vault/raw/signals"
 
 if [ "${FAILED}" -eq 0 ]; then
   curl -sf -X POST "${API}/documents/reprocess_failed" > /dev/null 2>&1 || true
@@ -445,6 +458,7 @@ After quota resets, re-run: `ssh deploy@<server> '/opt/lightrag/scripts/lightrag
 - `.env` contains API keys — never commit, keep in `LOCAL_ACCESS.md`
 - Obsidian vault mounted read-only in the container
 - Workspace files mounted read-only in the container
+- `raw/articles` / `raw/documents` stay out of LightRAG until curated import materializes them into `wiki/`
 
 ---
 

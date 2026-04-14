@@ -290,10 +290,13 @@ independent of OpenClaw Cron Jobs. Two responsibilities:
    deterministic matching (keyword/hashtag/author rules) before any LLM call, enriches matches
    via OmniRoute `light` tier only (or local fallback), posts to `signals` Telegram topic.
 
-2. **Last30Days World Radar** — runs daily at 07:00 MSK. Executes 8 thematic composite queries
-   + 7 short HN-companion queries (parallel `ThreadPoolExecutor`) against the external
-   `last30days.py` script. Merges results, applies diversified ranking with per-source caps,
-   posts top 10 themes to `last30daysTrend` Telegram topic.
+2. **Last30Days presets** — `signals-bridge` now supports two digest modes:
+   `personal-feed` (query-driven focused radar) and `platform-pulse`
+   (platform-first storylines grouped by source). The scheduled daily run remains the
+   personal feed at 07:00 MSK: it executes 8 thematic composite queries + 7 short
+   HN-companion queries (parallel `ThreadPoolExecutor`) against the external
+   `last30days.py` script, merges results, applies diversified ranking with per-source caps,
+   and posts top themes to the `last30daysTrend` Telegram topic.
 
 **Provider configuration (signals.env):**
 
@@ -315,7 +318,108 @@ fallback). **Currently frozen** — yt-dlp is blocked by YouTube bot-detection o
 browser cookies; full support requires `SCRAPECREATORS_API_KEY` (paid service). The integration
 point is preserved; enable by adding the key to `signals.env`.
 
-Reddit is similarly gated behind `SCRAPECREATORS_API_KEY`.
+Reddit is now free by default via a native hybrid path: `old.reddit.com` JSON for
+search plus RSS fallback (`search.rss`, subreddit `search.rss`, thread
+`comments.rss`). `SCRAPECREATORS_API_KEY` remains an optional tertiary backup.
+
+### Reddit hybrid retrieval path
+
+The production image patches the pinned upstream `last30days-skill` checkout during Docker build.
+That patch injects a dedicated Reddit adapter and keeps all changes inside the same container.
+There is no sidecar service, no local proxy, and no extra port to manage.
+
+Runtime retrieval order:
+
+1. `old.reddit.com/search.json`
+2. `old.reddit.com/r/<subreddit>/search.json` for configured subreddit feeds
+3. native RSS fallback:
+   - global `search.rss`
+   - subreddit `search.rss`
+   - thread `comments.rss`
+4. `SCRAPECREATORS_API_KEY` only if explicitly configured
+
+Why this is implemented with `curl`: on the current server/runtime, Python HTTP clients were
+blocked by Reddit on the JSON endpoints while `curl` returned valid responses. The adapter therefore
+uses `curl` subprocess transport for Reddit JSON and RSS requests.
+
+### Reddit feed configuration
+
+`signals-bridge` passes subreddit hints through `last30days.platform_sources.reddit.feeds`, which
+becomes `--subreddits` in the external CLI.
+
+Recommended baseline for `personal-feed-v1`:
+
+```json
+"platform_sources": {
+  "search": "x,reddit,youtube,hackernews,github,bluesky,polymarket",
+  "reddit": {
+    "feeds": [
+      "worldnews",
+      "technology",
+      "science",
+      "Futurology",
+      "economics",
+      "geopolitics",
+      "artificial",
+      "MachineLearning",
+      "OutOfTheLoop"
+    ]
+  }
+}
+```
+
+These feeds were chosen to balance broad personal-feed coverage:
+- macro and policy: `worldnews`, `economics`, `geopolitics`
+- AI and frontier tech: `technology`, `science`, `Futurology`, `artificial`, `MachineLearning`
+- internet narrative spikes: `OutOfTheLoop`
+
+### Runtime behavior and diagnostics
+
+- JSON-backed Reddit items preserve real `score` and `num_comments`
+- RSS-only items remain eligible for ranking, but carry lower-confidence transport metadata
+- thread enrichment is best-effort through `comments.rss`
+- failure to enrich comments does not drop the Reddit candidate
+- source-level Reddit failures are no longer silently suppressed in the poster layer
+
+Operationally, a healthy run should show:
+- `last30days.source_counts.reddit > 0`
+- `last30days.errors_by_source.reddit` absent or empty
+
+Verified production result on `2026-04-14` after the hybrid patch rollout:
+
+```json
+{
+  "preset_id": "personal-feed-v1",
+  "source_counts": {
+    "reddit": 43,
+    "x": 31
+  },
+  "errors_by_source": {}
+}
+```
+
+### wiki-import bridge
+
+Standalone internal Python service (`/opt/wiki-import/`, port `8095`). It is the **single writer**
+for curated imports into the Obsidian vault:
+
+- saves normalized sources into `/opt/obsidian-vault/raw/articles` or `/opt/obsidian-vault/raw/documents`
+- updates `/opt/obsidian-vault/wiki/**/*`
+- regenerates `OVERVIEW.md`, `INDEX.md`, and `IMPORT-QUEUE.md`
+- returns lint/import status over internal HTTP only
+
+Why this exists:
+- OpenClaw keeps `tools.fs.workspaceOnly = true`
+- the bot should orchestrate imports, not gain direct RW access to the vault
+- vault writes stay in a narrow operational boundary with explicit logging and queue state
+
+Internal API:
+- `GET /health`
+- `GET /status`
+- `POST /trigger`
+- `POST /lint`
+
+LightRAG ingest remains read-only and narrowed to curated wiki pages plus `raw/signals`.
 
 ---
 

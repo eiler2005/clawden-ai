@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-12`
+Snapshot date: `2026-04-14`
 
 ## Host
 
@@ -31,6 +31,14 @@ Snapshot date: `2026-04-12`
 - embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, not routed through OmniRoute)
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
+- active ingest boundary:
+  - `/opt/openclaw/workspace/**/*.md`
+  - `/opt/obsidian-vault/wiki/**/*.md`
+  - `/opt/obsidian-vault/raw/signals/**/*.md`
+- excluded from active ingest:
+  - `/opt/obsidian-vault/raw/articles/**`
+  - `/opt/obsidian-vault/raw/documents/**`
+  - legacy vault folders outside `wiki/` and `raw/signals/`
 - cron: every 30 minutes
 - validation on 2026-04-10: `processed=26`, `failed=0`; query for "Сто лет недосказанности Семихатов" returns `Книги и статьи.md`
 - see `docs/10-memory-architecture.md` and `docs/11-lightrag-setup.md`
@@ -39,6 +47,16 @@ Snapshot date: `2026-04-12`
 
 - path: `/opt/obsidian-vault/`
 - purpose: external AI Wiki, fed into LightRAG for knowledge graph indexing
+- curated layout:
+  - `wiki/` — curated entity/concept/decision/research/session pages plus bot-maintained system files
+  - `raw/signals/` — daily Last30Days signal digests written by `signals-bridge`
+  - `raw/articles/` and `raw/documents/` — stored sources waiting for curated import
+- bot-maintained system pages:
+  - `wiki/SCHEMA.md`
+  - `wiki/INDEX.md`
+  - `wiki/OVERVIEW.md`
+  - `wiki/IMPORT-QUEUE.md`
+  - `wiki/LOG.md`
 - sync method: **bidirectional Syncthing** between Mac (iCloud vault) and server — NOT git, NOT rsync
 - Mac device: `EJ6FHJG` (MacBook-Pro-Denis.local), Server device: `6JODYFX` (ubuntu-4gb-hel1-6)
 - folder ID: `obsidian-vault`, type: `sendreceive` on both sides
@@ -47,6 +65,25 @@ Snapshot date: `2026-04-12`
 - Syncthing on server: systemd service (`syncthing@deploy`), config: `~/.config/syncthing/`, GUI via SSH tunnel: `ssh -L 8385:127.0.0.1:8384 deploy@<server-host>` → `http://127.0.0.1:8385`
 - re-index: manual or after bulk changes — `lightrag-ingest.sh`
 - legacy rsync agent (`com.openclaw.obsidian-sync`) still installed but **superseded by Syncthing**
+
+### wiki-import bridge
+
+- project root: `/opt/wiki-import`
+- compose file: `/opt/wiki-import/docker-compose.yml`
+- env file: `/opt/wiki-import/wiki-import.env`
+- port: `127.0.0.1:8095`
+- network: `openclaw_default`
+- purpose: deterministic curated import bridge for `url`, `text`, and `server_path`
+- write scope:
+  - `/opt/obsidian-vault/raw/articles/**`
+  - `/opt/obsidian-vault/raw/documents/**`
+  - bot-generated pages under `/opt/obsidian-vault/wiki/**`
+  - `wiki/OVERVIEW.md`, `wiki/INDEX.md`, `wiki/IMPORT-QUEUE.md`, `wiki/LOG.md`
+- API:
+  - `GET /health`
+  - `GET /status`
+  - `POST /trigger`
+  - `POST /lint`
 
 ### OpenClaw deployment
 
@@ -90,6 +127,7 @@ That absence is intentional. Voice transcription was removed to keep the CX23 VP
 - `127.0.0.1:18789` for the OpenClaw gateway publish
 - `127.0.0.1:18790` for the bridge/helper publish
 - `127.0.0.1:8020` for LightRAG API (host-local publish; container port 9621)
+- `127.0.0.1:8095` for wiki-import API
 - `127.0.0.1:20128` for OmniRoute dashboard (SSH tunnel access only)
 - `127.0.0.1:20129` for OmniRoute OpenAI-compatible API (container-to-container only)
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from last30days_presets import resolve_last30days_preset
 from models import Last30DaysDigest
 
 
@@ -17,7 +18,8 @@ OBSIDIAN_ROOT = Path("/app/obsidian")
 
 def persist_last30days_digest(digest: Last30DaysDigest, *, config: dict) -> dict[str, str]:
     current = dict(config.get("last30days", {}) or {})
-    obsidian_cfg = dict(current.get("obsidian", {}) or {})
+    _, _, preset = resolve_last30days_preset(config, digest.preset_id)
+    obsidian_cfg = dict(preset.get("obsidian", {}) or {})
     root_name = str(obsidian_cfg.get("root", "Last30Days"))
     tz = ZoneInfo(str(current.get("timezone") or config.get("timezone") or "Europe/Moscow"))
     generated_at = datetime.fromisoformat(digest.generated_at)
@@ -83,7 +85,12 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
 
     lines = [f"# {digest.topic_name} — {generated_local.strftime('%Y-%m-%d')}", ""]
     lines.append("## Executive Summary")
-    if digest.global_themes:
+    if digest.profile == "platform-pulse":
+        surfaced_platforms = sum(1 for section in digest.platform_sections if section.post_count or section.themes)
+        lines.append(
+            f"Captured {len(digest.global_themes)} ranked storylines across {len(digest.platform_sections)} tracked platforms ({surfaced_platforms} with surfaced stories) from {digest.successful_queries}/{digest.total_queries} platform-pulse runs."
+        )
+    elif digest.global_themes:
         lines.append(
             f"Captured {len(digest.global_themes)} global themes across {len(digest.category_sections)} active categories from {digest.successful_queries}/{digest.total_queries} world-radar runs."
         )
@@ -119,28 +126,59 @@ def _render_expanded_markdown(digest: Last30DaysDigest, generated_local: datetim
         lines.append("1. No themes yet.")
         lines.append("")
 
-    lines.append("## Category Sections")
-    if digest.category_sections:
-        for section in digest.category_sections:
-            lines.append(f"### {section.category}")
-            for theme in section.themes[:10]:
-                rank_prefix = f"{theme.category_rank}. " if theme.category_rank else "- "
-                lines.append(f"{rank_prefix}**{theme.title}**")
-                if theme.snippet:
-                    lines.append(theme.snippet)
-                meta = []
-                if theme.primary_source:
-                    meta.append("primary_source: " + theme.primary_source)
-                if theme.sources:
-                    meta.append("sources: " + ", ".join(theme.sources))
-                if theme.url:
-                    meta.append(theme.url)
-                if meta:
-                    lines.append(" | ".join(meta))
-                lines.append("")
+    if digest.profile == "platform-pulse":
+        lines.append("## Platform Sections")
+        if digest.platform_sections:
+            for section in digest.platform_sections:
+                lines.append(f"### {section.platform} ({section.post_count} posts)")
+                if not section.themes:
+                    if section.repeat_filtered_count and section.raw_post_count:
+                        lines.append(f"- All {section.raw_post_count} posts repeated from the prior 7 days.")
+                        lines.append("")
+                        continue
+                    lines.append("- No surfaced stories in this run.")
+                    lines.append("")
+                    continue
+                if section.repeat_filtered_count:
+                    lines.append(f"- {section.repeat_filtered_count} repeats hidden from the prior 7 days.")
+                for theme in section.themes[:10]:
+                    lines.append(f"- **{theme.title}**")
+                    if theme.snippet:
+                        lines.append(theme.snippet)
+                    meta = []
+                    if theme.url:
+                        meta.append(theme.url)
+                    if theme.sources:
+                        meta.append("sources: " + ", ".join(theme.sources))
+                    if meta:
+                        lines.append(" | ".join(meta))
+                    lines.append("")
+        else:
+            lines.append("- none")
+            lines.append("")
     else:
-        lines.append("- none")
-        lines.append("")
+        lines.append("## Category Sections")
+        if digest.category_sections:
+            for section in digest.category_sections:
+                lines.append(f"### {section.category}")
+                for theme in section.themes[:10]:
+                    rank_prefix = f"{theme.category_rank}. " if theme.category_rank else "- "
+                    lines.append(f"{rank_prefix}**{theme.title}**")
+                    if theme.snippet:
+                        lines.append(theme.snippet)
+                    meta = []
+                    if theme.primary_source:
+                        meta.append("primary_source: " + theme.primary_source)
+                    if theme.sources:
+                        meta.append("sources: " + ", ".join(theme.sources))
+                    if theme.url:
+                        meta.append(theme.url)
+                    if meta:
+                        lines.append(" | ".join(meta))
+                    lines.append("")
+        else:
+            lines.append("- none")
+            lines.append("")
 
     lines.append("## Source Coverage")
     if digest.source_counts:

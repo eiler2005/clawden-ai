@@ -406,15 +406,17 @@ LIVE > RAW > DERIVED
 Quick rule: current-state questions → always live-check. Never answer from memory files.
 
 LightRAG is the retrieval layer over the markdown memory corpus. It indexes workspace files and the
-Obsidian vault, then lets OpenClaw ask narrow historical questions without loading archives into
-the conversation. It is useful for "what do we know about X?" and "why did we decide Y?", but it is
-not authoritative for live service state.
+curated LLM-Wiki layer plus raw signal digests, then lets OpenClaw ask narrow historical questions
+without loading archives into the conversation. It is useful for "what do we know about X?" and
+"why did we decide Y?", but it is not authoritative for live service state.
 
 Data flow:
 
 ```text
 workspace/*.md + workspace/memory/*.md + workspace/raw/*.md
 Obsidian vault via Syncthing
+  ├─ wiki/**/*.md
+  └─ raw/signals/**/*.md
         ↓
 /opt/lightrag/scripts/lightrag-ingest.sh
         ↓
@@ -444,6 +446,9 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 Healthy indexing should converge to `failed=0`. Upload success alone is not enough: documents can
 be accepted by `/documents/upload` and still fail later during LLM extraction.
 
+For LLM-Wiki rollout v2, `documents/status_counts` should not suddenly jump because of legacy vault
+folders or bulk `raw/articles` imports. If it does, the ingest boundary has drifted.
+
 ### View LightRAG logs
 
 ```bash
@@ -457,6 +462,28 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   /opt/lightrag/scripts/lightrag-ingest.sh
+'
+```
+
+### Check curated import bridge
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  token="$(sudo awk -F= "/^WIKI_IMPORT_TOKEN=/{print substr(\$0, length(\$1)+2)}" /opt/wiki-import/wiki-import.env | tail -n1)"
+  curl -sf http://127.0.0.1:8095/health && echo
+  curl -sf http://127.0.0.1:8095/status -H "Authorization: Bearer ${token}" | jq .
+'
+```
+
+### Trigger curated wiki import manually
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  token="$(sudo awk -F= "/^WIKI_IMPORT_TOKEN=/{print substr(\$0, length(\$1)+2)}" /opt/wiki-import/wiki-import.env | tail -n1)"
+  curl -sf -X POST http://127.0.0.1:8095/trigger \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d "{\"source_type\":\"url\",\"source\":\"https://example.com/article\",\"target_kind\":\"auto\"}" | jq .
 '
 ```
 
@@ -595,9 +622,9 @@ curl -s -X PATCH -H "X-API-Key: $API_KEY" -H "Content-Type: application/json" \
 ### Obsidian vault sync check
 
 ```bash
-# Files on server
-ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" "find /opt/obsidian-vault -name '*.md' | wc -l"
-# Expected: > 0 (should match Mac vault count)
+# Curated wiki tree on server
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" "find /opt/obsidian-vault/wiki -name '*.md' | wc -l"
+# Expected: > 0 and growing via curated import
 
 # Server Syncthing status
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \

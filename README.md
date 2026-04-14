@@ -23,7 +23,7 @@ At its core is **OpenClaw**, a self-hosted AI gateway running on a private Hetzn
 Four **bridge services** run on cron-like schedules and handle the event-driven part:
 
 - **signals-bridge** watches email and Telegram for market signals, runs deterministic rule matching, and enriches matches with a lightweight LLM call before posting to the `signals` topic.
-- **signals-bridge / Last30Days** runs once a day, fires 8 broad web search queries in parallel (plus 7 short HN-optimized companion queries), deduplicates and re-ranks themes by quality and source diversity, and posts a structured digest to the `last30daysTrend` topic.
+- **signals-bridge / Last30Days** now supports two presets: `personal-feed` for our focused daily radar and `platform-pulse` for platform-by-platform storylines. The current scheduled run posts the personal feed to the `last30daysTrend` topic.
 - **telethon-digest** reads 150–200 Telegram channels through a user session, clusters and summarizes with a medium-tier model, and posts a daily digest.
 - **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic; the work inbox digest resolves the original sender inside forwarded emails.
 
@@ -51,7 +51,7 @@ Everything is observable through a Telegram supergroup with 10 dedicated topics 
 - Polls two inboxes (personal + work) on a schedule, threads notable messages, posts summaries to dedicated Telegram topics
 
 **Knowledge graph memory**
-- LightRAG indexes the Obsidian vault (notes, journals, decisions) using graph + vector hybrid retrieval
+- LightRAG indexes curated wiki pages plus raw signal digests using graph + vector hybrid retrieval
 - Vault syncs bidirectionally between Mac and server via Syncthing — write a note on Mac, it's searchable on the server within minutes
 
 **Self-hosted, private**
@@ -152,7 +152,7 @@ Bridge services run on independent schedules, triggered via **Redis Streams**:
 
 ### Memory & Context
 
-The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. LightRAG indexes the vault continuously — combining vector embeddings and graph relationships — so conversations can reference past notes and decisions without manual copy-paste.
+The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. LightRAG indexes the curated layer continuously, so conversations can reference past notes and decisions without manual copy-paste.
 
 ---
 
@@ -164,7 +164,7 @@ The Obsidian vault is the long-term memory store. Notes sync bidirectionally bet
 - [Services](#services)
 - [Data Flow](#data-flow)
   - [Signals Pipeline](#signals-pipeline)
-  - [Last30Days World Radar](#last30days-world-radar)
+  - [Last30Days Presets](#last30days-presets)
 - [Telegram Surfaces](#telegram-surfaces)
 - [Model Routing](#model-routing)
 - [Source Coverage](#source-coverage)
@@ -256,6 +256,7 @@ graph LR
 | **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | gpt-5.4 (OAuth Plus) |
 | **OmniRoute** | Smart model dispatcher, 3-tier routing with failover | `127.0.0.1:20128` (UI), `:20129` (API) | — |
 | **LightRAG** | Knowledge graph, hybrid vector+graph retrieval | `127.0.0.1:8020` | Gemini 2.5 Flash Lite (direct) |
+| **wiki-import** | Curated import bridge for `url` / `text` / `server_path` into LLM-Wiki | `127.0.0.1:8095` | deterministic v1 |
 | **Redis Streams** | Async integration bus, consumer groups, DLQ | internal only | — |
 | **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OmniRoute `light` |
 | **telethon-digest** | Telegram channel digest (150–200 channels) | `127.0.0.1:8091` | OmniRoute `medium` |
@@ -311,9 +312,16 @@ graph TD
     Render --> Topic
 ```
 
-### Last30Days World Radar
+### Last30Days Presets
 
-Daily digest of global events. Runs at 07:00 MSK. Combines 8 thematic queries with a parallel HN companion pass — 7 short Algolia-friendly queries run concurrently against Hacker News to surface high-quality stories that long composite query strings miss.
+`signals-bridge` now supports two daily digest modes:
+
+- `personal-feed` — query-driven radar for our focused themes; this is the direct successor to the old `world-radar`
+- `platform-pulse` — platform-first brief showing what Reddit / Hacker News / X / Bluesky are talking about, with English story titles plus direct links
+
+Compatibility note: `world-radar-v1` still works as an alias to `personal-feed-v1`.
+
+The current scheduled run remains `personal-feed` at 07:00 MSK. It combines 8 thematic queries with a parallel HN companion pass — 7 short Algolia-friendly queries run concurrently against Hacker News to surface high-quality stories that long composite query strings miss.
 
 ```mermaid
 graph TD
@@ -404,7 +412,7 @@ flowchart LR
 | `telegram-digest` | telethon-digest | 5× daily | curated channel digest |
 | `inbox-email` | agentmail-email | 4× daily | personal inbox recap |
 | `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution for forwarded mail |
-| `last30daysTrend` | signals-bridge | daily 07:00 MSK | World Radar — top 10 themes |
+| `last30daysTrend` | signals-bridge | daily 07:00 MSK | Personal Feed — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
 
 ---
@@ -434,7 +442,7 @@ OmniRoute dispatches tasks across three tiers with automatic provider failover.
 
 ## Source Coverage
 
-Status of data sources for the Last30Days World Radar:
+Status of data sources for the active Last30Days presets:
 
 | Source | Status | Requires |
 |--------|--------|---------|
@@ -442,10 +450,86 @@ Status of data sources for the Last30Days World Radar:
 | GitHub | ✅ Active | `GITHUB_TOKEN` |
 | X / Twitter | ✅ Active | `CT0` cookie |
 | Bluesky | ⚠ 0 results | `BSKY_HANDLE` + `BSKY_APP_PASSWORD` (auth ok, search returns empty) |
-| Reddit | ⏸ Needs key | `SCRAPECREATORS_API_KEY` |
+| Reddit | ✅ Active | Free native hybrid (`old.reddit.com` JSON + RSS) plus optional `platform_sources.reddit.feeds`; optional `SCRAPECREATORS_API_KEY` tertiary backup |
 | YouTube | ⏸ Frozen | `SCRAPECREATORS_API_KEY` (paid); yt-dlp blocked by YouTube bot-check without cookies |
 
 YouTube is architecturally supported — `lib/youtube_yt.py` with yt-dlp fallback path exists in the external script. Disabled pending cost decision.
+
+## Reddit Hybrid Path
+
+`signals-bridge` now runs Reddit through a free native adapter that is patched into the pinned
+`last30days-skill` during image build. The runtime path is:
+
+1. `old.reddit.com/search.json` for global search
+2. `old.reddit.com/r/<subreddit>/search.json` for configured subreddit-first discovery
+3. native RSS fallback:
+   - `search.rss`
+   - subreddit `search.rss`
+   - thread `comments.rss`
+4. `SCRAPECREATORS_API_KEY` only if configured as an optional tertiary backup
+
+Why `curl` matters: on this server, Python `urllib`/`requests` gets blocked by Reddit on the JSON
+path, while `curl` succeeds. The adapter therefore uses `curl` subprocess calls as the canonical
+transport for Reddit endpoints.
+
+### Recommended subreddit seeds
+
+For `personal-feed-v1`, the live config now uses this curated baseline:
+
+```json
+"platform_sources": {
+  "search": "x,reddit,youtube,hackernews,github,bluesky,polymarket",
+  "reddit": {
+    "feeds": [
+      "worldnews",
+      "technology",
+      "science",
+      "Futurology",
+      "economics",
+      "geopolitics",
+      "artificial",
+      "MachineLearning",
+      "OutOfTheLoop"
+    ]
+  }
+}
+```
+
+This mix is intentionally broad:
+- `worldnews`, `geopolitics`, `economics` catch macro, regulation, elections, trade
+- `technology`, `science`, `Futurology`, `artificial`, `MachineLearning` catch AI and frontier tech
+- `OutOfTheLoop` helps with internet-culture and controversy spikes
+
+Tune this list sparingly. The goal is not maximum volume; it is better recall on recurring
+high-signal communities without drowning the digest in subreddit-specific noise.
+
+### What the adapter preserves
+
+- Same normalized Reddit item shape for downstream ranking and rendering
+- Real `score` and `num_comments` when JSON search succeeds
+- Best-effort `top_comments` from `comments.rss`
+- `metadata.retrieval_transport` for diagnostics (`json`, `rss`, `scrapecreators`)
+- Non-fatal behavior when comment enrichment fails
+
+### Operational verification
+
+Healthy Reddit runs show up in `GET /status` under:
+
+- `last30days.source_counts.reddit`
+- `last30days.errors_by_source.reddit` absent or empty
+
+Example of a successful live run on `2026-04-14`:
+
+```json
+{
+  "preset_id": "world-radar-v1",
+  "source_counts": {
+    "reddit": 43,
+    "x": 31
+  },
+  "errors_by_source": {}
+}
+```
 
 ---
 
@@ -459,9 +543,18 @@ RAW     — workspace/raw/YYYY-MM-DD-*.md  verbatim decisions, redacted before c
 DERIVED — MEMORY.md, daily notes         quick recall, not canonical
 ```
 
-**LightRAG** indexes `/opt/openclaw/workspace/` and `/opt/obsidian-vault/` every 30 minutes via `lightrag-ingest.sh`. Hybrid vector + graph retrieval. OpenClaw queries it at `http://lightrag:9621/query` (internal) or `http://127.0.0.1:8020/query` (host).
+**LLM-Wiki** lives under `/opt/obsidian-vault/wiki/` with system files:
+- `CANONICALS.yaml` — canonical slugs, aliases, themes
+- `SCHEMA.md` — write rules
+- `TOPICS.md` — thematic navigator
+- `OVERVIEW.md` — cold-start summary
+- `INDEX.md` — full catalog
+- `IMPORT-QUEUE.md` — curated import state
+- `LOG.md` — append-only operations
 
-**Obsidian vault** syncs bidirectionally between Mac and server via Syncthing. Changes propagate in seconds and feed directly into LightRAG.
+**LightRAG** indexes only `/opt/openclaw/workspace/`, `/opt/obsidian-vault/wiki/`, and `/opt/obsidian-vault/raw/signals/` every 30 minutes via `lightrag-ingest.sh`. Hybrid vector + graph retrieval. OpenClaw queries it at `http://lightrag:9621/query` (internal) or `http://127.0.0.1:8020/query` (host).
+
+**Curated import** goes through the internal `wiki-import` bridge. `raw/articles/` and `raw/documents/` are stored in the vault but stay out of LightRAG until curated import materializes them into canonical wiki pages, assigns themes, and rebuilds `TOPICS.md`.
 
 See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for the full design.
 
@@ -477,11 +570,14 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for the f
 │   ├── integration-bus/        Redis Streams compose
 │   ├── agentmail-email/        Personal inbox bridge — source + Dockerfile + tests
 │   ├── telethon-digest/        Telegram channel digest bridge — source + Dockerfile
-│   └── signals-bridge/         Signals + Last30Days World Radar — source + Dockerfile
+│   ├── signals-bridge/         Signals + Last30Days presets — source + Dockerfile
 │       ├── last30days_runner.py    8 queries + HN companion + diversified ranking
 │       ├── poster.py               Telegram HTML renderer (radar format)
+│       ├── last30days_patches/     Build-time upstream patches (Reddit hybrid adapter)
 │       ├── config.example.json     platform_sources + query_bundle
-│       └── tests/                  67 unit tests
+│       └── tests/                  71 unit tests
+│   ├── wiki-import/            Curated import bridge for LLM-Wiki
+│   └── llm-wiki/               Wiki scaffold, schema, templates
 ├── docs/
 │   ├── 01-server-state.md          Current snapshot: services, ports, images, env
 │   ├── 02-openclaw-installation.md Deployment decisions, auth setup
@@ -498,9 +594,13 @@ See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for the f
 ├── scripts/
 │   ├── deploy-workspace.sh
 │   ├── deploy-signals-bridge.sh
+│   ├── deploy-wiki-import.sh
 │   ├── deploy-telethon-digest.sh
 │   ├── deploy-agentmail-email.sh
-│   └── deploy-agentmail-work-email.sh
+│   ├── deploy-agentmail-work-email.sh
+│   ├── deploy-llm-wiki.sh
+│   ├── setup-llm-wiki.sh
+│   └── lightrag-ingest.sh
 ├── skills/
 │   └── openclaw-cron-maintenance/  Cron-store maintenance runbook skill
 ├── workspace/                      Bot workspace (deployed to /opt/openclaw/workspace)
@@ -529,9 +629,15 @@ export OPENCLAW_HOST="deploy@<server-host>"
 
 # Deploy bridge services
 ./scripts/deploy-signals-bridge.sh
+./scripts/deploy-wiki-import.sh
+./scripts/bootstrap-llm-wiki.sh
 ./scripts/deploy-telethon-digest.sh
 ./scripts/deploy-agentmail-email.sh
 ./scripts/deploy-agentmail-work-email.sh
+
+# Safe LLM-Wiki cutover helpers
+./scripts/deploy-llm-wiki.sh
+./scripts/setup-llm-wiki.sh
 
 # Health checks
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:18789/healthz'
@@ -543,12 +649,12 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8094/health | py
 ssh -i ~/.ssh/id_rsa -L 20128:127.0.0.1:20128 "$OPENCLAW_HOST" -N &
 # open http://localhost:20128
 
-# Trigger Last30Days World Radar manually
+# Trigger Last30Days Personal Feed manually
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'curl -s -X POST http://127.0.0.1:8093/trigger \
     -H "Authorization: Bearer <SIGNALS_BRIDGE_TOKEN>" \
     -H "Content-Type: application/json" \
-    -d "{\"job_type\": \"last30days_daily\", \"preset_id\": \"world-radar-v1\"}"'
+    -d "{\"job_type\": \"last30days_daily\", \"preset_id\": \"personal-feed-v1\"}"'
 
 # Redis Streams status
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
@@ -607,6 +713,8 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 | 12 | [telegram-channel-architecture](docs/12-telegram-channel-architecture.md) | Telegram topology, permissions, RAG gates |
 | 13 | [ai-assistant-architecture](docs/13-ai-assistant-architecture.md) | Model routing, assistant behavior, approval boundaries |
 | 14 | [codex-skills](docs/14-codex-skills.md) | Project skill catalog for recurring Codex workflows |
+| 15 | [llm-wiki-query-flow](docs/15-llm-wiki-query-flow.md) | End-to-end LLM-Wiki flow: curated import, LightRAG retrieval, OpenClaw answer assembly |
+| 16 | [llm-wiki-storage-model](docs/16-llm-wiki-storage-model.md) | Canonical slugs, themes, topic maps, and wiki repair policy |
 
 ---
 

@@ -219,6 +219,40 @@ Status:
 
 ## 13. Recovery confirmation after temporary SSH firewall widening
 
+## 14. LLM-Wiki rollout v2 and safe cutover attempt
+
+Date: `2026-04-14`
+
+Goal:
+
+- introduce curated `wiki/` + narrowed `raw/signals/` ingest for LightRAG
+- deploy the internal `wiki-import` bridge
+- switch LightRAG away from indexing the full legacy vault
+- prepare bot-owned curated import flow
+
+Representative command shape:
+
+```bash
+# deploy deterministic curated import bridge
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/deploy-wiki-import.sh
+
+# safe LightRAG cutover without wiping /opt/obsidian-vault
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/setup-llm-wiki.sh
+```
+
+Observed result:
+
+- `wiki-import` deployed to `/opt/wiki-import`, bound to `127.0.0.1:8095`
+- scaffold deployment to `/opt/obsidian-vault/wiki` started successfully
+- tracked `/opt/lightrag/scripts/lightrag-ingest.sh` was replaced with the narrowed v2 script
+- LightRAG rebuild/restart path became heavy enough that the host stopped completing new SSH banner exchanges during the rollout window
+
+Operational note:
+
+- the cutover flow was adjusted to use `sudo` for clearing derived LightRAG state because parts of
+  `/opt/lightrag/data/` were root-owned
+- rollout validation and bootstrap imports must resume only after SSH responsiveness is restored
+
 Date: `2026-04-06`
 
 What was verified after SSH access was restored:

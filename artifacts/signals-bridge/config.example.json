@@ -14,7 +14,7 @@
     "enabled": true,
     "schedule_expr": "0 7 * * *",
     "timezone": "Europe/Moscow",
-    "preset_id": "world-radar-v1",
+    "preset_id": "personal-feed-v1",
     "mode": "compact",
     "telegram": {
       "topic_name": "last30daysTrend",
@@ -39,7 +39,8 @@
       "reddit": {
         "feeds": [
           "worldnews", "technology", "science", "Futurology",
-          "economy", "geopolitics", "artificial", "OutOfTheLoop"
+          "economics", "geopolitics", "artificial", "MachineLearning",
+          "OutOfTheLoop"
         ]
       },
       "github": {
@@ -49,6 +50,98 @@
           "langchain-ai/langchain", "ollama/ollama"
         ],
         "trending": true
+      }
+    },
+    "preset_aliases": {
+      "world-radar-v1": "personal-feed-v1"
+    },
+    "presets": {
+      "personal-feed-v1": {
+        "profile": "personal-feed",
+        "display_name": "Personal Feed",
+        "mode": "compact",
+        "telegram": {
+          "topic_name": "last30daysTrend",
+          "topic_id": 0
+        },
+        "obsidian": {
+          "root": "Last30Days"
+        },
+        "max_items": 10,
+        "query_bundle": [
+          "OpenAI Anthropic Google DeepMind xAI Nvidia Apple Microsoft product launches AI research breakthroughs",
+          "AI policy regulation antitrust government tech industry economy inflation tariffs geopolitics",
+          "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
+          "machine learning research papers models benchmarks reasoning agents multimodal academic",
+          "startup funding rounds acquisitions mergers venture capital unicorns IPO deals exits",
+          "robotics autonomous vehicles space biotech semiconductors hardware frontier science",
+          "content platforms creator economy streaming social media viral culture internet trends",
+          "semiconductors chips supply chain trade war Taiwan defense cybersecurity national security"
+        ],
+        "platform_sources": {
+          "search": "x,reddit,youtube,hackernews,github,bluesky,polymarket",
+          "reddit": {
+            "feeds": [
+              "worldnews", "technology", "science", "Futurology",
+              "economics", "geopolitics", "artificial", "MachineLearning",
+              "OutOfTheLoop"
+            ]
+          },
+          "github": {
+            "repos": [
+              "openai/openai-python", "anthropics/anthropic-sdk-python",
+              "modelcontextprotocol/servers", "microsoft/autogen",
+              "langchain-ai/langchain", "ollama/ollama"
+            ],
+            "trending": true
+          }
+        }
+      },
+      "platform-pulse-v1": {
+        "profile": "platform-pulse",
+        "display_name": "Platform Pulse",
+        "mode": "compact",
+        "telegram": {
+          "topic_name": "platformPulse",
+          "topic_id": 0
+        },
+        "obsidian": {
+          "root": "PlatformPulse"
+        },
+        "max_items": 12,
+        "query_bundle": [
+          "AI models labs launches product updates frontier labs openai anthropic google xai meta",
+          "developer tools open source agents MCP coding workflows repos builders",
+          "robotics humanoids autonomous vehicles hardware frontier science",
+          "consumer apps creator economy social platforms streaming internet products",
+          "world news geopolitics economics markets regulation",
+          "internet culture memes controversies movements podcasts narratives"
+        ],
+        "core_sources": [
+          "reddit",
+          "hackernews",
+          "x",
+          "bluesky"
+        ],
+        "experimental_sources": [
+          "github",
+          "youtube",
+          "polymarket"
+        ],
+        "platform_sources": {
+          "search": "reddit,hackernews,x,bluesky,github,youtube,polymarket",
+          "reddit": {
+            "feeds": [
+              "technology", "science", "Futurology", "MachineLearning",
+              "artificial", "worldnews", "geopolitics", "economics",
+              "OutOfTheLoop", "singularity", "robotics", "wallstreetbets",
+              "modelcontextprotocol"
+            ]
+          },
+          "github": {
+            "trending": true
+          }
+        }
       }
     }
   },

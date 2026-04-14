@@ -10,22 +10,20 @@ import subprocess
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from difflib import SequenceMatcher
+from html import escape
+from pathlib import Path
 from typing import Any
 
-from models import Last30DaysCategorySection, Last30DaysDigest, Last30DaysTheme
+from last30days_presets import (
+    DEFAULT_PERSONAL_FEED_QUERY_BUNDLE,
+    resolve_last30days_preset,
+)
+from models import Last30DaysCategorySection, Last30DaysDigest, Last30DaysPlatformSection, Last30DaysTheme
 
 
-DEFAULT_QUERY_BUNDLE = [
-    "OpenAI Anthropic Google DeepMind xAI Nvidia Apple Microsoft product launches AI research breakthroughs",
-    "AI policy regulation antitrust government tech industry economy inflation tariffs geopolitics",
-    "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks",
-    "machine learning research papers models benchmarks reasoning agents multimodal academic",
-    "startup funding rounds acquisitions mergers venture capital unicorns IPO deals exits",
-    "robotics autonomous vehicles space biotech semiconductors hardware frontier science",
-    "content platforms creator economy streaming social media viral culture internet trends",
-    "semiconductors chips supply chain trade war Taiwan defense cybersecurity national security",
-]
+DEFAULT_QUERY_BUNDLE = list(DEFAULT_PERSONAL_FEED_QUERY_BUNDLE)
 
 RESCUE_QUERY_BUNDLE = {
     "OpenAI Anthropic Google DeepMind xAI Nvidia Apple Microsoft product launches AI research breakthroughs": [
@@ -279,7 +277,6 @@ PRIMARY_SOURCE_PRIORITY = {
 # Quality sources get scoring bonuses
 QUALITY_SOURCES = {"hn", "web", "reddit", "youtube"}
 
-WORLD_RADAR_PRESET_ID = "world-radar-v1"
 TELEGRAM_GLOBAL_LIMIT_DEFAULT = 10
 OBSIDIAN_GLOBAL_LIMIT = 15
 CATEGORY_SECTION_LIMIT = 10
@@ -300,92 +297,214 @@ LAST30DAYS_ROOT = os.environ.get("LAST30DAYS_ROOT", "/opt/last30days-skill")
 LAST30DAYS_SCRIPT = f"{LAST30DAYS_ROOT}/scripts/last30days.py"
 LAST30DAYS_TIMEOUT_SECONDS = int(os.environ.get("LAST30DAYS_TIMEOUT_SECONDS", "420") or 420)
 LAST30DAYS_LOOKBACK_DAYS = int(os.environ.get("LAST30DAYS_LOOKBACK_DAYS", "30") or 30)
+LAST30DAYS_OBSIDIAN_ROOT = Path(os.environ.get("LAST30DAYS_OBSIDIAN_ROOT", "/app/obsidian"))
+LAST30DAYS_SIGNAL_TIMEZONE = os.environ.get("LAST30DAYS_SIGNAL_TIMEZONE", "Europe/Moscow")
+PLATFORM_PULSE_HISTORY_DAYS = int(os.environ.get("PLATFORM_PULSE_HISTORY_DAYS", "7") or 7)
+PLATFORM_SECTION_LIMIT = 4
+PLATFORM_PULSE_FUZZY_TITLE_RATIO = float(os.environ.get("PLATFORM_PULSE_FUZZY_TITLE_RATIO", "0.9") or 0.9)
+PLATFORM_PULSE_FUZZY_TOKEN_COVERAGE = float(os.environ.get("PLATFORM_PULSE_FUZZY_TOKEN_COVERAGE", "0.8") or 0.8)
+PLATFORM_PULSE_FUZZY_TOKEN_JACCARD = float(os.environ.get("PLATFORM_PULSE_FUZZY_TOKEN_JACCARD", "0.75") or 0.75)
+PLATFORM_PULSE_FUZZY_MIN_SHARED_TOKENS = int(os.environ.get("PLATFORM_PULSE_FUZZY_MIN_SHARED_TOKENS", "5") or 5)
+PLATFORM_PULSE_SOURCE_CAPS = {
+    "reddit": 4,
+    "hn": 4,
+    "x": 4,
+    "bluesky": 3,
+    "github": 3,
+    "youtube": 2,
+    "polymarket": 2,
+}
 
-_SOURCE_LABELS = {
+_PLATFORM_SOURCE_ALIASES = {
     "grounding": "web",
     "hackernews": "hn",
 }
 
+_FUZZY_REPEAT_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "already",
+    "also",
+    "among",
+    "and",
+    "another",
+    "are",
+    "around",
+    "because",
+    "been",
+    "being",
+    "between",
+    "could",
+    "from",
+    "have",
+    "into",
+    "just",
+    "more",
+    "most",
+    "over",
+    "really",
+    "still",
+    "than",
+    "that",
+    "their",
+    "them",
+    "they",
+    "this",
+    "those",
+    "through",
+    "today",
+    "under",
+    "using",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "with",
+    "would",
+}
+
+_FUZZY_REPEAT_SHORT_TOKENS = {"ai", "ml", "llm", "api", "sdk", "cli", "mcp", "agi", "gpu", "uk", "us", "eu", "xr"}
+
+
+def write_signal_digest(digest: Last30DaysDigest, *, obsidian_vault_path: Path | None = None) -> Path:
+    obsidian_root = Path(obsidian_vault_path or LAST30DAYS_OBSIDIAN_ROOT)
+    local_dt = _signal_local_datetime(digest.generated_at)
+    target_dir = obsidian_root / "raw" / "signals"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"{local_dt.strftime('%Y-%m-%d')}.md"
+    target_path.write_text(_render_signal_digest_markdown(digest, local_dt), encoding="utf-8")
+    return target_path
+
+
+def _signal_local_datetime(generated_at: str) -> datetime:
+    current = datetime.fromisoformat(generated_at)
+    try:
+        from zoneinfo import ZoneInfo
+
+        return current.astimezone(ZoneInfo(LAST30DAYS_SIGNAL_TIMEZONE))
+    except Exception:
+        return current.astimezone(timezone.utc)
+
+
+def _render_signal_digest_markdown(digest: Last30DaysDigest, generated_local: datetime) -> str:
+    top_themes = digest.global_themes or digest.themes
+    frontmatter = [
+        "---",
+        "type: signal-digest",
+        f"date: {generated_local.strftime('%Y-%m-%d')}",
+        "source: last30days",
+        f"preset_id: {digest.canonical_preset_id or digest.preset_id}",
+        "top_themes:",
+    ]
+    for theme in top_themes[:10]:
+        frontmatter.append(f"  - {theme.title}")
+    frontmatter.extend(["---", ""])
+
+    lines = [f"# Last30Days Signal: {generated_local.strftime('%Y-%m-%d')}", ""]
+    lines.append("## Summary")
+    lines.append(
+        f"Preset `{digest.canonical_preset_id or digest.preset_id}` surfaced {len(top_themes)} themes from {digest.successful_queries}/{digest.total_queries} successful queries."
+    )
+    if digest.notes:
+        lines.append(" ".join(digest.notes))
+    lines.append("")
+
+    lines.append("## Top Themes")
+    if top_themes:
+        for idx, theme in enumerate(top_themes[:10], start=1):
+            badges = " · ".join(theme.sources) if theme.sources else "unknown"
+            line = f"{idx}. **{escape(theme.title)}** — [{badges}]"
+            if theme.url:
+                line += f"({theme.url})"
+            lines.append(line)
+            if theme.snippet:
+                lines.append(f"   {theme.snippet}")
+    else:
+        lines.append("1. No themes captured.")
+    lines.append("")
+
+    lines.append("## Source Coverage")
+    if digest.source_counts:
+        for source, count in digest.source_counts.items():
+            lines.append(f"- {source}: {count}")
+    else:
+        lines.append("- none")
+    lines.append("")
+
+    return "\n".join(frontmatter + lines).strip() + "\n"
+
 
 def build_digest(config: dict, *, preset_id: str, now: datetime | None = None) -> Last30DaysDigest:
     now = now or datetime.now(timezone.utc)
-    current = dict(config.get("last30days", {}) or {})
-    topic_cfg = dict(current.get("telegram", {}) or {})
-    query_bundle = [str(item).strip() for item in current.get("query_bundle", []) if str(item).strip()]
-    if not query_bundle:
-        query_bundle = list(DEFAULT_QUERY_BUNDLE)
-    compact_limit = int(current.get("max_items", TELEGRAM_GLOBAL_LIMIT_DEFAULT) or TELEGRAM_GLOBAL_LIMIT_DEFAULT)
+    requested_preset_id, canonical_preset_id, preset = resolve_last30days_preset(config, preset_id)
+    topic_cfg = dict(preset.get("telegram", {}) or {})
+    query_bundle = [str(item).strip() for item in preset.get("query_bundle", []) if str(item).strip()] or list(DEFAULT_QUERY_BUNDLE)
+    compact_limit = int(preset.get("max_items", TELEGRAM_GLOBAL_LIMIT_DEFAULT) or TELEGRAM_GLOBAL_LIMIT_DEFAULT)
     global_limit = max(compact_limit, OBSIDIAN_GLOBAL_LIMIT)
-    platform_sources = dict(current.get("platform_sources", {}) or {})
+    platform_sources = dict(preset.get("platform_sources", {}) or {})
+    if search_sources := _preset_search_sources(preset):
+        platform_sources["search"] = ",".join(search_sources)
 
     digest = Last30DaysDigest(
-        preset_id=preset_id or str(current.get("preset_id", WORLD_RADAR_PRESET_ID)),
-        mode=str(current.get("mode", "compact")),
+        preset_id=requested_preset_id,
+        canonical_preset_id=canonical_preset_id,
+        profile=str(preset.get("profile", "personal-feed")),
+        display_name=str(preset.get("display_name", "Personal Feed")),
+        mode=str(preset.get("mode", "compact")),
         generated_at=now.isoformat(),
         topic_name=str(topic_cfg.get("topic_name", "last30daysTrend")),
         topic_id=int(topic_cfg.get("topic_id", 0) or 0),
         query_bundle=query_bundle,
+        core_sources=_canonical_platform_list(preset.get("core_sources", [])),
+        experimental_sources=_canonical_platform_list(preset.get("experimental_sources", [])),
         total_queries=len(query_bundle),
-        suggestions=_default_suggestions(),
+        suggestions=_default_suggestions(profile=str(preset.get("profile", "personal-feed"))),
     )
 
-    aggregated_source_counts: dict[str, int] = defaultdict(int)
-    aggregated_errors: dict[str, str] = {}
-    merged_themes: dict[str, dict[str, Any]] = {}
-
-    for query in query_bundle:
-        result = _run_query_with_rescue(query, platform_sources=platform_sources)
-        digest.reports.append(result)
-        if result["status"] != "completed":
-            digest.query_errors[query] = result.get("error", "last30days query failed")
-            continue
-
-        digest.successful_queries += 1
-        for source, count in result.get("source_counts", {}).items():
-            aggregated_source_counts[source] += int(count)
-        aggregated_errors.update(result.get("errors_by_source", {}))
-
-        for theme in result.get("themes", []):
-            key = _theme_key(theme)
-            existing = merged_themes.get(key)
-            if not existing:
-                merged_themes[key] = dict(theme)
-                continue
-            existing["score"] = max(float(existing.get("score", 0.0)), float(theme.get("score", 0.0)))
-            existing["sources"] = sorted(set(existing.get("sources", [])) | set(theme.get("sources", [])))
-            existing["queries"] = sorted(set(existing.get("queries", [])) | set(theme.get("queries", [])))
-            existing["source_titles"] = _merged_titles(existing.get("source_titles", []), theme.get("source_titles", []))
-            if len(theme.get("snippet", "")) > len(existing.get("snippet", "")):
-                existing["snippet"] = theme.get("snippet", existing.get("snippet", ""))
-            if not existing.get("url") and theme.get("url"):
-                existing["url"] = theme["url"]
-
-    # HN companion pass: short Algolia-friendly queries against HN only (parallel).
-    # Merges HN themes that the long composite query strings miss.
-    for _hn_theme in _run_hn_companion_themes(HN_COMPANION_QUERIES):
-        _key = _theme_key(_hn_theme)
-        _existing = merged_themes.get(_key)
-        if not _existing:
-            merged_themes[_key] = dict(_hn_theme)
-        else:
-            _existing["score"] = max(float(_existing.get("score", 0.0)), float(_hn_theme.get("score", 0.0)))
-            _existing["sources"] = sorted(set(_existing.get("sources", [])) | set(_hn_theme.get("sources", [])))
-            _existing["queries"] = sorted(set(_existing.get("queries", [])) | set(_hn_theme.get("queries", [])))
-            _existing["source_titles"] = _merged_titles(_existing.get("source_titles", []), _hn_theme.get("source_titles", []))
-            if len(_hn_theme.get("snippet", "")) > len(_existing.get("snippet", "")):
-                _existing["snippet"] = _hn_theme.get("snippet", _existing.get("snippet", ""))
-            if not _existing.get("url") and _hn_theme.get("url"):
-                _existing["url"] = _hn_theme["url"]
+    aggregated_source_counts, aggregated_errors, merged_themes, merged_posts = _collect_theme_pool(
+        digest,
+        query_bundle=query_bundle,
+        platform_sources=platform_sources,
+        include_hn_companion=digest.profile == "personal-feed",
+    )
 
     digest.source_counts = dict(sorted(aggregated_source_counts.items(), key=lambda item: (-item[1], item[0])))
     digest.errors_by_source = dict(sorted(aggregated_errors.items()))
     ranked_themes = _prepare_world_themes(list(merged_themes.values()))
-    global_theme_items = _select_diversified_global_themes(ranked_themes, limit=global_limit)
-    compact_theme_items = global_theme_items[:compact_limit]
 
-    digest.themes = [_theme_model(item) for item in compact_theme_items]
-    digest.global_themes = [_theme_model(item) for item in global_theme_items]
-    digest.category_sections = _category_sections(ranked_themes)
+    if digest.profile == "platform-pulse":
+        ranked_posts = _prepare_world_themes(list(merged_posts.values()))
+        history_entries = _load_platform_pulse_history_entries(config, preset=preset, now=now)
+        global_theme_items = _select_platform_pulse_global_themes(
+            ranked_themes,
+            limit=global_limit,
+            ordered_sources=_ordered_platform_sources(digest),
+        )
+        digest.global_themes = [_theme_model(item) for item in global_theme_items]
+        digest.platform_sections = _platform_sections(
+            ranked_posts,
+            ordered_sources=_ordered_platform_sources(digest),
+            history_entries=history_entries,
+            limit=None,
+        )
+        digest.themes = [
+            theme
+            for section in digest.platform_sections
+            for theme in section.themes
+        ]
+        hidden_repeats = sum(section.repeat_filtered_count for section in digest.platform_sections)
+        if hidden_repeats:
+            digest.notes.append(f"Filtered {hidden_repeats} repeated posts already shown in the prior {PLATFORM_PULSE_HISTORY_DAYS} days.")
+        digest.category_sections = []
+    else:
+        global_theme_items = _select_diversified_global_themes(ranked_themes, limit=global_limit)
+        compact_theme_items = global_theme_items[:compact_limit]
+        digest.themes = [_theme_model(item) for item in compact_theme_items]
+        digest.global_themes = [_theme_model(item) for item in global_theme_items]
+        digest.category_sections = _category_sections(ranked_themes)
+        digest.platform_sections = []
 
     if digest.successful_queries == 0:
         digest.status = "failed"
@@ -398,10 +517,77 @@ def build_digest(config: dict, *, preset_id: str, now: datetime | None = None) -
 
     if not digest.global_themes:
         digest.notes.append("No ranked themes were produced by last30days.")
-    elif len(digest.themes) < compact_limit:
+    elif digest.profile != "platform-pulse" and len(digest.themes) < compact_limit:
         digest.notes.append("Global top was narrowed by source/category diversity caps.")
 
     return digest
+
+
+def _collect_theme_pool(
+    digest: Last30DaysDigest,
+    *,
+    query_bundle: list[str],
+    platform_sources: dict[str, Any],
+    include_hn_companion: bool,
+) -> tuple[dict[str, int], dict[str, str], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    aggregated_source_counts: dict[str, int] = defaultdict(int)
+    aggregated_errors: dict[str, str] = {}
+    merged_themes: dict[str, dict[str, Any]] = {}
+    merged_posts: dict[str, dict[str, Any]] = {}
+
+    for query in query_bundle:
+        result = _run_query_with_rescue(query, platform_sources=platform_sources)
+        digest.reports.append(result)
+        if result["status"] != "completed":
+            digest.query_errors[query] = result.get("error", "last30days query failed")
+            continue
+
+        digest.successful_queries += 1
+        for source, count in result.get("source_counts", {}).items():
+            aggregated_source_counts[_canonical_platform_source(source)] += int(count)
+        for source, error in result.get("errors_by_source", {}).items():
+            aggregated_errors[_canonical_platform_source(source)] = error
+        _merge_theme_batch(merged_themes, result.get("themes", []))
+        _merge_post_batch(merged_posts, result.get("platform_posts", []))
+
+    if include_hn_companion:
+        _merge_theme_batch(merged_themes, _run_hn_companion_themes(HN_COMPANION_QUERIES))
+
+    return dict(aggregated_source_counts), aggregated_errors, merged_themes, merged_posts
+
+
+def _merge_theme_batch(merged_themes: dict[str, dict[str, Any]], themes: list[dict[str, Any]]) -> None:
+    for theme in themes:
+        key = _theme_key(theme)
+        existing = merged_themes.get(key)
+        if not existing:
+            merged_themes[key] = dict(theme)
+            continue
+        existing["score"] = max(float(existing.get("score", 0.0)), float(theme.get("score", 0.0)))
+        existing["sources"] = sorted(set(existing.get("sources", [])) | set(theme.get("sources", [])))
+        existing["queries"] = sorted(set(existing.get("queries", [])) | set(theme.get("queries", [])))
+        existing["source_titles"] = _merged_titles(existing.get("source_titles", []), theme.get("source_titles", []))
+        if len(theme.get("snippet", "")) > len(existing.get("snippet", "")):
+            existing["snippet"] = theme.get("snippet", existing.get("snippet", ""))
+        if not existing.get("url") and theme.get("url"):
+            existing["url"] = theme["url"]
+
+
+def _merge_post_batch(merged_posts: dict[str, dict[str, Any]], posts: list[dict[str, Any]]) -> None:
+    for post in posts:
+        key = _theme_key(post)
+        existing = merged_posts.get(key)
+        if not existing:
+            merged_posts[key] = dict(post)
+            continue
+        existing["score"] = max(float(existing.get("score", 0.0)), float(post.get("score", 0.0)))
+        existing["sources"] = sorted(set(existing.get("sources", [])) | set(post.get("sources", [])))
+        existing["queries"] = sorted(set(existing.get("queries", [])) | set(post.get("queries", [])))
+        existing["source_titles"] = _merged_titles(existing.get("source_titles", []), post.get("source_titles", []), limit=5)
+        if len(post.get("snippet", "")) > len(existing.get("snippet", "")):
+            existing["snippet"] = post.get("snippet", existing.get("snippet", ""))
+        if not existing.get("url") and post.get("url"):
+            existing["url"] = post["url"]
 
 
 def _run_query(query: str, *, platform_sources: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -449,6 +635,7 @@ def _run_query(query: str, *, platform_sources: dict[str, Any] | None = None) ->
         "source_counts": _source_counts(report),
         "errors_by_source": dict(report.get("errors_by_source") or {}),
         "themes": _extract_themes(report, query=query),
+        "platform_posts": _extract_platform_posts(report, query=query),
         "provider_runtime": dict(report.get("provider_runtime") or {}),
         "warnings": list(report.get("warnings") or []),
     }
@@ -553,6 +740,7 @@ def _merge_reports(query: str, reports: list[dict[str, Any]]) -> dict[str, Any]:
     warnings: list[str] = []
     provider_runtime: dict[str, Any] = {}
     merged_themes: dict[str, dict[str, Any]] = {}
+    merged_posts: dict[str, dict[str, Any]] = {}
 
     for report in completed:
         for source, count in (report.get("source_counts") or {}).items():
@@ -576,6 +764,21 @@ def _merge_reports(query: str, reports: list[dict[str, Any]]) -> dict[str, Any]:
                 existing["snippet"] = current.get("snippet", existing.get("snippet", ""))
             if not existing.get("url") and current.get("url"):
                 existing["url"] = current["url"]
+        for post in report.get("platform_posts") or []:
+            current = dict(post)
+            key = _theme_key(current)
+            existing = merged_posts.get(key)
+            if not existing:
+                merged_posts[key] = current
+                continue
+            existing["score"] = max(float(existing.get("score", 0.0)), float(current.get("score", 0.0)))
+            existing["sources"] = sorted(set(existing.get("sources", [])) | set(current.get("sources", [])))
+            existing["queries"] = sorted(set(existing.get("queries", [])) | set(current.get("queries", [])))
+            existing["source_titles"] = _merged_titles(existing.get("source_titles", []), current.get("source_titles", []), limit=5)
+            if len(current.get("snippet", "")) > len(existing.get("snippet", "")):
+                existing["snippet"] = current.get("snippet", existing.get("snippet", ""))
+            if not existing.get("url") and current.get("url"):
+                existing["url"] = current["url"]
 
     merged_report = {
         "query": query,
@@ -585,6 +788,10 @@ def _merge_reports(query: str, reports: list[dict[str, Any]]) -> dict[str, Any]:
         "themes": sorted(
             merged_themes.values(),
             key=lambda theme: (-float(theme.get("score", 0.0)), theme.get("title", "")),
+        ),
+        "platform_posts": sorted(
+            merged_posts.values(),
+            key=lambda post: (-float(post.get("score", 0.0)), post.get("title", "")),
         ),
         "provider_runtime": provider_runtime,
         "warnings": _dedupe_strings(warnings),
@@ -615,7 +822,7 @@ def _extract_themes(report: dict[str, Any], *, query: str) -> list[dict[str, Any
                     or ""
                 ),
                 "url": str(candidate.get("url") or _first_source_item(candidate, "url") or ""),
-                "sources": [_SOURCE_LABELS.get(str(source), str(source)) for source in sources],
+                "sources": [_canonical_platform_source(source) for source in sources],
                 "queries": [query],
                 "score": float(candidate.get("final_score") or candidate.get("rerank_score") or cluster.get("score") or 0.0),
                 "source_titles": source_titles,
@@ -632,13 +839,40 @@ def _extract_themes(report: dict[str, Any], *, query: str) -> list[dict[str, Any
                 "title": str(candidate.get("title") or "Untitled theme"),
                 "snippet": _compact_text(candidate.get("snippet") or candidate.get("explanation") or ""),
                 "url": str(candidate.get("url") or ""),
-                "sources": [_SOURCE_LABELS.get(str(source), str(source)) for source in (candidate.get("sources") or [candidate.get("source", "web")])],
+                "sources": [_canonical_platform_source(source) for source in (candidate.get("sources") or [candidate.get("source", "web")])],
                 "queries": [query],
                 "score": float(candidate.get("final_score") or candidate.get("rerank_score") or 0.0),
                 "source_titles": _source_titles(candidate),
             }
         )
     return themes
+
+
+def _extract_platform_posts(report: dict[str, Any], *, query: str) -> list[dict[str, Any]]:
+    posts: list[dict[str, Any]] = []
+    for candidate in list(report.get("ranked_candidates") or []):
+        sources = candidate.get("sources") or [candidate.get("source", "web")]
+        primary_source = _canonical_platform_source(candidate.get("source") or _primary_source({"sources": sources}))
+        posts.append(
+            {
+                "theme_id": str(candidate.get("candidate_id") or _slug(candidate.get("title", "post"))),
+                "title": str(candidate.get("title") or "Untitled post"),
+                "snippet": _compact_text(
+                    candidate.get("snippet")
+                    or candidate.get("explanation")
+                    or _first_source_item(candidate, "snippet")
+                    or _first_source_item(candidate, "body")
+                    or ""
+                ),
+                "url": str(candidate.get("url") or _first_source_item(candidate, "url") or ""),
+                "sources": [_canonical_platform_source(source) for source in sources],
+                "queries": [query],
+                "score": float(candidate.get("final_score") or candidate.get("rerank_score") or 0.0),
+                "source_titles": _source_titles(candidate),
+                "primary_source": primary_source,
+            }
+        )
+    return posts
 
 
 def _candidate_for_cluster(cluster: dict[str, Any], candidate_by_id: dict[str, dict[str, Any]], ranked: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -660,7 +894,8 @@ def _source_counts(report: dict[str, Any]) -> dict[str, int]:
     for source, items in (report.get("items_by_source") or {}).items():
         count = len(items or [])
         if count:
-            result[_SOURCE_LABELS.get(str(source), str(source))] = count
+            canonical = _canonical_platform_source(source)
+            result[canonical] = result.get(canonical, 0) + count
     return result
 
 
@@ -697,6 +932,99 @@ def _theme_key(theme: dict[str, Any]) -> str:
     if url:
         return url
     return _slug(str(theme.get("title", "theme")).lower())
+
+
+def _theme_repeat_source(theme: dict[str, Any], *, fallback_source: str = "") -> str:
+    primary = _canonical_platform_source(theme.get("primary_source") or "")
+    if primary:
+        return primary
+    sources = [_canonical_platform_source(source) for source in (theme.get("sources") or []) if str(source).strip()]
+    if sources:
+        return sources[0]
+    return _canonical_platform_source(fallback_source)
+
+
+def _normalize_repeat_token(token: str) -> str:
+    clean = str(token or "").strip().lower()
+    if not clean:
+        return ""
+    if clean.isdigit():
+        return clean if len(clean) >= 2 else ""
+    if len(clean) <= 2 and clean not in _FUZZY_REPEAT_SHORT_TOKENS:
+        return ""
+    if clean in _FUZZY_REPEAT_STOPWORDS:
+        return ""
+    if clean.endswith("ies") and len(clean) > 4:
+        clean = clean[:-3] + "y"
+    elif clean.endswith("es") and len(clean) > 5 and not clean.endswith(("aes", "ees", "oes")):
+        clean = clean[:-2]
+    elif clean.endswith("s") and len(clean) > 4 and not clean.endswith("ss"):
+        clean = clean[:-1]
+    return clean
+
+
+def _theme_repeat_tokens(theme: dict[str, Any]) -> tuple[str, ...]:
+    title = str(theme.get("title") or "").lower()
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for raw in re.findall(r"[a-z0-9]+", title):
+        clean = _normalize_repeat_token(raw)
+        if clean and clean not in seen:
+            seen.add(clean)
+            tokens.append(clean)
+    return tuple(tokens)
+
+
+def _theme_repeat_title_key(theme: dict[str, Any]) -> str:
+    return " ".join(_theme_repeat_tokens(theme))
+
+
+def _theme_repeat_entry(theme: dict[str, Any], *, fallback_source: str = "") -> dict[str, Any] | None:
+    source = _theme_repeat_source(theme, fallback_source=fallback_source)
+    theme_key = _theme_key(theme)
+    title_key = _theme_repeat_title_key(theme)
+    if not source and not theme_key and not title_key:
+        return None
+    return {
+        "source": source,
+        "theme_key": theme_key,
+        "title_key": title_key,
+        "tokens": tuple(title_key.split()) if title_key else tuple(),
+    }
+
+
+def _is_fuzzy_repeat_title(title_key: str, tokens: tuple[str, ...], candidate: dict[str, Any]) -> bool:
+    candidate_title_key = str(candidate.get("title_key") or "")
+    candidate_tokens = tuple(candidate.get("tokens") or ())
+    if not title_key or not candidate_title_key or not tokens or not candidate_tokens:
+        return False
+    if title_key == candidate_title_key:
+        return True
+
+    current_set = set(tokens)
+    previous_set = set(candidate_tokens)
+    shared = current_set & previous_set
+    if len(shared) < PLATFORM_PULSE_FUZZY_MIN_SHARED_TOKENS:
+        return False
+
+    coverage = len(shared) / max(min(len(current_set), len(previous_set)), 1)
+    jaccard = len(shared) / max(len(current_set | previous_set), 1)
+    ratio = SequenceMatcher(None, title_key, candidate_title_key).ratio()
+    return coverage >= PLATFORM_PULSE_FUZZY_TOKEN_COVERAGE and (
+        ratio >= PLATFORM_PULSE_FUZZY_TITLE_RATIO or jaccard >= PLATFORM_PULSE_FUZZY_TOKEN_JACCARD
+    )
+
+
+def _is_history_repeat(theme: dict[str, Any], history_entries: list[dict[str, Any]]) -> bool:
+    current = _theme_repeat_entry(theme)
+    if not current:
+        return False
+    for previous in history_entries:
+        if current["theme_key"] and current["theme_key"] == previous.get("theme_key"):
+            return True
+        if _is_fuzzy_repeat_title(str(current.get("title_key") or ""), tuple(current.get("tokens") or ()), previous):
+            return True
+    return False
 
 
 def _compact_text(value: str, *, limit: int = 280) -> str:
@@ -784,6 +1112,37 @@ def _category_sections(items: list[dict[str, Any]]) -> list[Last30DaysCategorySe
     return sections
 
 
+def _platform_sections(
+    items: list[dict[str, Any]],
+    *,
+    ordered_sources: list[str],
+    history_entries: dict[str, list[dict[str, Any]]] | None = None,
+    limit: int | None = PLATFORM_SECTION_LIMIT,
+) -> list[Last30DaysPlatformSection]:
+    sections: list[Last30DaysPlatformSection] = []
+    history_entries = history_entries or {}
+    for source in ordered_sources:
+        canonical_source = _canonical_platform_source(source)
+        source_items = [
+            item for item in items if _canonical_platform_source(item.get("primary_source") or "") == canonical_source
+        ]
+        raw_post_count = len(source_items)
+        source_history = history_entries.get(canonical_source, [])
+        visible_items = [item for item in source_items if not _is_history_repeat(item, source_history)]
+        if limit is not None:
+            visible_items = visible_items[:limit]
+        sections.append(
+            Last30DaysPlatformSection(
+                platform=canonical_source,
+                post_count=len(visible_items),
+                raw_post_count=raw_post_count,
+                repeat_filtered_count=max(raw_post_count - len(visible_items), 0),
+                themes=[_theme_model(item) for item in visible_items],
+            )
+        )
+    return sections
+
+
 def _theme_model(item: dict[str, Any]) -> Last30DaysTheme:
     return Last30DaysTheme(
         theme_id=str(item.get("theme_id", _slug(item.get("title", "theme")))),
@@ -832,8 +1191,17 @@ def _theme_category(theme: dict[str, Any]) -> str:
     )[0][0]
 
 
+def _ordered_platform_sources(digest: Last30DaysDigest) -> list[str]:
+    ordered: list[str] = []
+    for source in [*digest.core_sources, *digest.experimental_sources, *digest.source_counts.keys()]:
+        clean = _canonical_platform_source(source)
+        if clean and clean not in ordered:
+            ordered.append(clean)
+    return ordered
+
+
 def _primary_source(theme: dict[str, Any]) -> str:
-    sources = [str(source) for source in (theme.get("sources") or []) if str(source)]
+    sources = [_canonical_platform_source(source) for source in (theme.get("sources") or []) if str(source)]
     if not sources:
         return "unknown"
     return sorted(sources, key=lambda source: (PRIMARY_SOURCE_PRIORITY.get(source, 99), source))[0]
@@ -880,7 +1248,51 @@ def _context_penalty(theme: dict[str, Any]) -> float:
     return penalty
 
 
-def _default_suggestions() -> list[str]:
+def _select_platform_pulse_global_themes(
+    items: list[dict[str, Any]],
+    *,
+    limit: int,
+    ordered_sources: list[str],
+) -> list[dict[str, Any]]:
+    allowed = set(ordered_sources)
+    selected: list[dict[str, Any]] = []
+    by_source: dict[str, int] = defaultdict(int)
+
+    for current in items:
+        source = str(current.get("primary_source") or "unknown")
+        if allowed and source not in allowed:
+            continue
+        if by_source[source] >= PLATFORM_PULSE_SOURCE_CAPS.get(source, 2):
+            continue
+        chosen = dict(current)
+        chosen["global_rank"] = len(selected) + 1
+        selected.append(chosen)
+        by_source[source] += 1
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _preset_search_sources(preset: dict[str, Any]) -> list[str]:
+    platform_sources = dict(preset.get("platform_sources", {}) or {})
+    if search := platform_sources.get("search"):
+        return [str(item).strip() for item in str(search).split(",") if str(item).strip()]
+    sources: list[str] = []
+    for source in [*preset.get("core_sources", []), *preset.get("experimental_sources", [])]:
+        clean = str(source).strip()
+        if clean and clean not in sources:
+            sources.append(clean)
+    return sources
+
+
+def _default_suggestions(*, profile: str) -> list[str]:
+    if profile == "platform-pulse":
+        return [
+            "Platform-native storylines",
+            "What each platform is discussing",
+            "English titles plus source links",
+            "Core vs experimental platform views",
+        ]
     return [
         "Big Tech launches",
         "Markets and regulation",
@@ -889,3 +1301,83 @@ def _default_suggestions() -> list[str]:
         "Open source builders",
         "Internet culture",
     ]
+
+
+def _canonical_platform_source(source: Any) -> str:
+    clean = str(source or "").strip().lower()
+    if not clean:
+        return ""
+    return _PLATFORM_SOURCE_ALIASES.get(clean, clean)
+
+
+def _canonical_platform_list(sources: list[Any]) -> list[str]:
+    ordered: list[str] = []
+    for source in sources:
+        canonical = _canonical_platform_source(source)
+        if canonical and canonical not in ordered:
+            ordered.append(canonical)
+    return ordered
+
+
+def _load_platform_pulse_history_entries(config: dict[str, Any], *, preset: dict[str, Any], now: datetime) -> dict[str, list[dict[str, Any]]]:
+    current = dict(config.get("last30days", {}) or {})
+    tz = timezone.utc
+    tz_name = str(current.get("timezone") or config.get("timezone") or "Europe/Moscow")
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = timezone.utc
+
+    current_date = now.astimezone(tz).date()
+    earliest_date = current_date - timedelta(days=PLATFORM_PULSE_HISTORY_DAYS)
+    obsidian_cfg = dict(preset.get("obsidian", {}) or {})
+    root_name = str(obsidian_cfg.get("root", "PlatformPulse"))
+    derived_root = LAST30DAYS_OBSIDIAN_ROOT / root_name / "Derived"
+    if not derived_root.exists():
+        return {}
+
+    history_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for date_dir in sorted(derived_root.iterdir()):
+        if not date_dir.is_dir():
+            continue
+        try:
+            folder_date = datetime.strptime(date_dir.name, "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if folder_date >= current_date or folder_date < earliest_date:
+            continue
+        for json_path in sorted(date_dir.glob("*.json")):
+            try:
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            for entry in _history_theme_entries(payload):
+                source = str(entry.get("source") or "")
+                if source:
+                    history_by_source[source].append(entry)
+    return dict(history_by_source)
+
+
+def _history_theme_entries(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for section in payload.get("platform_sections", []) or []:
+        inherited_source = str(section.get("platform") or "")
+        for theme in section.get("themes", []) or []:
+            entry = _theme_repeat_entry(theme, fallback_source=inherited_source)
+            if entry:
+                entries.append(entry)
+    for report in payload.get("reports", []) or []:
+        for theme in report.get("platform_posts", []) or []:
+            entry = _theme_repeat_entry(theme)
+            if entry:
+                entries.append(entry)
+        for theme in report.get("themes", []) or []:
+            entry = _theme_repeat_entry(theme)
+            if entry:
+                entries.append(entry)
+    for theme in payload.get("global_themes", []) or []:
+        entry = _theme_repeat_entry(theme)
+        if entry:
+            entries.append(entry)
+    return entries
