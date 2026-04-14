@@ -18,6 +18,12 @@ sys.modules.setdefault(
     "aiohttp",
     types.SimpleNamespace(ClientSession=object, ClientTimeout=lambda total=None: total),
 )
+docker_errors = types.SimpleNamespace(DockerException=Exception, NotFound=Exception)
+sys.modules.setdefault(
+    "docker",
+    types.SimpleNamespace(from_env=lambda: None, errors=docker_errors),
+)
+sys.modules.setdefault("docker.errors", docker_errors)
 
 import cron_bridge
 
@@ -25,6 +31,7 @@ import cron_bridge
 def sample_config() -> dict:
     return {
         "topic_name": "inbox-email",
+        "resolve_forwarded_sender": False,
         "labels": {
             "polled": "benka/polled",
             "low_signal": "benka/low-signal",
@@ -43,6 +50,84 @@ def make_thread(thread_id: str, *messages: dict) -> dict:
 
 
 class PollPrefilterTests(unittest.TestCase):
+    def test_flatten_window_messages_keeps_original_sender_when_forward_lookup_disabled(self) -> None:
+        config = sample_config()
+        thread_snapshots = [
+            {
+                "thread_id": "thread-forwarded",
+                "subject": "FW: Искусственный интеллект и большие данные",
+                "thread_preview": "",
+                "received_timestamp": "2026-04-14T09:53:08+00:00",
+                "timestamp": "2026-04-14T09:53:08+00:00",
+                "messages": [
+                    {
+                        "message_id": "msg-forwarded-1",
+                        "timestamp": "2026-04-14T09:53:08+00:00",
+                        "labels": [],
+                        "from_raw": "Denis Ermilov <denis.ermilov@cinimex.ru>",
+                        "from_name": "Denis Ermilov",
+                        "from_email": "denis.ermilov@cinimex.ru",
+                        "sender_domain": "cinimex.ru",
+                        "subject": "FW: Искусственный интеллект и большие данные",
+                        "preview": "",
+                        "text_excerpt": (
+                            "От: Elena Zabrodina\n"
+                            "Отправлено: 14 апреля 2026 г., 12:53:08 (UTC+03:00) Москва, Санкт-Петербург\n"
+                            "Кому: Ермилов Денис Игоревич\n"
+                            "Тема: Искусственный интеллект и большие данные - секция в рамках CNews Forum 18 июня"
+                        ),
+                        "has_attachments": False,
+                        "attachment_count": 0,
+                    }
+                ],
+            }
+        ]
+
+        messages = cron_bridge._flatten_window_messages(thread_snapshots=thread_snapshots, config=config)
+
+        self.assertEqual(messages[0]["sender_display"], "Denis Ermilov")
+
+    def test_flatten_window_messages_uses_forwarded_sender_for_work_email(self) -> None:
+        config = sample_config()
+        config["topic_name"] = "work-email"
+        config["resolve_forwarded_sender"] = True
+        thread_snapshots = [
+            {
+                "thread_id": "thread-forwarded",
+                "subject": "FW: Искусственный интеллект и большие данные",
+                "thread_preview": "",
+                "received_timestamp": "2026-04-14T09:53:08+00:00",
+                "timestamp": "2026-04-14T09:53:08+00:00",
+                "messages": [
+                    {
+                        "message_id": "msg-forwarded-1",
+                        "timestamp": "2026-04-14T09:53:08+00:00",
+                        "labels": [],
+                        "from_raw": "Denis Ermilov <denis.ermilov@cinimex.ru>",
+                        "from_name": "Denis Ermilov",
+                        "from_email": "denis.ermilov@cinimex.ru",
+                        "sender_domain": "cinimex.ru",
+                        "subject": "FW: Искусственный интеллект и большие данные",
+                        "preview": "",
+                        "text_excerpt": (
+                            "От: Elena Zabrodina\n"
+                            "Отправлено: 14 апреля 2026 г., 12:53:08 (UTC+03:00) Москва, Санкт-Петербург\n"
+                            "Кому: Ермилов Денис Игоревич\n"
+                            "Тема: Искусственный интеллект и большие данные - секция в рамках CNews Forum 18 июня"
+                        ),
+                        "has_attachments": False,
+                        "attachment_count": 0,
+                    }
+                ],
+            }
+        ]
+
+        messages = cron_bridge._flatten_window_messages(thread_snapshots=thread_snapshots, config=config)
+
+        self.assertEqual(messages[0]["sender_display"], "Elena Zabrodina")
+        self.assertEqual(messages[0]["from_name"], "Elena Zabrodina")
+        self.assertEqual(messages[0]["from_email"], "")
+
     def test_scheduled_digest_window_supports_slot_minutes(self) -> None:
         config = {
             "timezone": "Europe/Moscow",

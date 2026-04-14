@@ -25,7 +25,7 @@ Four **bridge services** run on cron-like schedules and handle the event-driven 
 - **signals-bridge** watches email and Telegram for market signals, runs deterministic rule matching, and enriches matches with a lightweight LLM call before posting to the `signals` topic.
 - **signals-bridge / Last30Days** runs once a day, fires 8 broad web search queries in parallel (plus 7 short HN-optimized companion queries), deduplicates and re-ranks themes by quality and source diversity, and posts a structured digest to the `last30daysTrend` topic.
 - **telethon-digest** reads 150–200 Telegram channels through a user session, clusters and summarizes with a medium-tier model, and posts a daily digest.
-- **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic.
+- **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic; the work inbox digest resolves the original sender inside forwarded emails.
 
 Everything is observable through a Telegram supergroup with 10 dedicated topics — effectively a personal feed that aggregates across all pipelines.
 
@@ -260,7 +260,7 @@ graph LR
 | **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OmniRoute `light` |
 | **telethon-digest** | Telegram channel digest (150–200 channels) | `127.0.0.1:8091` | OmniRoute `medium` |
 | **agentmail-email** | Personal inbox polling + scheduled digests | `127.0.0.1:8092` | OmniRoute `medium` |
-| **agentmail-work-email** | Work inbox polling + scheduled digests | `127.0.0.1:8094` | OmniRoute `medium` |
+| **agentmail-work-email** | Work inbox polling + scheduled digests with forwarded-sender resolution | `127.0.0.1:8094` | OmniRoute `medium` |
 
 ---
 
@@ -403,7 +403,7 @@ flowchart LR
 | `rag-log` | OpenClaw | on demand | memory/RAG observability |
 | `telegram-digest` | telethon-digest | 5× daily | curated channel digest |
 | `inbox-email` | agentmail-email | 4× daily | personal inbox recap |
-| `work-email` | agentmail-work-email | 8× daily | work inbox recap |
+| `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution for forwarded mail |
 | `last30daysTrend` | signals-bridge | daily 07:00 MSK | World Radar — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
 
@@ -537,6 +537,7 @@ export OPENCLAW_HOST="deploy@<server-host>"
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:18789/healthz'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:8020/health | python3 -m json.tool'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8093/health'
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8094/health | python3 -m json.tool'
 
 # OmniRoute dashboard (SSH tunnel)
 ssh -i ~/.ssh/id_rsa -L 20128:127.0.0.1:20128 "$OPENCLAW_HOST" -N &

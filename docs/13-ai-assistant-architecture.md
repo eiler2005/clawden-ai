@@ -572,7 +572,8 @@ agentmail-email-bridge internal scheduler (every 5m)
 
 The work-email runtime mirrors the same standalone-bridge architecture, but targets
 `workmail.denny@agentmail.to`, listens on `127.0.0.1:8094`, and publishes into Telegram topic
-`work-email`.
+`work-email`. It keeps the same mailbox-window rendering path, but additionally resolves the
+original sender from forwarded-message headers for work mail only.
 
 ### Work runtime specifics
 
@@ -583,6 +584,9 @@ The work-email runtime mirrors the same standalone-bridge architecture, but targ
 - Redis events stream: `ingest:events:email:work`
 - consumer group: `email-workers-work`
 - labels: `workmail/polled`, `workmail/low-signal`, `workmail/digested`
+- forwarded sender lookup from inline header blocks (`От:` / `From:`) is enabled only in this work
+  runtime, so forwarded messages can be grouped under the real author instead of the forwarding
+  account
 
 ### Live validation
 
@@ -590,6 +594,11 @@ The work-email runtime mirrors the same standalone-bridge architecture, but targ
 - internal scheduler poll finished with `exit_code=0`, scanned `10` threads, and emitted `6`
   derived events into `ingest:events:email:work`
 - manual `digest interval lookback=240` finished with `exit_code=0` on `127.0.0.1:8094`
+- on `2026-04-14`, the bridge was redeployed with work-only forwarded-sender resolution; post-deploy
+  `GET /health` / `GET /status` returned `last_exit_code=0` and the eight managed cron jobs stayed enabled
+- on `2026-04-14`, a live mailbox-window probe inside the bridge resolved forwarded CNews mail to
+  `Elena Zabrodina`, confirming that work-email grouping now uses the underlying author when the
+  inline forwarded headers are present
 
 ### Scoring
 

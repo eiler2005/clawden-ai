@@ -147,6 +147,7 @@ data["poll_bootstrap_lookback_minutes"] = 720
 data["poll_lag_grace_minutes"] = 15
 data["digest_bootstrap_lookback_hours"] = 24
 data["event_retention_days"] = 7
+data["resolve_forwarded_sender"] = True
 data["schedule_slots"] = [
     "08:30",
     "10:00",

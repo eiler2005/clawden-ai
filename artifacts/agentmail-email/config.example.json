@@ -11,6 +11,7 @@
   "poll_lag_grace_minutes": 15,
   "digest_bootstrap_lookback_hours": 24,
   "event_retention_days": 7,
+  "resolve_forwarded_sender": false,
   "schedule_slots": ["08:00", "13:00", "16:00", "20:00"],
   "digest_types": {
     "08:00": "morning",

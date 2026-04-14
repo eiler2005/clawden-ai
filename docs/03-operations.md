@@ -879,6 +879,11 @@ AgentMail HTTP API for `workmail.denny@agentmail.to`, uses its own internal 5-mi
 poll-based state/labeling, and publishes scheduled digests to Telegram topic `work-email` at
 `08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, and `19:00` MSK.
 
+Unlike the personal `inbox-email` runtime, the work digest can resolve the original sender from
+forwarded-message headers inside the email body. This is enabled only for `work-email`, so a mail
+forwarded by Denis still renders under the underlying author such as `Elena Zabrodina` when the
+message body contains a forwarded header block (`От:` / `From:`).
+
 Isolation guarantees:
 
 - separate Redis jobs stream: `ingest:jobs:email:work`
@@ -918,6 +923,12 @@ Current validation snapshot:
 - server-side image tests passed: `python -m unittest discover -s /app/tests` → `Ran 5 tests ... OK`
 - a manual `digest interval lookback=240` trigger finished with `exit_code=0` and applied
   `workmail/digested=1`
+- on `2026-04-14`, `scripts/deploy-agentmail-work-email.sh` redeployed the bridge with
+  forwarded-sender resolution enabled only for `work-email`; `GET /health` and `GET /status`
+  returned `last_exit_code=0`, the internal 5-minute poll completed cleanly after restart, and all
+  eight managed cron jobs remained present with `enabled=true`
+- on `2026-04-14`, a live mailbox-window check inside the running bridge showed forwarded CNews
+  invitations under `Elena Zabrodina` while calendar forwards still rendered as `Яндекс.Календарь`
 
 ### Managed OpenClaw jobs
 

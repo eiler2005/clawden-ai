@@ -59,6 +59,17 @@ TEXT_EXCERPT_LIMIT = int(os.environ.get("AGENTMAIL_TEXT_EXCERPT_LIMIT", "2400") 
 PREVIEW_LIMIT = int(os.environ.get("AGENTMAIL_PREVIEW_LIMIT", "420") or 420)
 SENDER_RE = re.compile(r"^\s*(?:(?P<name>.*?)\s*)?<(?P<email>[^>]+)>\s*$")
 REPLY_SUBJECT_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:", re.IGNORECASE)
+FORWARDED_SENDER_LINE_RE = re.compile(r"(?im)^(?:from|от)\s*:\s*(?P<value>.+?)\s*$")
+FORWARDED_HEADER_MARKERS = (
+    "from:",
+    "sent:",
+    "to:",
+    "subject:",
+    "от:",
+    "отправлено:",
+    "кому:",
+    "тема:",
+)
 ACTION_KEYWORDS = (
     "reply",
     "respond",
@@ -300,6 +311,31 @@ def _parse_sender(raw: str | None) -> tuple[str, str, str]:
     return name.strip().strip('"'), email.strip(), domain
 
 
+def _forwarded_sender_lookup_enabled(config: dict) -> bool:
+    return _as_bool(config.get("resolve_forwarded_sender"), False)
+
+
+def _extract_forwarded_sender(message: dict) -> tuple[str, str, str]:
+    text = "\n".join(
+        str(message.get(key) or "").strip()
+        for key in ("text_excerpt", "from_raw", "preview")
+        if str(message.get(key) or "").strip()
+    ).strip()
+    if not text:
+        return "", "", ""
+
+    lowered = text.lower()
+    marker_hits = sum(1 for marker in FORWARDED_HEADER_MARKERS if marker in lowered)
+    if marker_hits < 2:
+        return "", "", ""
+
+    match = FORWARDED_SENDER_LINE_RE.search(text)
+    if not match:
+        return "", "", ""
+
+    return _parse_sender(match.group("value"))
+
+
 def _message_attachment_count(message: dict) -> int:
     attachments = message.get("attachments") or []
     return len(attachments) if isinstance(attachments, list) else 0
@@ -434,11 +470,18 @@ def _collect_thread_snapshots(
 
 def _flatten_window_messages(*, thread_snapshots: list[dict], config: dict) -> list[dict]:
     messages: list[dict] = []
+    resolve_forwarded_sender = _forwarded_sender_lookup_enabled(config)
     for thread in thread_snapshots:
         for message in thread.get("messages", []) or []:
             sender_name = str(message.get("from_name") or thread.get("latest_from_name") or "").strip()
             sender_email = str(message.get("from_email") or thread.get("latest_from_email") or "").strip()
             sender_domain = str(message.get("sender_domain") or thread.get("latest_sender_domain") or "").strip()
+            if resolve_forwarded_sender:
+                forwarded_name, forwarded_email, forwarded_domain = _extract_forwarded_sender(message)
+                if forwarded_name or forwarded_email or forwarded_domain:
+                    sender_name = forwarded_name
+                    sender_email = forwarded_email
+                    sender_domain = forwarded_domain
             sender_display = sender_name or sender_email or sender_domain or "Unknown sender"
             preview = str(message.get("text_excerpt") or message.get("preview") or thread.get("thread_preview") or "").strip()
             entry = {

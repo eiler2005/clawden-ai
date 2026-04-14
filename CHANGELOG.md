@@ -80,6 +80,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   backed by `workmail.denny@agentmail.to`, with its own container `agentmail-work-email-bridge`,
   streams `ingest:jobs:email:work` / `ingest:events:email:work`, labels `workmail/*`, internal
   5-minute scheduler, and eight digest cron jobs from `08:30` to `19:00` Europe/Moscow.
+- **`artifacts/agentmail-email/cron_bridge.py` / `scripts/deploy-agentmail-work-email.sh`**:
+  `work-email` digests now resolve the original sender from forwarded-message headers (`От:` /
+  `From:`) before rendering sender counts and message lines, while personal `inbox-email` keeps the
+  previous direct-sender behavior.
 - **AgentMail digest windows**: scheduled runs are now anchored to the fixed Moscow schedule
   boundaries (`08:00`, `13:00`, `16:00`, `20:00`) instead of drifting after a manual trigger.
 - **`artifacts/telethon-digest/pulse.py`**: `Пульс дня` вынесен в отдельный модуль с общими
