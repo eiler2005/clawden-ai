@@ -237,3 +237,25 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
 - bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
 - status: running as `telethon-digest`; job timing managed by OpenClaw Gateway cron store
+
+### Signals Bridge
+
+- project root: `/opt/signals-bridge`
+- compose file: `/opt/signals-bridge/docker-compose.yml`
+- env file: `/opt/signals-bridge/signals.env` (gitignored secret)
+- source artifact: `artifacts/signals-bridge/`
+- network: `openclaw_default`
+- container: `signals-bridge` — always-on, internal 5-minute scheduler (no external cron needed)
+- port: `127.0.0.1:8093`
+- bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
+- Docker volumes: `signals-bridge-sessions`, `signals-bridge-state`
+- runtime config: `/opt/signals-bridge/config.json` (volume-mounted)
+- output targets: `signals` topic (5-min signal alerts), `last30daysTrend` topic (daily 07:00 MSK World Radar)
+- key env vars in `signals.env`:
+  - `OPENROUTER_API_KEY` — enables LLM planning/reranking in external last30days script (exits local_mode)
+  - `LAST30DAYS_PLANNER_MODEL=google/gemini-2.5-flash-lite` — overrides default invalid model ID
+  - `LAST30DAYS_RERANK_MODEL=google/gemini-2.5-flash-lite` — same for rerank step
+  - `OMNIROUTE_API_KEY` — signals enrichment via internal OmniRoute
+- Last30Days source counts (typical run): `github:38, x:29, hn:6–12`
+- Last30Days posted themes per run: 10 (6 before HN companion pass was added)
+- status: running; Last30Days scheduled at 07:00 MSK, signals every 5 min

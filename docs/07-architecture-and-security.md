@@ -279,6 +279,46 @@ These flags are explicitly not set, confirming no security downgrades:
 - `browser.ssrfPolicy.dangerouslyAllowPrivateNetwork` (set to `false`)
 - `tools.exec.applyPatch.workspaceOnly` (not set to `false`)
 
+## Signals Bridge & Last30Days Architecture
+
+### signals-bridge
+
+Standalone Python service (`/opt/signals-bridge/`, port 8093). Runs an internal 5-minute scheduler
+independent of OpenClaw Cron Jobs. Two responsibilities:
+
+1. **Signal routing** — polls allowlisted email (AgentMail) + Telegram sources, applies
+   deterministic matching (keyword/hashtag/author rules) before any LLM call, enriches matches
+   via OmniRoute `light` tier only (or local fallback), posts to `signals` Telegram topic.
+
+2. **Last30Days World Radar** — runs daily at 07:00 MSK. Executes 8 thematic composite queries
+   + 7 short HN-companion queries (parallel `ThreadPoolExecutor`) against the external
+   `last30days.py` script. Merges results, applies diversified ranking with per-source caps,
+   posts top 10 themes to `last30daysTrend` Telegram topic.
+
+**Provider configuration (signals.env):**
+
+| Env var | Value | Purpose |
+|---------|-------|---------|
+| `OPENROUTER_API_KEY` | `sk-or-v1-...` | Enables LLM planning/reranking in external script |
+| `LAST30DAYS_PLANNER_MODEL` | `google/gemini-2.5-flash-lite` | Overrides default (invalid) model ID |
+| `LAST30DAYS_RERANK_MODEL` | `google/gemini-2.5-flash-lite` | Same override for rerank step |
+| `OMNIROUTE_API_KEY` | `sk-...` | Signals enrichment via internal OmniRoute |
+
+**Source priority** (highest to lowest): `hn → web → reddit → youtube → bluesky → github → polymarket → x`
+
+**Per-source caps:** `hn:5, web:5, reddit:5, youtube:4, bluesky:3, github:4, polymarket:2, x:2`
+
+### YouTube source status
+
+YouTube is architecturally supported in the external last30days script (`lib/youtube_yt.py`, yt-dlp
+fallback). **Currently frozen** — yt-dlp is blocked by YouTube bot-detection on server IPs without
+browser cookies; full support requires `SCRAPECREATORS_API_KEY` (paid service). The integration
+point is preserved; enable by adding the key to `signals.env`.
+
+Reddit is similarly gated behind `SCRAPECREATORS_API_KEY`.
+
+---
+
 ## Recommended long-term hardening
 
 - pin the exact base image digest

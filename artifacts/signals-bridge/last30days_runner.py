@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -88,6 +89,18 @@ RESCUE_QUERY_BUNDLE = {
         "cybersecurity",
     ],
 }
+
+# Short queries optimized for HN Algolia (2-4 words). Run as a parallel HN-only
+# pass so high-quality HN stories surface even when long composite queries return 0 HN items.
+HN_COMPANION_QUERIES = [
+    "OpenAI",
+    "Anthropic",
+    "AI regulation",
+    "startup funding",
+    "open source",
+    "robotics",
+    "cybersecurity",
+]
 
 GITHUB_REPO_HINTS = {
     "open source developer tools MCP protocol agents GitHub trending repos infrastructure frameworks": [
@@ -270,7 +283,7 @@ WORLD_RADAR_PRESET_ID = "world-radar-v1"
 TELEGRAM_GLOBAL_LIMIT_DEFAULT = 10
 OBSIDIAN_GLOBAL_LIMIT = 15
 CATEGORY_SECTION_LIMIT = 10
-GLOBAL_CATEGORY_CAP = 3
+GLOBAL_CATEGORY_CAP = 5
 _DEFAULT_SOURCE_CAP = 3
 _SOURCE_CAPS = {
     "hn": 5,
@@ -346,6 +359,23 @@ def build_digest(config: dict, *, preset_id: str, now: datetime | None = None) -
                 existing["snippet"] = theme.get("snippet", existing.get("snippet", ""))
             if not existing.get("url") and theme.get("url"):
                 existing["url"] = theme["url"]
+
+    # HN companion pass: short Algolia-friendly queries against HN only (parallel).
+    # Merges HN themes that the long composite query strings miss.
+    for _hn_theme in _run_hn_companion_themes(HN_COMPANION_QUERIES):
+        _key = _theme_key(_hn_theme)
+        _existing = merged_themes.get(_key)
+        if not _existing:
+            merged_themes[_key] = dict(_hn_theme)
+        else:
+            _existing["score"] = max(float(_existing.get("score", 0.0)), float(_hn_theme.get("score", 0.0)))
+            _existing["sources"] = sorted(set(_existing.get("sources", [])) | set(_hn_theme.get("sources", [])))
+            _existing["queries"] = sorted(set(_existing.get("queries", [])) | set(_hn_theme.get("queries", [])))
+            _existing["source_titles"] = _merged_titles(_existing.get("source_titles", []), _hn_theme.get("source_titles", []))
+            if len(_hn_theme.get("snippet", "")) > len(_existing.get("snippet", "")):
+                _existing["snippet"] = _hn_theme.get("snippet", _existing.get("snippet", ""))
+            if not _existing.get("url") and _hn_theme.get("url"):
+                _existing["url"] = _hn_theme["url"]
 
     digest.source_counts = dict(sorted(aggregated_source_counts.items(), key=lambda item: (-item[1], item[0])))
     digest.errors_by_source = dict(sorted(aggregated_errors.items()))
@@ -441,21 +471,32 @@ def _run_query_with_rescue(query: str, *, platform_sources: dict[str, Any] | Non
     return merged
 
 
+_DEFAULT_SEARCH_SOURCES = "x,reddit,youtube,hackernews,github,bluesky,polymarket"
+
+
 def _build_platform_args(platform_sources: dict[str, Any]) -> list[str]:
-    """Build extra CLI args for per-platform source hints (excluding github, handled separately)."""
+    """Build extra CLI args for per-platform source hints (excluding github, handled separately).
+
+    Supported flags (verified against last30days.py CLI):
+      --search          comma-separated source list (x,reddit,youtube,hackernews,github,bluesky,polymarket)
+      --subreddits      comma-separated subreddit names
+      --tiktok-hashtags comma-separated hashtags (requires scrapecreators)
+      --tiktok-creators comma-separated creator handles (requires scrapecreators)
+
+    Unsupported / not available on current server:
+      web backend (native_web_backend=null), Instagram, HN feed filter, Bluesky packs, YouTube search
+    """
     args: list[str] = []
+
+    # Explicitly enable all available sources (otherwise script defaults to X only)
+    search = platform_sources.get("search") or _DEFAULT_SEARCH_SOURCES
+    args += ["--search", str(search)]
+
+    # Reddit subreddits (correct flag: --subreddits, not --reddit-sub)
     if reddit := platform_sources.get("reddit", {}):
         if feeds := reddit.get("feeds", []):
-            args += ["--reddit-sub", ",".join(feeds)]
-    if hn := platform_sources.get("hn", {}):
-        if feeds := hn.get("feeds", []):
-            args += ["--hn-feed", ",".join(feeds)]
-    if youtube := platform_sources.get("youtube", {}):
-        if terms := youtube.get("search_terms", []):
-            args += ["--youtube-search", ",".join(terms)]
-    if bluesky := platform_sources.get("bluesky", {}):
-        if packs := bluesky.get("starter_packs", []):
-            args += ["--bluesky-pack", ",".join(packs)]
+            args += ["--subreddits", ",".join(feeds)]
+
     return args
 
 
@@ -468,6 +509,33 @@ def _build_github_repos(query: str, platform_sources: dict[str, Any]) -> list[st
             repos.append("trending")
     seen: set[str] = set()
     return [r for r in repos if not (r in seen or seen.add(r))]  # type: ignore[func-returns-value]
+
+
+def _run_hn_companion_themes(queries: list[str]) -> list[dict[str, Any]]:
+    """Run short HN-optimized queries in parallel, return deduplicated themes."""
+    hn_only: dict[str, Any] = {"search": "hackernews"}
+    merged: dict[str, dict[str, Any]] = {}
+
+    def _run_one(q: str) -> list[dict[str, Any]]:
+        result = _run_query(q, platform_sources=hn_only)
+        if result.get("status") == "completed":
+            return list(result.get("themes", []))
+        return []
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_run_one, q): q for q in queries}
+        for future in as_completed(futures):
+            for theme in future.result():
+                key = _theme_key(theme)
+                existing = merged.get(key)
+                if not existing:
+                    merged[key] = dict(theme)
+                    continue
+                existing["score"] = max(float(existing.get("score", 0.0)), float(theme.get("score", 0.0)))
+                existing["sources"] = sorted(set(existing.get("sources", [])) | set(theme.get("sources", [])))
+                existing["queries"] = sorted(set(existing.get("queries", [])) | set(theme.get("queries", [])))
+
+    return list(merged.values())
 
 
 def _merge_reports(query: str, reports: list[dict[str, Any]]) -> dict[str, Any]:

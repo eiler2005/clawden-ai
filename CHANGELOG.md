@@ -8,6 +8,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **README redesign**: full rewrite with Mermaid architecture diagram (main graph LR + signals flow TD + Last30Days flow TD), services table, source coverage status table (including YouTube frozen status), model routing table, updated repository structure. Replaces ASCII art with GitHub-renderable diagrams.
+- **docs/07-architecture-and-security.md**: added "Signals Bridge & Last30Days Architecture" section — HN companion pass, provider config table, source priority, per-source caps, YouTube frozen status.
+- **docs/01-server-state.md**: added Signals Bridge state entry — ports, volumes, env vars, Last30Days metrics.
+- **Last30Days HN companion pass**: `_run_hn_companion_themes()` runs 7 short Algolia-friendly queries
+  (`OpenAI`, `Anthropic`, `AI regulation`, `startup funding`, `open source`, `robotics`, `cybersecurity`)
+  in parallel against HN only, then merges results into the main theme pool before ranking. HN now
+  surfaces reliably — verified 5 HN stories in top 10 themes vs 0 before.
+- **OpenRouter reasoning provider**: added `OPENROUTER_API_KEY` + `LAST30DAYS_PLANNER_MODEL` /
+  `LAST30DAYS_RERANK_MODEL` (`google/gemini-2.5-flash-lite`) to `signals.env` — external last30days
+  script now uses LLM planning/reranking instead of deterministic fallback (`local_mode` disabled).
+  Model ID `google/gemini-flash-2.0` was invalid on OpenRouter; corrected to `google/gemini-2.5-flash-lite`.
+
+
 - **`artifacts/signals-bridge/`**: new standalone signals pipeline artifact with internal 5-minute
   scheduler, AgentMail + Telethon adapters, deterministic rule matcher, Redis-backed event/state
   store, cheap OmniRoute-light enrichment path, Telegram poster, config/env templates, auth helper,

@@ -840,7 +840,9 @@ class Last30DaysDigestTests(unittest.TestCase):
 
         success = Mock(returncode=0, stdout=json.dumps(payload), stderr="")
         failure = Mock(returncode=1, stdout="", stderr="provider error")
-        mock_run.side_effect = [success, failure, success, success]
+        empty_hn = Mock(returncode=0, stdout=json.dumps({"clusters": [], "ranked_candidates": [], "items_by_source": {}, "errors_by_source": {}}), stderr="")
+        # 4 main queries + 7 HN companion queries (parallel, any order)
+        mock_run.side_effect = [success, failure, success, success, *([empty_hn] * 7)]
 
         config = normalize_config(sample_config())
         config["last30days"]["query_bundle"] = ["topic-1", "topic-2", "topic-3", "topic-4"]
@@ -1066,45 +1068,46 @@ class RadarRedesignTests(unittest.TestCase):
 
     # ── _build_platform_args ──────────────────────────────────────────────────
 
-    def test_build_platform_args_reddit_rss(self) -> None:
+    def test_build_platform_args_includes_search_flag(self) -> None:
+        from last30days_runner import _build_platform_args, _DEFAULT_SEARCH_SOURCES
+
+        # --search is always emitted (enables all sources, not just X)
+        args = _build_platform_args({})
+        self.assertIn("--search", args)
+        idx = args.index("--search")
+        self.assertEqual(args[idx + 1], _DEFAULT_SEARCH_SOURCES)
+
+    def test_build_platform_args_custom_search(self) -> None:
         from last30days_runner import _build_platform_args
 
-        args = _build_platform_args({"reddit": {"mode": "rss", "feeds": ["worldnews", "technology"]}})
-        self.assertIn("--reddit-sub", args)
-        idx = args.index("--reddit-sub")
+        args = _build_platform_args({"search": "x,reddit,youtube"})
+        idx = args.index("--search")
+        self.assertEqual(args[idx + 1], "x,reddit,youtube")
+
+    def test_build_platform_args_reddit_subreddits(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        # Correct flag is --subreddits (not --reddit-sub)
+        args = _build_platform_args({"reddit": {"feeds": ["worldnews", "technology"]}})
+        self.assertIn("--subreddits", args)
+        idx = args.index("--subreddits")
         self.assertIn("worldnews", args[idx + 1])
         self.assertIn("technology", args[idx + 1])
-
-    def test_build_platform_args_hn(self) -> None:
-        from last30days_runner import _build_platform_args
-
-        args = _build_platform_args({"hn": {"feeds": ["frontpage", "ask"]}})
-        self.assertIn("--hn-feed", args)
-        idx = args.index("--hn-feed")
-        self.assertIn("frontpage", args[idx + 1])
-
-    def test_build_platform_args_youtube_search(self) -> None:
-        from last30days_runner import _build_platform_args
-
-        args = _build_platform_args({"youtube": {"search_terms": ["AI news week"]}})
-        self.assertIn("--youtube-search", args)
-
-    def test_build_platform_args_bluesky_packs(self) -> None:
-        from last30days_runner import _build_platform_args
-
-        args = _build_platform_args({"bluesky": {"starter_packs": ["ai-researchers"]}})
-        self.assertIn("--bluesky-pack", args)
-
-    def test_build_platform_args_empty(self) -> None:
-        from last30days_runner import _build_platform_args
-
-        self.assertEqual(_build_platform_args({}), [])
 
     def test_build_platform_args_does_not_include_github(self) -> None:
         from last30days_runner import _build_platform_args
 
         args = _build_platform_args({"github": {"repos": ["owner/repo"], "trending": True}})
         self.assertNotIn("--github-repo", args)
+
+    def test_build_platform_args_no_unsupported_flags(self) -> None:
+        from last30days_runner import _build_platform_args
+
+        # These flags don't exist in the external script
+        args = _build_platform_args({"hn": {"feeds": ["frontpage"]}, "youtube": {"search_terms": ["AI"]}, "bluesky": {"starter_packs": ["x"]}})
+        self.assertNotIn("--hn-feed", args)
+        self.assertNotIn("--youtube-search", args)
+        self.assertNotIn("--bluesky-pack", args)
 
     # ── _build_github_repos ───────────────────────────────────────────────────
 
@@ -1280,13 +1283,16 @@ class RadarRedesignTests(unittest.TestCase):
         config = normalize_config(sample_config())
         config["last30days"]["query_bundle"] = ["world news query"]
         config["last30days"]["platform_sources"] = {
-            "reddit": {"mode": "rss", "feeds": ["worldnews", "geopolitics"]}
+            "reddit": {"feeds": ["worldnews", "geopolitics"]}
         }
         build_digest(config, preset_id="world-radar-v1", now=datetime(2026, 4, 12, 4, 0, tzinfo=timezone.utc))
 
         all_cmds = [call[0][0] for call in mock_run.call_args_list]
-        reddit_args = [cmd[cmd.index("--reddit-sub") + 1] for cmd in all_cmds if "--reddit-sub" in cmd]
-        self.assertTrue(reddit_args, "Expected --reddit-sub in subprocess calls")
+        # --search should always be present
+        self.assertTrue(any("--search" in cmd for cmd in all_cmds), "Expected --search in subprocess calls")
+        # --subreddits (correct flag, not --reddit-sub)
+        reddit_args = [cmd[cmd.index("--subreddits") + 1] for cmd in all_cmds if "--subreddits" in cmd]
+        self.assertTrue(reddit_args, "Expected --subreddits in subprocess calls")
         self.assertTrue(any("worldnews" in arg for arg in reddit_args))
         self.assertTrue(any("geopolitics" in arg for arg in reddit_args))
 

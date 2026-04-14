@@ -35,15 +35,12 @@
       "semiconductors chips supply chain trade war Taiwan defense cybersecurity national security"
     ],
     "platform_sources": {
+      "search": "x,reddit,youtube,hackernews,github,bluesky,polymarket",
       "reddit": {
-        "mode": "rss",
         "feeds": [
           "worldnews", "technology", "science", "Futurology",
           "economy", "geopolitics", "artificial", "OutOfTheLoop"
         ]
-      },
-      "hn": {
-        "feeds": ["frontpage", "ask", "show"]
       },
       "github": {
         "repos": [
@@ -52,14 +49,6 @@
           "langchain-ai/langchain", "ollama/ollama"
         ],
         "trending": true
-      },
-      "youtube": {
-        "search_terms": [
-          "AI news week", "tech industry analysis", "world events explained"
-        ]
-      },
-      "bluesky": {
-        "starter_packs": ["ai-researchers", "tech-journalists"]
       }
     }
   },

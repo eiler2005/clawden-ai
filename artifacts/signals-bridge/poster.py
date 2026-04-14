@@ -149,8 +149,10 @@ def render_last30days_digest(digest: Last30DaysDigest) -> str:
             source_badge = ""
             if theme.sources:
                 source_badge = f" <i>[{' · '.join(escape(s) for s in theme.sources[:3])}]</i>"
+            # Collapse newlines in title — multiline tweets break <b> tag splitting
+            title_clean = " ".join(escape(theme.title).split())
             lines.append("")
-            lines.append(f"{index}. <b>{escape(theme.title)}</b>{source_badge}")
+            lines.append(f"{index}. <b>{title_clean}</b>{source_badge}")
             if theme.snippet:
                 lines.append(escape(_compact_excerpt(theme.snippet, limit=200)))
             if theme.url:
