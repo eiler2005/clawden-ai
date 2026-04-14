@@ -14,8 +14,152 @@ This repository is the **ops & config package**: deployment runbooks, workspace 
 
 ---
 
+## Overview
+
+Most personal AI setups are chatbots — you open a window, type a question, get an answer, close it. **clawden-ai** works the other way around: the system runs continuously in the background and pushes information to you before you ask.
+
+At its core is **OpenClaw**, a self-hosted AI gateway running on a private Hetzner server. It brokers every request through **OmniRoute** — a three-tier model dispatcher that picks the right LLM for the job (expensive reasoning model for complex tasks, fast cheap model for classification, local fallback for everything else). Long-term memory lives in **LightRAG**, a knowledge graph that combines vector search with graph traversal, fed continuously from an Obsidian vault synced between the Mac and the server.
+
+Four **bridge services** run on cron-like schedules and handle the event-driven part:
+
+- **signals-bridge** watches email and Telegram for market signals, runs deterministic rule matching, and enriches matches with a lightweight LLM call before posting to the `signals` topic.
+- **signals-bridge / Last30Days** runs once a day, fires 8 broad web search queries in parallel (plus 7 short HN-optimized companion queries), deduplicates and re-ranks themes by quality and source diversity, and posts a structured digest to the `last30daysTrend` topic.
+- **telethon-digest** reads 150–200 Telegram channels through a user session, clusters and summarizes with a medium-tier model, and posts a daily digest.
+- **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic.
+
+Everything is observable through a Telegram supergroup with 10 dedicated topics — effectively a personal feed that aggregates across all pipelines.
+
+---
+
+## Features
+
+**Always-on assistant**
+- Responds to messages in Telegram 24/7 via a private bot with full tool access (shell, filesystem, browser, web search, subagents)
+- Routes every request to the right LLM tier automatically — expensive model for complex tasks, cheap model for background work
+- Remembers context across sessions through a knowledge graph backed by your Obsidian notes
+
+**Signals & market radar**
+- Watches email inboxes and Telegram chats for rule-matching signals (trading alerts, market events) — deterministic prefilter, LLM only on hits
+- Daily **World Radar** digest: 8 broad topic queries + 7 HN-optimized companion queries run in parallel, deduplicated, ranked by source quality, posted as a structured digest to Telegram
+- Source coverage: X/Twitter, HackerNews, GitHub trending, Reddit, Bluesky, Polymarket
+
+**Telegram channel digest**
+- Reads 150–200 Telegram channels through a personal Telethon session (not a bot — full channel access)
+- Clusters and summarizes with a medium-tier model, posts 5× daily
+
+**Email digests**
+- Polls two inboxes (personal + work) on a schedule, threads notable messages, posts summaries to dedicated Telegram topics
+
+**Knowledge graph memory**
+- LightRAG indexes the Obsidian vault (notes, journals, decisions) using graph + vector hybrid retrieval
+- Vault syncs bidirectionally between Mac and server via Syncthing — write a note on Mac, it's searchable on the server within minutes
+
+**Self-hosted, private**
+- Runs entirely on a single private Hetzner server — no SaaS, no data sent to third parties beyond the LLM API calls you configure
+- All external access goes through Caddy with TLS + mTLS client certificate authentication
+- Secrets never leave the server; this repo contains only sanitized config artifacts and runbooks
+
+---
+
+## How It Works
+
+Everything runs inside Docker containers on a single Hetzner CX23 (3 vCPU / 4 GB RAM, Ubuntu 24.04). Caddy is the only public-facing service — it terminates TLS and enforces mTLS client certificate auth before anything reaches OpenClaw. All other services communicate over the private `openclaw_default` Docker bridge network.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Hetzner CX23 (3 vCPU / 4 GB RAM, Ubuntu 24.04)                        │
+│                                                                         │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  Caddy (reverse proxy)                       │ ← 443 / 80           │
+│  │  TLS termination + mTLS client cert auth     │                      │
+│  └──────────────────┬───────────────────────────┘                      │
+│                     │ 127.0.0.1:18789                                  │
+│  ┌──────────────────▼───────────────────────────┐                      │
+│  │  openclaw-gateway  (Docker)                  │                      │
+│  │                                              │──→ OpenAI gpt-5.4    │
+│  │  tools: shell · fs · web · browser           │    (primary, OAuth)  │
+│  │         subagents · sessions · cron          │                      │
+│  │  volume: /opt/openclaw/config/  → state      │──→ omniroute:20129   │
+│  │          /opt/openclaw/workspace/ → bot      │    (smart/med/light) │
+│  │          /opt/obsidian-vault/ → vault        │                      │
+│  └──────────────────┬───────────────────────────┘                      │
+│                     │ Docker network (openclaw_default)                │
+│  ┌──────────────────▼──────────────────────────────────────────────┐  │
+│  │  OmniRoute  (Docker)                                            │  │
+│  │  127.0.0.1:20128 (dashboard)  ·  127.0.0.1:20129 (API)         │  │
+│  │                                                                  │  │
+│  │  smart  → Kiro/Claude Sonnet → OpenRouter/Claude → OR/Kimi      │  │
+│  │  medium → Kiro/Claude Haiku  → Gemini Flash → OpenRouter/Qwen3  │  │
+│  │  light  → Gemini Flash → OpenRouter/Qwen3-8B → Kiro/Haiku       │  │
+│  └──────────────────┬───────────────────────────────────────────────┘  │
+│                     │                                                   │
+│  ┌──────────────────▼───────────────────────────┐                      │
+│  │  LightRAG  (Docker)   127.0.0.1:8020         │                      │
+│  │  LLM: Gemini 2.5 Flash Lite                  │                      │
+│  │  Embedding: gemini-embedding-001 (dim=3072)  │                      │
+│  │  Storage: NetworkX · NanoVectorDB · JsonKV   │                      │
+│  │  inputs: workspace/ + obsidian/ (read-only)  │                      │
+│  └──────────────────────────────────────────────┘                      │
+│                                                                         │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  integration-bus-redis  (Docker)             │                      │
+│  │  Redis 7 Streams — async integration bus     │                      │
+│  │  streams: ingest:jobs:* · ingest:events:*    │                      │
+│  │           ingest:rag:queue · dlq:failed       │                      │
+│  └──────────────────┬───────────────────────────┘                      │
+│                     │                                                   │
+│  ┌──────────────────▼───────────────────────────┐                      │
+│  │  signals-bridge  (Docker)   :8093            │                      │
+│  │  scheduler every 5 min → email + Telegram    │                      │
+│  │  deterministic prefilter → OmniRoute light   │                      │
+│  │  → signals topic  (+ daily Last30Days radar) │                      │
+│  └──────────────────────────────────────────────┘                      │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  telethon-digest  (Docker)   :8091           │                      │
+│  │  150–200 Telegram channels via MTProto       │                      │
+│  │  → OmniRoute medium → telegram-digest topic  │                      │
+│  │  schedule: 08/11/14/17/21 Moscow             │                      │
+│  └──────────────────────────────────────────────┘                      │
+│  ┌──────────────────────────────────────────────┐                      │
+│  │  agentmail-email-bridge  (Docker)   :8092    │                      │
+│  │  agentmail-work-email    (Docker)   :8094    │                      │
+│  │  IMAP poll → thread snapshots → LLM         │                      │
+│  │  → inbox-email / work-email topics           │                      │
+│  └──────────────────────────────────────────────┘                      │
+│                                                                         │
+│  /opt/obsidian-vault/ ← Syncthing bidirectional sync with Mac          │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Request Path (interactive)
+
+When Denis sends a message to the Telegram bot:
+
+1. **Caddy** terminates TLS and forwards to OpenClaw over mTLS
+2. **OpenClaw** classifies intent and picks a routing tier
+3. **OmniRoute** selects the best available model (smart → medium → light, with provider failover)
+4. If context is needed, **LightRAG** runs a hybrid vector + graph query over the Obsidian vault
+5. Response streams back through Caddy to Telegram
+
+### Event Pipeline (background)
+
+Bridge services run on independent schedules, triggered via **Redis Streams**:
+
+1. Scheduler fires → XADD to `ingest:jobs:*` stream
+2. Bridge consumer picks up the job, polls the source (email IMAP, Telegram MTProto, web search)
+3. Results enriched via OmniRoute (light or medium tier) and formatted for Telegram
+4. Bridge posts to the target topic; events land in `ingest:events:*` for downstream consumption
+
+### Memory & Context
+
+The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. LightRAG indexes the vault continuously — combining vector embeddings and graph relationships — so conversations can reference past notes and decisions without manual copy-paste.
+
+---
+
 ## Table of Contents
 
+- [Overview](#overview)
+- [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Services](#services)
 - [Data Flow](#data-flow)
