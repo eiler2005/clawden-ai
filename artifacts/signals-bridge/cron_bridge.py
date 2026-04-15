@@ -26,10 +26,10 @@ from last30days_persistence import persist_last30days_digest
 from last30days_runner import build_digest, write_signal_digest
 from omniroute_client import prepare_signal_batch
 from poster import (
+    SUPERGROUP_ID,
+    TOPIC_ID,
     copy_message,
-    post_document_message,
     post_html_message,
-    post_photo_message,
     post_plain_text_message,
     render_batch,
     render_last30days_digest,
@@ -105,13 +105,6 @@ def _render_telegram_delivery_text(event, text: str | None = None) -> str:
     return "\n".join(lines).strip()
 
 
-def _split_media_caption(text: str, limit: int = 1024) -> tuple[str, str]:
-    value = str(text or "").strip()
-    if len(value) <= limit:
-        return value, ""
-    return value[:limit].rstrip(), value[limit:].lstrip()
-
-
 async def _relay_email_event(event) -> bool:
     body = _render_email_delivery_text(event)
     if not body:
@@ -124,6 +117,50 @@ async def _relay_telegram_text_event(event, *, text: str | None = None) -> bool:
     if not body:
         return False
     return await post_plain_text_message(body)
+
+
+async def _forward_telegram_event_via_telethon(client, event) -> bool:
+    from telethon import functions
+
+    chat_id = int(event.source_chat_id or 0)
+    message_id = int(event.source_message_id or 0)
+    if not chat_id or not message_id:
+        return False
+    try:
+        await client(
+            functions.messages.ForwardMessagesRequest(
+                from_peer=chat_id,
+                id=[message_id],
+                to_peer=SUPERGROUP_ID,
+                top_msg_id=TOPIC_ID if TOPIC_ID > 0 else None,
+            )
+        )
+    except Exception as exc:
+        logger.warning(
+            "Telethon forward fallback failed for telegram source %s:%s: %s",
+            chat_id,
+            message_id,
+            exc,
+        )
+        return False
+    return True
+
+
+async def _resend_telegram_message_via_telethon(client, message) -> bool:
+    try:
+        await client.send_message(
+            SUPERGROUP_ID,
+            message,
+            reply_to=TOPIC_ID if TOPIC_ID > 0 else None,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Telethon resend fallback failed for telegram message %s: %s",
+            getattr(message, "id", "unknown"),
+            exc,
+        )
+        return False
+    return True
 
 
 async def _relay_telegram_event_via_telethon(event) -> bool:
@@ -139,38 +176,17 @@ async def _relay_telegram_event_via_telethon(event) -> bool:
         raise RuntimeError("signals telethon session is not authorized")
 
     try:
+        if await _forward_telegram_event_via_telethon(client, event):
+            return True
+
         message = await client.get_messages(chat_id, ids=message_id)
         if message is None:
             return await _relay_telegram_text_event(event)
 
+        if await _resend_telegram_message_via_telethon(client, message):
+            return True
+
         delivery_text = str(getattr(message, "message", "") or event.delivery_text or "").strip()
-        if getattr(message, "photo", None):
-            payload = await client.download_media(message, file=bytes)
-            if isinstance(payload, bytes) and payload:
-                caption, remainder = _split_media_caption(delivery_text)
-                if not await post_photo_message(data=payload, caption=caption):
-                    return False
-                if remainder:
-                    return await post_plain_text_message(remainder)
-                return True
-
-        if getattr(message, "document", None):
-            payload = await client.download_media(message, file=bytes)
-            if isinstance(payload, bytes) and payload:
-                file_name = getattr(getattr(message, "file", None), "name", "") or f"telegram-{message_id}.bin"
-                content_type = getattr(getattr(message, "file", None), "mime_type", "") or "application/octet-stream"
-                caption, remainder = _split_media_caption(delivery_text)
-                if not await post_document_message(
-                    data=payload,
-                    filename=file_name,
-                    caption=caption,
-                    content_type=content_type,
-                ):
-                    return False
-                if remainder:
-                    return await post_plain_text_message(remainder)
-                return True
-
         return await _relay_telegram_text_event(event, text=delivery_text)
     finally:
         await client.disconnect()

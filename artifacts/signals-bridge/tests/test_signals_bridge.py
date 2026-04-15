@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-100123")
+os.environ.setdefault("SIGNALS_TOPIC_ID", "414")
 
 if "aiohttp" not in sys.modules:
     sys.modules["aiohttp"] = types.SimpleNamespace(ClientSession=object, ClientTimeout=lambda total=None: None)
@@ -33,7 +34,7 @@ os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-1001")
 
 from config_store import normalize_config, validate_config
-from cron_bridge import _deliver_source_contexts
+from cron_bridge import _deliver_source_contexts, _relay_telegram_event_via_telethon
 from email_adapter import _window_messages
 from event_store import append_events, append_new_events
 from last30days_persistence import _render_expanded_markdown
@@ -872,6 +873,116 @@ class DeliveryAndStateTests(unittest.TestCase):
         self.assertEqual((delivered, attempted), (2, 2))
         telegram_mock.assert_awaited_once_with(telegram_event)
         email_mock.assert_awaited_once_with(email_event)
+
+    def test_relay_telegram_event_via_telethon_forwards_into_topic(self) -> None:
+        class FakeForwardMessagesRequest:
+            def __init__(self, **kwargs) -> None:
+                self.from_peer = kwargs["from_peer"]
+                self.id = kwargs["id"]
+                self.to_peer = kwargs["to_peer"]
+                self.top_msg_id = kwargs.get("top_msg_id")
+
+        telegram_event = SignalEvent(
+            event_id="tg-1",
+            ruleset_id="trading",
+            rule_id="telegram-rule",
+            source_type="telegram",
+            source_id="telegram-trader-speki",
+            external_ref="chat:5",
+            occurred_at="2026-04-15T10:17:00+00:00",
+            captured_at="2026-04-15T10:18:00+00:00",
+            author="Trader",
+            title="SI intraday update",
+            summary="Short summary",
+            source_link="https://t.me/c/1/5",
+            source_excerpt="Короткий excerpt",
+            delivery_text="Полный текст из Telegram",
+            source_chat_id=-1001,
+            source_message_id=5,
+            tags=["si"],
+            confidence=0.76,
+        )
+        client = AsyncMock()
+        client.connect = AsyncMock()
+        client.is_user_authorized = AsyncMock(return_value=True)
+        client.disconnect = AsyncMock()
+        client.get_messages = AsyncMock()
+        client.send_message = AsyncMock()
+        fake_telethon = types.SimpleNamespace(
+            functions=types.SimpleNamespace(
+                messages=types.SimpleNamespace(ForwardMessagesRequest=FakeForwardMessagesRequest)
+            )
+        )
+
+        with patch("cron_bridge.build_telethon_client", return_value=client), patch("cron_bridge.SUPERGROUP_ID", -100555), patch(
+            "cron_bridge.TOPIC_ID",
+            414,
+        ), patch.dict(sys.modules, {"telethon": fake_telethon}):
+            delivered = asyncio.run(_relay_telegram_event_via_telethon(telegram_event))
+
+        self.assertTrue(delivered)
+        client.assert_awaited_once()
+        request = client.await_args.args[0]
+        self.assertEqual(request.from_peer, -1001)
+        self.assertEqual(request.id, [5])
+        self.assertEqual(request.to_peer, -100555)
+        self.assertEqual(request.top_msg_id, 414)
+        client.get_messages.assert_not_awaited()
+        client.send_message.assert_not_awaited()
+        client.disconnect.assert_awaited_once()
+
+    def test_relay_telegram_event_via_telethon_resends_message_object_when_forward_fails(self) -> None:
+        class FakeForwardMessagesRequest:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+        telegram_event = SignalEvent(
+            event_id="tg-1",
+            ruleset_id="trading",
+            rule_id="telegram-rule",
+            source_type="telegram",
+            source_id="telegram-trader-speki",
+            external_ref="chat:5",
+            occurred_at="2026-04-15T10:17:00+00:00",
+            captured_at="2026-04-15T10:18:00+00:00",
+            author="Trader",
+            title="SI intraday update",
+            summary="Short summary",
+            source_link="https://t.me/c/1/5",
+            source_excerpt="Короткий excerpt",
+            delivery_text="Полный текст из Telegram",
+            source_chat_id=-1001,
+            source_message_id=5,
+            tags=["si"],
+            confidence=0.76,
+        )
+        source_message = types.SimpleNamespace(id=5, message="Полный текст из Telegram", entities=["keep-links"], media=object())
+        client = AsyncMock(side_effect=RuntimeError("copy blocked"))
+        client.connect = AsyncMock()
+        client.is_user_authorized = AsyncMock(return_value=True)
+        client.disconnect = AsyncMock()
+        client.get_messages = AsyncMock(return_value=source_message)
+        client.send_message = AsyncMock(return_value=object())
+        fake_telethon = types.SimpleNamespace(
+            functions=types.SimpleNamespace(
+                messages=types.SimpleNamespace(ForwardMessagesRequest=FakeForwardMessagesRequest)
+            )
+        )
+
+        with patch("cron_bridge.build_telethon_client", return_value=client), patch("cron_bridge.SUPERGROUP_ID", -100555), patch(
+            "cron_bridge.TOPIC_ID",
+            414,
+        ), patch.dict(sys.modules, {"telethon": fake_telethon}), patch(
+            "cron_bridge.post_plain_text_message",
+            new=AsyncMock(return_value=True),
+        ) as plain_mock:
+            delivered = asyncio.run(_relay_telegram_event_via_telethon(telegram_event))
+
+        self.assertTrue(delivered)
+        client.get_messages.assert_awaited_once_with(-1001, ids=5)
+        client.send_message.assert_awaited_once_with(-100555, source_message, reply_to=414)
+        plain_mock.assert_not_awaited()
+        client.disconnect.assert_awaited_once()
 
     def test_render_batch_prefers_source_text_for_email_and_telegram(self) -> None:
         text = render_batch(

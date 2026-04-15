@@ -87,6 +87,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and signals so the Telegram architecture is understandable directly from the repo front page.
 
 ### Changed
+- **Signals Telegram relay fallback**: when bot-side `copyMessage` is unavailable, `signals-bridge`
+  now relays Telegram originals through Telethon first, forwarding into the `signals` topic or
+  resending the original `Message` object with its formatting intact instead of reuploading media
+  through the Bot API. This preserves linked entities and avoids splitting long relayed posts into
+  a second plain-text message in the common fallback path.
 - **LLM-Wiki cutover strategy**: rollout is now safe by default — no destructive `rm -rf
   /opt/obsidian-vault/*`; legacy vault content can remain on disk but stays out of the active
   LightRAG ingest boundary.
