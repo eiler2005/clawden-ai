@@ -264,33 +264,168 @@ def _platform_display_name(source: str) -> str:
     return _PLATFORM_LABELS.get(source, source)
 
 
-async def post_html_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:
+def _resolve_target(chat_id: int | None, topic_id: int | None) -> tuple[int, int]:
+    resolved_chat_id = int(chat_id if chat_id is not None else SUPERGROUP_ID)
+    resolved_topic_id = int(topic_id if topic_id is not None else TOPIC_ID)
+    return resolved_chat_id, resolved_topic_id
+
+
+async def _telegram_json_request(method: str, payload: dict) -> bool:
     import aiohttp
 
-    chunks = _split_text(text)
-    resolved_chat_id = int(chat_id if chat_id is not None else SUPERGROUP_ID)
-    resolved_topic_id = topic_id if topic_id is not None else TOPIC_ID
-    async with aiohttp.ClientSession() as session:
-        for chunk in chunks:
-            payload = {
-                "chat_id": resolved_chat_id,
-                "text": chunk,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            }
-            if resolved_topic_id:
-                payload["message_thread_id"] = int(resolved_topic_id)
-            try:
-                async with session.post(
-                    f"{BASE_URL}/sendMessage",
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=15),
-                ) as resp:
-                    data = await resp.json()
-                    if not data.get("ok"):
-                        logger.error("Telegram API error: %s", data)
-                        return False
-            except Exception as exc:
-                logger.error("Failed to post signals batch: %s", exc)
-                return False
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{BASE_URL}/{method}",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    logger.error("Telegram API error on %s: %s", method, data)
+                    return False
+    except Exception as exc:
+        logger.error("Failed Telegram API call %s: %s", method, exc)
+        return False
     return True
+
+
+async def _telegram_form_request(method: str, form_data) -> bool:
+    import aiohttp
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{BASE_URL}/{method}",
+                data=form_data,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    logger.error("Telegram API error on %s: %s", method, data)
+                    return False
+    except Exception as exc:
+        logger.error("Failed Telegram API form call %s: %s", method, exc)
+        return False
+    return True
+
+
+async def post_html_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:
+    chunks = _split_text(text)
+    resolved_chat_id, resolved_topic_id = _resolve_target(chat_id, topic_id)
+    for chunk in chunks:
+        payload = {
+            "chat_id": resolved_chat_id,
+            "text": chunk,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if resolved_topic_id:
+            payload["message_thread_id"] = resolved_topic_id
+        if not await _telegram_json_request("sendMessage", payload):
+            return False
+    return True
+
+
+async def post_plain_text_message(text: str, *, chat_id: int | None = None, topic_id: int | None = None) -> bool:
+    chunks = _split_text(text)
+    resolved_chat_id, resolved_topic_id = _resolve_target(chat_id, topic_id)
+    for chunk in chunks:
+        payload = {
+            "chat_id": resolved_chat_id,
+            "text": chunk,
+            "disable_web_page_preview": True,
+        }
+        if resolved_topic_id:
+            payload["message_thread_id"] = resolved_topic_id
+        if not await _telegram_json_request("sendMessage", payload):
+            return False
+    return True
+
+
+async def copy_message(
+    *,
+    from_chat_id: int,
+    message_id: int,
+    chat_id: int | None = None,
+    topic_id: int | None = None,
+) -> bool:
+    resolved_chat_id, resolved_topic_id = _resolve_target(chat_id, topic_id)
+    payload = {
+        "chat_id": resolved_chat_id,
+        "from_chat_id": int(from_chat_id),
+        "message_id": int(message_id),
+    }
+    if resolved_topic_id:
+        payload["message_thread_id"] = resolved_topic_id
+    return await _telegram_json_request("copyMessage", payload)
+
+
+async def post_binary_message(
+    *,
+    method: str,
+    field_name: str,
+    data: bytes,
+    filename: str,
+    caption: str = "",
+    content_type: str = "application/octet-stream",
+    chat_id: int | None = None,
+    topic_id: int | None = None,
+) -> bool:
+    import aiohttp
+
+    resolved_chat_id, resolved_topic_id = _resolve_target(chat_id, topic_id)
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(resolved_chat_id))
+    if resolved_topic_id:
+        form.add_field("message_thread_id", str(resolved_topic_id))
+    if caption:
+        form.add_field("caption", caption)
+    form.add_field(
+        field_name,
+        data,
+        filename=filename,
+        content_type=content_type,
+    )
+    return await _telegram_form_request(method, form)
+
+
+async def post_photo_message(
+    *,
+    data: bytes,
+    filename: str = "telegram-photo.jpg",
+    caption: str = "",
+    chat_id: int | None = None,
+    topic_id: int | None = None,
+) -> bool:
+    return await post_binary_message(
+        method="sendPhoto",
+        field_name="photo",
+        data=data,
+        filename=filename,
+        caption=caption,
+        content_type="image/jpeg",
+        chat_id=chat_id,
+        topic_id=topic_id,
+    )
+
+
+async def post_document_message(
+    *,
+    data: bytes,
+    filename: str = "telegram-document.bin",
+    caption: str = "",
+    content_type: str = "application/octet-stream",
+    chat_id: int | None = None,
+    topic_id: int | None = None,
+) -> bool:
+    return await post_binary_message(
+        method="sendDocument",
+        field_name="document",
+        data=data,
+        filename=filename,
+        caption=caption,
+        content_type=content_type,
+        chat_id=chat_id,
+        topic_id=topic_id,
+    )

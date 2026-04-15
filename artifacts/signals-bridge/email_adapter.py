@@ -83,6 +83,7 @@ def _window_messages(*, thread: dict, since_dt: datetime, until_dt: datetime) ->
         timestamp = _parse_dt(item.get("timestamp"))
         if timestamp is None or timestamp < since_dt or timestamp > until_dt:
             continue
+        full_text = _resolve_text_excerpt(item=item, thread=thread)
         raw_from = str(item.get("from") or "").strip()
         from_name, from_email, sender_domain = _parse_sender(raw_from)
         prepared.append(
@@ -95,7 +96,8 @@ def _window_messages(*, thread: dict, since_dt: datetime, until_dt: datetime) ->
                 "sender_domain": sender_domain,
                 "subject": str(item.get("subject") or thread.get("subject") or "(no subject)"),
                 "preview": truncate(str(item.get("preview") or thread.get("preview") or ""), 320),
-                "text_excerpt": truncate(_resolve_text_excerpt(item=item, thread=thread), 1200),
+                "text_excerpt": truncate(full_text, 1200),
+                "delivery_text": truncate(full_text, 3500),
             }
         )
     return prepared

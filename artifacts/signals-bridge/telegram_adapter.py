@@ -56,6 +56,7 @@ async def collect_telegram_candidates(
             "sender_id": sender_id,
             "author": _author_name(msg, sender_id),
             "text": truncate(msg.message or "", 1800),
+            "delivery_text": truncate(msg.message or "", 3500),
             "timestamp": msg_dt.isoformat(),
             "has_video": bool(getattr(msg, "video", None)),
         }

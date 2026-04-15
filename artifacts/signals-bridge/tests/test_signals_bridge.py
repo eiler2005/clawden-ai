@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -8,7 +9,7 @@ import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,10 +19,21 @@ os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-100123")
 
 if "aiohttp" not in sys.modules:
     sys.modules["aiohttp"] = types.SimpleNamespace(ClientSession=object, ClientTimeout=lambda total=None: None)
+if "redis" not in sys.modules:
+    redis_error = type("RedisError", (Exception,), {})
+    response_error = type("ResponseError", (redis_error,), {})
+    sys.modules["redis"] = types.SimpleNamespace(
+        Redis=object,
+        from_url=lambda *args, **kwargs: None,
+        exceptions=types.SimpleNamespace(RedisError=redis_error, ResponseError=response_error),
+    )
+if "dotenv" not in sys.modules:
+    sys.modules["dotenv"] = types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None)
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token")
 os.environ.setdefault("SIGNALS_SUPERGROUP_ID", "-1001")
 
 from config_store import normalize_config, validate_config
+from cron_bridge import _deliver_source_contexts
 from email_adapter import _window_messages
 from event_store import append_events, append_new_events
 from last30days_persistence import _render_expanded_markdown
@@ -806,7 +818,60 @@ class DeliveryAndStateTests(unittest.TestCase):
         )
         batch = _local_fallback_batch(candidates=[email_candidate, tg_candidate], topic_name="signals")
         self.assertEqual(batch.events[0].source_excerpt, "Full email excerpt about SI and setup")
+        self.assertEqual(batch.events[0].delivery_text, "Full email excerpt about SI and setup")
         self.assertEqual(batch.events[1].source_link, "https://t.me/c/1/5")
+        self.assertEqual(batch.events[1].source_chat_id, -1001)
+        self.assertEqual(batch.events[1].source_message_id, 5)
+        self.assertEqual(batch.events[1].delivery_text, "Похожий взгляд на #si")
+
+    def test_deliver_source_contexts_relays_telegram_and_email(self) -> None:
+        telegram_event = SignalEvent(
+            event_id="tg-1",
+            ruleset_id="trading",
+            rule_id="telegram-rule",
+            source_type="telegram",
+            source_id="telegram-trader-speki",
+            external_ref="chat:5",
+            occurred_at="2026-04-15T10:17:00+00:00",
+            captured_at="2026-04-15T10:18:00+00:00",
+            author="Trader",
+            title="SI intraday update",
+            summary="Short summary",
+            source_link="https://t.me/c/1/5",
+            source_excerpt="Короткий excerpt",
+            delivery_text="Полный текст из Telegram",
+            source_chat_id=-1001,
+            source_message_id=5,
+            tags=["si"],
+            confidence=0.76,
+        )
+        email_event = SignalEvent(
+            event_id="email-1",
+            ruleset_id="trading",
+            rule_id="email-rule",
+            source_type="email",
+            source_id="email-tradingview",
+            external_ref="msg-1",
+            occurred_at="2026-04-15T10:14:00+00:00",
+            captured_at="2026-04-15T10:15:00+00:00",
+            author="TradingView",
+            title="Mamontiara",
+            summary="Short summary",
+            source_excerpt="Короткий excerpt",
+            delivery_text="Полный текст письма",
+            tags=["si"],
+            confidence=0.76,
+        )
+
+        with patch("cron_bridge._relay_telegram_event", new=AsyncMock(return_value=True)) as telegram_mock, patch(
+            "cron_bridge._relay_email_event",
+            new=AsyncMock(return_value=True),
+        ) as email_mock:
+            delivered, attempted = asyncio.run(_deliver_source_contexts([telegram_event, email_event]))
+
+        self.assertEqual((delivered, attempted), (2, 2))
+        telegram_mock.assert_awaited_once_with(telegram_event)
+        email_mock.assert_awaited_once_with(email_event)
 
     def test_render_batch_prefers_source_text_for_email_and_telegram(self) -> None:
         text = render_batch(

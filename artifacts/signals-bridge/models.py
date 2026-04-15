@@ -42,6 +42,8 @@ class SignalCandidate:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_prompt_payload(self) -> dict[str, Any]:
+        prompt_metadata = dict(self.metadata)
+        prompt_metadata.pop("delivery_text", None)
         return {
             "rule_id": self.rule_id,
             "source_type": self.source_type,
@@ -52,7 +54,7 @@ class SignalCandidate:
             "subject": self.subject,
             "excerpt": self.excerpt,
             "tags": self.tags,
-            "metadata": self.metadata,
+            "metadata": prompt_metadata,
         }
 
 
@@ -71,6 +73,9 @@ class SignalEvent:
     summary: str
     source_link: str = ""
     source_excerpt: str = ""
+    delivery_text: str = ""
+    source_chat_id: int = 0
+    source_message_id: int = 0
     tags: list[str] = field(default_factory=list)
     confidence: float = 0.0
     telegram_topic: str = "signals"

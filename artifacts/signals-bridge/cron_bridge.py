@@ -25,7 +25,15 @@ from event_store import append_events, append_new_events, trim_old_events
 from last30days_persistence import persist_last30days_digest
 from last30days_runner import build_digest, write_signal_digest
 from omniroute_client import prepare_signal_batch
-from poster import post_html_message, render_batch, render_last30days_digest
+from poster import (
+    copy_message,
+    post_document_message,
+    post_html_message,
+    post_photo_message,
+    post_plain_text_message,
+    render_batch,
+    render_last30days_digest,
+)
 import state_store
 from telegram_adapter import build_client as build_telethon_client
 from telegram_adapter import collect_telegram_candidates
@@ -78,6 +86,120 @@ def _tail_union(*tails: list[str]) -> list[str]:
     for tail in tails:
         lines.extend(tail)
     return lines[-18:]
+
+
+def _render_email_delivery_text(event) -> str:
+    text = str(event.delivery_text or event.source_excerpt or event.summary).strip()
+    if not text:
+        return ""
+    return f"Письмо от {event.author}\n\n{text}"
+
+
+def _render_telegram_delivery_text(event, text: str | None = None) -> str:
+    body = str(text or event.delivery_text or event.source_excerpt or event.summary).strip()
+    if not body:
+        return ""
+    lines = [f"Оригинал из Telegram · {event.author}", "", body]
+    if event.source_link:
+        lines.extend(["", f"Ссылка: {event.source_link}"])
+    return "\n".join(lines).strip()
+
+
+def _split_media_caption(text: str, limit: int = 1024) -> tuple[str, str]:
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value, ""
+    return value[:limit].rstrip(), value[limit:].lstrip()
+
+
+async def _relay_email_event(event) -> bool:
+    body = _render_email_delivery_text(event)
+    if not body:
+        return False
+    return await post_plain_text_message(body)
+
+
+async def _relay_telegram_text_event(event, *, text: str | None = None) -> bool:
+    body = _render_telegram_delivery_text(event, text=text)
+    if not body:
+        return False
+    return await post_plain_text_message(body)
+
+
+async def _relay_telegram_event_via_telethon(event) -> bool:
+    chat_id = int(event.source_chat_id or 0)
+    message_id = int(event.source_message_id or 0)
+    if not chat_id or not message_id:
+        return await _relay_telegram_text_event(event)
+
+    client = build_telethon_client()
+    await client.connect()
+    if not await client.is_user_authorized():
+        await client.disconnect()
+        raise RuntimeError("signals telethon session is not authorized")
+
+    try:
+        message = await client.get_messages(chat_id, ids=message_id)
+        if message is None:
+            return await _relay_telegram_text_event(event)
+
+        delivery_text = str(getattr(message, "message", "") or event.delivery_text or "").strip()
+        if getattr(message, "photo", None):
+            payload = await client.download_media(message, file=bytes)
+            if isinstance(payload, bytes) and payload:
+                caption, remainder = _split_media_caption(delivery_text)
+                if not await post_photo_message(data=payload, caption=caption):
+                    return False
+                if remainder:
+                    return await post_plain_text_message(remainder)
+                return True
+
+        if getattr(message, "document", None):
+            payload = await client.download_media(message, file=bytes)
+            if isinstance(payload, bytes) and payload:
+                file_name = getattr(getattr(message, "file", None), "name", "") or f"telegram-{message_id}.bin"
+                content_type = getattr(getattr(message, "file", None), "mime_type", "") or "application/octet-stream"
+                caption, remainder = _split_media_caption(delivery_text)
+                if not await post_document_message(
+                    data=payload,
+                    filename=file_name,
+                    caption=caption,
+                    content_type=content_type,
+                ):
+                    return False
+                if remainder:
+                    return await post_plain_text_message(remainder)
+                return True
+
+        return await _relay_telegram_text_event(event, text=delivery_text)
+    finally:
+        await client.disconnect()
+
+
+async def _relay_telegram_event(event) -> bool:
+    chat_id = int(event.source_chat_id or 0)
+    message_id = int(event.source_message_id or 0)
+    if chat_id and message_id and await copy_message(from_chat_id=chat_id, message_id=message_id):
+        return True
+    return await _relay_telegram_event_via_telethon(event)
+
+
+async def _deliver_source_contexts(events: list) -> tuple[int, int]:
+    delivered = 0
+    attempted = 0
+    for event in events:
+        try:
+            if event.source_type == "telegram":
+                attempted += 1
+                if await _relay_telegram_event(event):
+                    delivered += 1
+            elif event.source_type == "email":
+                attempted += 1
+                if await _relay_email_event(event):
+                    delivered += 1
+        except Exception as exc:
+            logger.exception("Failed to relay original source content for %s: %s", event.event_id, exc)
+    return delivered, attempted
 
 
 def _load_status_file(path: Path) -> dict:
@@ -584,6 +706,8 @@ def _process_signals_job(r, data: dict[str, str]) -> dict:
             retention_days=_event_retention_days(config),
         )
         posted = False
+        relayed_originals = 0
+        relay_attempts = 0
         if fresh_events:
             body = render_batch(
                 ruleset_title=str(ruleset.get("title", ruleset["id"])),
@@ -591,6 +715,8 @@ def _process_signals_job(r, data: dict[str, str]) -> dict:
                 model_meta=prepared.model_meta,
             )
             posted = asyncio.run(post_html_message(body))
+            if posted:
+                relayed_originals, relay_attempts = asyncio.run(_deliver_source_contexts(fresh_events))
         finished_at = _utc_now_iso()
         state_store.set_dt(r, state_store.ruleset_last_success_key(ruleset["id"]), now)
         status = {
@@ -606,6 +732,7 @@ def _process_signals_job(r, data: dict[str, str]) -> dict:
                 [
                     f"dropped={len(prepared.dropped_external_refs)}",
                     f"deduped={len(duplicate_events)}",
+                    f"relayed_originals={relayed_originals}/{relay_attempts}",
                 ],
                 source_errors,
             ),

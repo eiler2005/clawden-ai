@@ -92,6 +92,7 @@ def match_email_rule(*, ruleset_id: str, ruleset_title: str, rule: dict, message
         "allowed_usernames": list(rule.get("tradingview_usernames", [])),
         "resolved_username": username,
         "message_id": str(message.get("message_id", "")).strip(),
+        "delivery_text": truncate(str(message.get("delivery_text") or message.get("text_excerpt") or message.get("preview") or ""), 3500),
     }
     return SignalCandidate(
         ruleset_id=ruleset_id,
@@ -151,6 +152,7 @@ def match_telegram_rule(*, ruleset_id: str, ruleset_title: str, rule: dict, mess
             "message_id": message.get("message_id"),
             "sender_id": message.get("sender_id"),
             "has_video": has_video,
+            "delivery_text": truncate(str(message.get("delivery_text") or text or ""), 3500),
             "message_link": build_telegram_message_link(
                 chat_id=message.get("chat_id"),
                 message_id=message.get("message_id"),
@@ -186,6 +188,9 @@ def local_event_from_candidate(
         summary=summary or candidate.subject or candidate.author,
         source_link=str(candidate.metadata.get("message_link") or ""),
         source_excerpt=candidate.excerpt[:700],
+        delivery_text=truncate(str(candidate.metadata.get("delivery_text") or candidate.excerpt or ""), 3500),
+        source_chat_id=int(candidate.metadata.get("chat_id") or 0) if candidate.source_type == "telegram" else 0,
+        source_message_id=int(candidate.metadata.get("message_id") or 0) if candidate.source_type == "telegram" else 0,
         tags=list(dict.fromkeys(candidate.tags)),
         confidence=0.76,
         telegram_topic=topic_name,

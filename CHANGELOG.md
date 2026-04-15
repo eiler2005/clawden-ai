@@ -118,6 +118,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Signals batch rendering**: signal mini-batches now retain a compact email excerpt and include a
   direct Telegram source link for Telegram-derived items, making manual review faster inside the
   `signals` topic.
+- **Signals source relay**: after each mini-batch post, `signals-bridge` now additionally relays
+  the original matched Telegram content into the `signals` topic when possible and posts an
+  expanded email-content follow-up for email-derived matches.
 - **Signals config layout**: public docs/templates no longer embed Denis-specific signal rules;
   the runtime now supports loading real local rule-sets from separate JSON files via `rule_files`
   (for example `secrets/signals-bridge/rules/*.json`).
