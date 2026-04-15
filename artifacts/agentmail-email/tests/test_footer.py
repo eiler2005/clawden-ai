@@ -207,6 +207,57 @@ class FooterRenderingTests(unittest.TestCase):
             html,
         )
 
+    def test_mailbox_digest_normalizes_calendar_sender_spacing_and_compacts_calendar_lines(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 15, 7, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 15, 8, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m3",
+                    "thread_id": "t3",
+                    "timestamp": "2026-04-15T10:24:00+03:00",
+                    "subject": "Updated invitation: Синимекс | Ариэль Инокс @ Wed Apr 15, 2026 5pm - 5:45pm (GMT+5) (denis.ermilov@cinimex.ru)",
+                    "sender_display": "Google CalendarОт имениDenis Ermilov",
+                    "from_email": "denis.ermilov@cinimex.ru",
+                    "preview": "Updated invitation: Синимекс | Ариэль Инокс @ Wed Apr 15, 2026 5pm - 5:45pm (GMT+5) (denis.ermilov@cinimex.ru). Когда: 15 апреля 2026 г. 15:00-15:45.",
+                    "has_attachments": True,
+                    "attachment_count": 2,
+                    "is_low_signal": False,
+                }
+            ],
+            important_messages=[
+                {
+                    "message_id": "m3",
+                    "thread_id": "t3",
+                    "timestamp": "2026-04-15T10:24:00+03:00",
+                    "subject": "Updated invitation: Синимекс | Ариэль Инокс @ Wed Apr 15, 2026 5pm - 5:45pm (GMT+5) (denis.ermilov@cinimex.ru)",
+                    "sender_display": "Google CalendarОт имениDenis Ermilov",
+                    "from_email": "denis.ermilov@cinimex.ru",
+                    "preview": "Updated invitation: Синимекс | Ариэль Инокс @ Wed Apr 15, 2026 5pm - 5:45pm (GMT+5) (denis.ermilov@cinimex.ru). Когда: 15 апреля 2026 г. 15:00-15:45.",
+                    "has_attachments": True,
+                    "attachment_count": 2,
+                    "is_low_signal": False,
+                }
+            ],
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn(
+            "• 10:24 — <b>Google Calendar от имени Denis Ermilov</b> — Обновлён инвайт на встречу «Синимекс | Ариэль Инокс». Вложения: 2.",
+            html,
+        )
+        self.assertIn(
+            "• 10:24 — <b>Google Calendar от имени Denis Ermilov (denis.ermilov@cinimex.ru)</b> — Обновлён или переотправлен инвайт на встречу «Синимекс | Ариэль Инокс».",
+            html,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

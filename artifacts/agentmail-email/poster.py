@@ -233,13 +233,13 @@ def _digest_title(digest_type: str) -> str:
 def _sender_counts(messages: list[dict]) -> list[tuple[str, int]]:
     counter = Counter()
     for message in messages:
-        sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+        sender = _normalize_sender_text(message.get("sender_display"))
         counter[sender] += 1
     return sorted(counter.items(), key=lambda item: (-item[1], item[0].lower()))
 
 
 def _message_line(message: dict, *, include_preview: bool) -> list[str]:
-    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+    sender = _normalize_sender_text(message.get("sender_display"))
     timestamp = _fmt_clock(str(message.get("timestamp") or ""))
     summary = _message_summary(message, limit=170)
     attachment = ""
@@ -299,8 +299,20 @@ def _capitalize_first(value: str) -> str:
     return text[:1].upper() + text[1:]
 
 
+def _normalize_sender_text(value: str | None) -> str:
+    sender = _compact_text(value, limit=160)
+    if not sender:
+        return "Unknown sender"
+    sender = re.sub(r"(?<=[A-Za-zА-Яа-я])(?=(?:от имени|От имени))", " ", sender)
+    sender = re.sub(r"(?<=[a-zа-я])(?=[A-ZА-Я])", " ", sender)
+    sender = re.sub(r"(?<=[A-ZА-Я])(?=[A-ZА-Я][a-zа-я])", " ", sender)
+    sender = re.sub(r"\bОт имени\b", "от имени", sender)
+    sender = re.sub(r"\s+", " ", sender).strip()
+    return sender or "Unknown sender"
+
+
 def _sender_label(message: dict, *, include_email: bool) -> str:
-    sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+    sender = _normalize_sender_text(message.get("sender_display"))
     if not include_email:
         return sender
     email = str(message.get("from_email") or "").strip()
@@ -335,12 +347,25 @@ def _extract_subject_date_range(subject: str) -> str:
     return re.sub(r"\s*[-–]\s*", "–", match.group(1).strip())
 
 
-def _calendar_update_summary(subject: str) -> str:
+def _calendar_title(subject: str) -> str:
     title = subject
     if ":" in title:
         title = title.split(":", 1)[1].strip()
-    title = re.sub(r"\s+@ Weekly.*$", "", title, flags=re.IGNORECASE).strip()
-    title = _clean_subject(title)
+    title = re.sub(r"\s+@\s+Weekly.*$", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\s+@\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b.*$", "", title, flags=re.IGNORECASE).strip()
+    title = re.sub(r"\s*\([^)]+@[^)]+\)\s*$", "", title).strip()
+    return _clean_subject(title)
+
+
+def _calendar_message_summary(subject: str) -> str:
+    title = _calendar_title(subject)
+    if not title:
+        return "Обновлён инвайт на встречу."
+    return f"Обновлён инвайт на встречу «{title}»."
+
+
+def _calendar_update_summary(subject: str) -> str:
+    title = _calendar_title(subject)
     if not title:
         return "обновлён или переотправлен инвайт на встречу."
     return f"Обновлён или переотправлен инвайт на встречу «{title}»."
@@ -371,6 +396,9 @@ def _vacation_summary(subject: str, preview: str) -> str:
 def _message_summary(message: dict, *, limit: int = 170) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
     snippet = _clean_preview_text(message.get("preview"), limit=limit)
+    lowered = " ".join([subject, snippet]).lower()
+    if "updated invitation" in lowered:
+        return _calendar_message_summary(subject)
     if not subject and not snippet:
         return "(no subject)"
     if not subject:
@@ -424,14 +452,20 @@ def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
     if not low_signal_messages:
         return []
 
-    senders = [str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender" for message in low_signal_messages]
+    senders = [_normalize_sender_text(message.get("sender_display")) for message in low_signal_messages]
     top_senders = ", ".join(escape(sender) for sender, _ in Counter(senders).most_common(3))
     low_signal_count = len(low_signal_messages)
     low_signal_label = _ru_plural(low_signal_count, "low-signal письмо", "low-signal письма", "low-signal писем")
     lines = [f"• Остальной фон окна: {low_signal_count} {low_signal_label}, в основном от {top_senders}."]
 
     if len(messages) > len(low_signal_messages):
-        important_senders = len({str(message.get('sender_display') or '').strip() for message in messages if not bool(message.get('is_low_signal')) and str(message.get('sender_display') or '').strip()})
+        important_senders = len(
+            {
+                _normalize_sender_text(message.get("sender_display"))
+                for message in messages
+                if not bool(message.get("is_low_signal"))
+            }
+        )
         useful_count = len(messages) - len(low_signal_messages)
         useful_label = "более полезное письмо" if useful_count == 1 else "более полезных письма" if useful_count < 5 else "более полезных писем"
         sender_label = "отправителя" if important_senders == 1 else "отправителей"
@@ -507,7 +541,7 @@ def _remaining_messages_line(messages: list[dict]) -> str:
 
     grouped: dict[str, list[dict]] = {}
     for message in messages:
-        sender = str(message.get("sender_display") or "Unknown sender").strip() or "Unknown sender"
+        sender = _normalize_sender_text(message.get("sender_display"))
         grouped.setdefault(sender, []).append(message)
 
     ordered = sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0].lower()))
