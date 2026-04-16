@@ -395,6 +395,43 @@ class MatchingTests(unittest.TestCase):
             "Фьючерс SI тестирует зону выноса. Сценарий: откат к 114000, затем продолжение.",
         )
 
+    def test_email_window_extracts_tradingview_html_body_when_plain_text_missing(self) -> None:
+        messages = _window_messages(
+            thread={
+                "subject": "Смотрите, новое мнение от Mamontiara",
+                "preview": "Смотрите, новое мнение от Mamontiara",
+                "messages": [
+                    {
+                        "message_id": "msg-html",
+                        "thread_id": "thread-html",
+                        "timestamp": "2026-04-16T13:57:00+00:00",
+                        "from": "TradingView <noreply@tradingview.com>",
+                        "subject": "Смотрите, новое мнение от Mamontiara",
+                        "preview": "Смотрите, новое мнение от Mamontiara",
+                        "content": {
+                            "html": """
+                                <div>TradingView</div>
+                                <div>Mamontiara</div>
+                                <div>на которого вы подписаны, опубликовал(-а) новое мнение</div>
+                                <div>SBER</div>
+                                <div>$SBER по феншую, индекс должен протестировать 2600-2650, а значит - рост могут притормозить.</div>
+                                <button>Открыть мнение</button>
+                            """
+                        },
+                    }
+                ],
+            },
+            since_dt=datetime(2026, 4, 16, 13, 55, tzinfo=timezone.utc),
+            until_dt=datetime(2026, 4, 16, 14, 5, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(
+            messages[0]["text_excerpt"],
+            "SBER\n$SBER по феншую, индекс должен протестировать 2600-2650, а значит - рост могут притормозить.",
+        )
+        self.assertEqual(messages[0]["delivery_text"], messages[0]["text_excerpt"])
+
     def test_telegram_hashtag_match(self) -> None:
         rule = sample_config()["rule_sets"][0]["rules"][1]
         candidate = match_telegram_rule(

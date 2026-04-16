@@ -113,6 +113,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and signals so the Telegram architecture is understandable directly from the repo front page.
 
 ### Changed
+- **Signals email body extraction**: `signals-bridge` now falls back through nested email
+  `content/body/payload/parts` structures, converts HTML-only message bodies into text, and strips
+  TradingView template chrome so alerts like `Mamontiara` keep the actual opinion text instead of
+  collapsing back to the subject/preview line.
 - **Signals Telegram relay fallback**: when bot-side `copyMessage` is unavailable, `signals-bridge`
   now relays Telegram originals through Telethon first, forwarding into the `signals` topic or
   resending the original `Message` object with its formatting intact instead of reuploading media
