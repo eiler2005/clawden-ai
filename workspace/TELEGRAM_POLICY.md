@@ -13,8 +13,8 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 | `Telegram Digest` | Digest | Publish summaries from selected Telegram sources. Do not ingest noisy chatter into memory. |
 | `Signals` | Alert | Publish only important, time-sensitive alerts. Be brief and proactive. |
 | `Family` | Family | Separate domain. Require mention/reply by default. No long-term memory without explicit approval. |
-| `Knowledge` | Knowledge | Final structured knowledge. Eligible for Obsidian/RAG after schema and sensitivity gates. |
-| `Ideas` | Idea capture | Capture, classify, tag, and queue. Promotion to knowledge requires review. |
+| `Knowledge` | Knowledge | **Search**: сообщение-вопрос → `lightrag_hybrid` + memory_search → ответ с цитатами. **Save**: любой другой контент (пересланный пост, URL, текст) → бот сам извлекает title/domain/source/date/summary/sensitivity и вызывает `wiki_ingest`. Денис не заполняет структуру вручную. |
+| `Ideas` | Idea capture | Capture любой контент: ссылки, пересланные посты из Telegram, мысли, фрагменты. Бот классифицирует, тегирует и ставит в очередь. Для промоушена в Knowledgebase нужно явное подтверждение. |
 | `Sandbox / Lab` | Sandbox | Test-only. Never write production memory from sandbox unless explicitly promoted. |
 
 ## Permission Assumptions

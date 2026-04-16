@@ -276,10 +276,11 @@
       }
     },
     {
-      "name": "Knowledge",
-      "chat_id": "<knowledge-channel-id>",
-      "purpose": "Finalized structured knowledge items, summaries, decisions, curated insights.",
-      "type": "private_channel",
+      "name": "Knowledgebase",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<knowledgebase-topic-id>",
+      "purpose": "Dual-mode: (1) curated knowledge ingestion — structured posts with required fields go to CURATED/LONG_TERM → Obsidian → RAG; (2) knowledge base search — plain-text queries trigger lightrag_hybrid + memory_search and respond with cited snippets.",
+      "type": "supergroup_topic",
       "bot_mode": "knowledge",
       "category": ["knowledge"],
       "permissions": {
@@ -301,16 +302,26 @@
         "rag_index": true
       },
       "ingestion_policy": {
-        "required_fields": ["title", "domain", "source", "date", "summary", "sensitivity"],
+        "auto_structure": true,
+        "required_fields_filled_by": "agent",
         "classification_confidence_min": 0.7,
-        "high_sensitivity_requires_approval": true
+        "high_sensitivity_requires_approval": true,
+        "search_mode": {
+          "enabled": true,
+          "trigger": "plain_text_without_required_fields",
+          "backends": ["lightrag_hybrid", "memory_search"],
+          "lightrag_mode": "hybrid",
+          "max_results": 5,
+          "response_format": "snippet_with_citations"
+        }
       }
     },
     {
       "name": "Ideas",
-      "chat_id": "<ideas-chat-id>",
-      "purpose": "Quick capture of thoughts, links, raw ideas, and future project notes.",
-      "type": "private_group_or_channel",
+      "chat_id": "<ops-supergroup-chat-id>",
+      "topic_id": "<ideas-topic-id>",
+      "purpose": "Fast capture of thoughts, links, Telegram posts, raw ideas. Bot classifies, tags, queues for later promotion to Knowledgebase.",
+      "type": "supergroup_topic",
       "bot_mode": "idea_capture",
       "category": ["capture"],
       "permissions": {
@@ -322,8 +333,8 @@
         "manage_topics": "not_applicable",
         "invite_users": "deny",
         "full_admin": "deny",
-        "require_mention_to_activate": "optional",
-        "read_whole_stream_by_default": "owner_only_surface"
+        "require_mention_to_activate": "not_applicable",
+        "read_whole_stream_by_default": true
       },
       "memory_policy": {
         "auto_ingestion": "light_classification_only",

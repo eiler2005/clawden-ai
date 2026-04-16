@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Auto-structured ingestion**: removed manual structured post format from Knowledgebase. Bot now auto-extracts title/domain/source/date/summary/sensitivity from any content (forwarded post, URL, plain text). User never fills fields manually. Updated `telegram-surfaces` configs, `workspace/TOOLS.md`, `workspace/TELEGRAM_POLICY.md`, pinned message in Knowledgebase, `docs/17-knowledge-management.md`.
+
+- **💡 Ideas topic created**: new forum topic in Ben'ka_Clawbot_SuperGroup (topic_id=639) for frictionless capture of Telegram posts, links, and thoughts. Bot classifies, tags, and queues items; promotion to Knowledgebase requires explicit approval. Registered in server `telegram-topic-map.json` and `telegram-surfaces.policy.json`; local `telegram-surfaces.redacted.json` updated to `supergroup_topic` type.
+
+- **Knowledgebase topic search**: the `📚 Knowledgebase` topic in Ben'ka_Clawbot_SuperGroup (topic_id=232) is now dual-purpose. Plain-text messages trigger knowledge base search (`lightrag_hybrid` + builtin memory search) and the bot responds with cited snippets. Structured posts (with required fields) continue to be ingested as CURATED/LONG_TERM. Surface type corrected to `supergroup_topic`; `search_mode` config added to `telegram-surfaces.redacted.json` and server `telegram-surfaces.policy.json`; topic registered in server `telegram-topic-map.json`; agent instructions updated in `workspace/TOOLS.md` and `workspace/TELEGRAM_POLICY.md`.
+
+- **OpenClaw builtin memorySearch**: enabled the gateway's builtin hybrid memory layer on top of
+  curated sources only — `MEMORY.md`, `memory/*.md`, and `/opt/obsidian-vault/wiki` — using
+  Gemini embeddings (`gemini-embedding-001`) with snippet citations and embedding cache. This is a
+  fast local recall layer for the agent and does not replace LightRAG.
+- **Retrieval profile policy**: documented the canonical indexing boundaries across OpenClaw
+  memorySearch, LightRAG, and LLM-Wiki. Raw vault sources (`raw/articles`, `raw/documents`, legacy
+  vault trees) remain out of retrieval until curated import promotes them into `wiki/`.
+- **Builtin memorySearch post-tuning**: tuned the OpenClaw builtin memory layer for the small
+  Hetzner VPS by lowering the hybrid candidate pool (`candidateMultiplier=2`), disabling MMR
+  reranking, and enabling provider-side Gemini batch embedding with `concurrency=1` and
+  `wait=false` to make future reindex runs gentler on the host.
 - **LLM-Wiki canonical registry v1.2**: added bot-maintained `CANONICALS.yaml` and `TOPICS.md`
   plus theme metadata, so importer now resolves core entities canonically before writing pages and
   exposes thematic navigation separately from typed folders.

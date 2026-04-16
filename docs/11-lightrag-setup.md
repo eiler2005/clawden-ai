@@ -72,6 +72,15 @@ Explicitly excluded from LightRAG ingest v1:
 - `/opt/obsidian-vault/raw/documents`
 - legacy vault material outside `wiki/`
 
+Builtin OpenClaw `memorySearch` uses a narrower profile than LightRAG: it indexes `MEMORY.md`,
+`memory/**/*.md`, and `/opt/obsidian-vault/wiki/**/*.md` only. That keeps the gateway's local
+recall layer focused on curated facts and canonical wiki pages, while LightRAG handles the broader
+historical retrieval layer over `workspace + wiki + raw/signals`.
+
+On the `CX23` VPS, builtin memory is also tuned more conservatively than a default desktop/server
+setup: Gemini provider-side batch mode is enabled with `concurrency=1`, the candidate pool is
+smaller, and MMR reranking is disabled to reduce host pressure during future rebuilds.
+
 ### How data is ingested
 
 `/opt/lightrag/scripts/lightrag-ingest.sh` runs every 30 minutes from cron and can also be run

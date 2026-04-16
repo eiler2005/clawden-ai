@@ -91,6 +91,7 @@ Upgrade history:
 - gateway bind mode: `lan`
 - gateway auth mode: `token`
 - trusted proxies: localhost and Docker bridge
+- builtin memorySearch: enabled on curated sources only (`MEMORY.md`, `memory/*.md`, `/opt/obsidian-vault/wiki`)
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`

@@ -122,8 +122,8 @@ _light · delegated · 5% · simple_
 | Telegram Digest (topic) | Digest | Low | Digest summaries only |
 | Signals (topic) | Alert | High, narrow | Compact alert record |
 | Family (separate group) | Family | Low, mention-only | Never without explicit approval |
-| Knowledge (private channel) | Knowledge | Low | CURATED, Obsidian/RAG eligible |
-| Ideas (capture group) | Idea capture | Low | RAW queue, not auto-promoted |
+| Knowledgebase (supergroup topic, id=232) | Knowledge | Low | Question → search; any content → auto-structured CURATED + wiki_ingest |
+| Ideas (supergroup topic, id=639) | Idea capture | Low | RAW queue, auto-captured, promoted to Knowledgebase on demand |
 | Sandbox / Lab | Testing | Free | Never production memory |
 
 ### Trigger rules
@@ -187,7 +187,7 @@ only codify how an operator agent should work with that codebase safely.
 | `OPLOG` | Task status, approval outcomes | Ops topics, tools | 14–30 days | No | No |
 | `RAW` | Redacted decisions, `#canon` threads, candidate ideas | DM explicit, ops decisions, Ideas | 30–90 days | Only redacted decisions | No |
 | `DERIVED` | Summaries, digests, extracted tasks | Work Email, Digest, Signals | 30–180 days | Selective | Optional |
-| `CURATED` | Structured durable knowledge | Knowledge channel, reviewed Ideas | Durable | Yes | Yes |
+| `CURATED` | Structured durable knowledge | Knowledgebase topic (auto-structured by bot), promoted Ideas | Durable | Yes | Yes |
 | `LONG_TERM` | Stable user facts, preferences | DM explicit, Knowledge explicit | Durable until revoked | Yes | Optional |
 
 ### Strict rules
@@ -224,7 +224,7 @@ Only structured, curated content:
 - **Telegram Digest curated notes** — high-signal items extracted by OmniRoute medium;
   written to `/app/obsidian/Telegram Digest/Curated/` → uploaded via `ingest:rag:queue`
 - Obsidian vault markdown (synced from Mac via Syncthing) — picked up by the 30-min cron ingest script
-- Promoted Ideas with full structure
+- Ideas promoted to Knowledgebase (bot auto-structures, no manual fields needed)
 - `CURATED` knowledge items with required fields
 - Redacted root-cause / `#canon` decision records
 

@@ -27,7 +27,7 @@ Four **bridge services** run on cron-like schedules and handle the event-driven 
 - **telethon-digest** reads 150–200 Telegram channels through a user session, clusters and summarizes with a medium-tier model, and posts a daily digest.
 - **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic; the work inbox digest resolves the original sender inside forwarded emails.
 
-Everything is observable through a Telegram supergroup with 10 dedicated topics — effectively a personal feed that aggregates across all pipelines.
+Everything is observable through a Telegram supergroup with 11 dedicated topics — effectively a personal feed that aggregates across all pipelines.
 
 ---
 
@@ -53,6 +53,8 @@ Everything is observable through a Telegram supergroup with 10 dedicated topics 
 **Knowledge graph memory**
 - LightRAG indexes curated wiki pages plus raw signal digests using graph + vector hybrid retrieval
 - Vault syncs bidirectionally between Mac and server via Syncthing — write a note on Mac, it's searchable on the server within minutes
+- **`📚 Knowledgebase` topic**: write any question → bot searches across Obsidian wiki + workspace + signals and replies with cited snippets; forward any post or link → bot auto-extracts title/domain/summary and saves to wiki
+- **`💡 Ideas` topic**: forward anything (posts, links, thoughts) → bot auto-captures and queues; promote to Knowledgebase on demand with a single command
 
 **Self-hosted, private**
 - Runs entirely on a single private Hetzner server — no SaaS, no data sent to third parties beyond the LLM API calls you configure
@@ -152,7 +154,7 @@ Bridge services run on independent schedules, triggered via **Redis Streams**:
 
 ### Memory & Context
 
-The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. LightRAG indexes the curated layer continuously, so conversations can reference past notes and decisions without manual copy-paste.
+The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. Retrieval is intentionally split by profile: OpenClaw builtin `memorySearch` covers fast local recall over curated memory files plus `wiki/`, while LightRAG indexes the broader curated layer (`workspace`, `wiki/`, `raw/signals/`) for deeper historical lookups. Raw vault sources such as `raw/articles/` and `raw/documents/` stay out of both retrieval layers until curated import materializes them into canonical wiki pages.
 
 ---
 
@@ -210,7 +212,7 @@ graph LR
         WE["agentmail-work-email\n:8094\n8x daily"]
     end
 
-    subgraph Outputs["Telegram Supergroup — 10 topics"]
+    subgraph Outputs["Telegram Supergroup — 11 topics"]
         T1["signals"]
         T2["last30daysTrend"]
         T3["telegram-digest"]

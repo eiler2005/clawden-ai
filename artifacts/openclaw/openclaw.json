@@ -59,6 +59,9 @@
   "session": {
     "dmScope": "per-channel-peer"
   },
+  "memory": {
+    "citations": "auto"
+  },
   "browser": {
     "ssrfPolicy": {
       "dangerouslyAllowPrivateNetwork": false
@@ -74,6 +77,34 @@
           "omniroute/medium",
           "omniroute/light"
         ]
+      },
+      "memorySearch": {
+        "enabled": true,
+        "provider": "gemini",
+        "model": "gemini-embedding-001",
+        "extraPaths": ["/opt/obsidian-vault/wiki"],
+        "cache": {
+          "enabled": true,
+          "maxEntries": 50000
+        },
+        "remote": {
+          "batch": {
+            "enabled": true,
+            "concurrency": 1,
+            "wait": false
+          }
+        },
+        "query": {
+          "hybrid": {
+            "enabled": true,
+            "vectorWeight": 0.7,
+            "textWeight": 0.3,
+            "candidateMultiplier": 2,
+            "mmr": {
+              "enabled": false
+            }
+          }
+        }
       }
     }
   },

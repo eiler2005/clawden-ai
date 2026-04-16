@@ -224,6 +224,79 @@ Use the result as a ranked context bundle. The answer is convenient, but the ref
 when accuracy is important. If LightRAG says `references: []`, treat it as "memory did not find
 support," not as proof that the fact is false.
 
+## Retrieval Profile
+
+This project intentionally uses two retrieval layers with different indexing boundaries.
+
+### Path Matrix
+
+| Path | Role | Typical writer | LightRAG | OpenClaw memorySearch |
+|------|------|----------------|----------|------------------------|
+| `/opt/openclaw/workspace/MEMORY.md` | long-term curated facts | manual edits, workspace flow | yes | yes |
+| `/opt/openclaw/workspace/memory/**/*.md` | daily notes and memory logs | bot, manual edits | yes | yes |
+| `/opt/openclaw/workspace/raw/**/*.md` | raw decision threads in workspace | bot, manual edits | yes | no |
+| `/opt/obsidian-vault/wiki/**/*.md` | canonical curated LLM-Wiki pages | `wiki-import`, bot, Syncthing | yes | yes |
+| `/opt/obsidian-vault/raw/signals/**/*.md` | daily signal snapshots | `signals-bridge` | yes | no |
+| `/opt/obsidian-vault/raw/articles/**/*.md` | raw article sources before curation | clipper, import bridge | no | no |
+| `/opt/obsidian-vault/raw/documents/**/*.md` | raw document sources before curation | import bridge, manual | no | no |
+| legacy vault trees outside `wiki/` | legacy or unsanctioned vault material | legacy/manual | no | no |
+
+### OpenClaw builtin memorySearch
+
+Purpose: fast local recall inside the gateway.
+
+Indexes:
+
+- `/opt/openclaw/workspace/MEMORY.md`
+- `/opt/openclaw/workspace/memory/**/*.md`
+- `/opt/obsidian-vault/wiki/**/*.md`
+
+Does not index:
+
+- `/opt/obsidian-vault/raw/signals/**/*.md`
+- `/opt/obsidian-vault/raw/articles/**/*.md`
+- `/opt/obsidian-vault/raw/documents/**/*.md`
+- legacy vault trees outside `wiki/`
+
+Why: builtin memory should stay close to curated human-reviewed facts and canonical wiki pages. It
+is the lightweight recall layer for the agent, not the place to ingest every raw source.
+
+Current tuning on the Hetzner `CX23`:
+
+- Gemini provider-side batch embeddings enabled with `concurrency=1`
+- `wait=false` so future rebuilds can offload embedding work without blocking the host as hard
+- hybrid `candidateMultiplier=2`
+- MMR reranking disabled
+
+### LightRAG
+
+Purpose: broader historical retrieval over curated markdown plus selected raw signal snapshots.
+
+Indexes:
+
+- `/opt/openclaw/workspace/**/*.md`
+- `/opt/obsidian-vault/wiki/**/*.md`
+- `/opt/obsidian-vault/raw/signals/**/*.md`
+
+Does not index:
+
+- `/opt/obsidian-vault/raw/articles/**/*.md`
+- `/opt/obsidian-vault/raw/documents/**/*.md`
+- legacy vault trees outside `wiki/` and `raw/signals/`
+
+Why: `raw/signals` is compact and already useful as near-curated context, while `raw/articles` and
+`raw/documents` are source staging areas that should become retrievable only after curated import
+materializes them into canonical wiki pages.
+
+### Canonical rule
+
+New Obsidian source material should flow through the LLM-Wiki pipeline:
+
+`raw source -> curated import -> wiki page -> retrieval`
+
+If a document is still only in `raw/articles` or `raw/documents`, it is stored source material, not
+part of the searchable memory profile.
+
 ### Query interface
 
 ```
@@ -312,3 +385,14 @@ workspace/
 └── raw/
     └── YYYY-MM-DD-{topic}.md  ← verbatim decisions, redacted (load on explicit recall)
 ```
+
+## Knowledge capture flow (Telegram → wiki)
+
+Two Telegram topics drive the primary ingestion workflow. See [docs/17-knowledge-management.md](17-knowledge-management.md) for full details.
+
+| Topic | Behaviour | Memory class |
+|---|---|---|
+| `💡 Ideas` (id=639) | Any forwarded post / link / text → auto-capture + queue | RAW/DERIVED |
+| `📚 Knowledgebase` (id=232) | Question → search; any content → bot auto-structures + `wiki_ingest` | CURATED |
+
+Content reaches `CURATED` / Obsidian / LightRAG only after explicit promotion (Ideas) or direct save (Knowledgebase). User never fills structured fields manually — the bot extracts title, domain, source, date, summary, sensitivity automatically.

@@ -410,6 +410,15 @@ curated LLM-Wiki layer plus raw signal digests, then lets OpenClaw ask narrow hi
 without loading archives into the conversation. It is useful for "what do we know about X?" and
 "why did we decide Y?", but it is not authoritative for live service state.
 
+Builtin OpenClaw `memorySearch` is the lighter local recall layer. It indexes `MEMORY.md`,
+`memory/**/*.md`, and `/opt/obsidian-vault/wiki/**/*.md` directly inside the gateway using Gemini
+embeddings. It intentionally does not index `raw/signals`, `raw/articles`, `raw/documents`, or
+legacy vault trees; those stay on the LightRAG / curated-import side of the boundary.
+
+On this `CX23` VPS, builtin memory is tuned conservatively: Gemini provider-side batch mode is
+enabled with `concurrency=1`, the hybrid candidate pool is reduced to `2`, and MMR reranking is
+disabled. This keeps future reindex runs and recall queries gentler on the host.
+
 Data flow:
 
 ```text
@@ -425,7 +434,27 @@ POST /documents/upload + POST /documents/reprocess_failed
 chunks + entities + relationships + vectors
         ↓
 OpenClaw lightrag_query → http://lightrag:9621/query
+        ↓
+Knowledge channel (Telegram) → plain-text message → search results with citations
 ```
+
+### Search via Telegram Knowledge channel
+
+Post any plain-text message in the Knowledge channel — bot responds with top results from all knowledge sources.
+
+**Test flow:**
+```
+1. Write in Knowledge channel: "почему выбрали LightRAG?"
+   → Bot responds with cited snippets from wiki + workspace + signals
+
+2. Forward a post, paste a link, or write any text to save
+   → Bot auto-extracts title/domain/source/date/summary and saves to wiki (✅ Сохранено: ...)
+
+3. Write: "xyzzy крокодил абракадабра"
+   → Bot responds: "Ничего не найдено. Попробуй другие ключевые слова."
+```
+
+**If bot doesn't respond:** check that Knowledgebase topic_id=232 is registered in `telegram-topic-map.json` and workspace is deployed.
 
 ### Check LightRAG health
 
@@ -518,6 +547,36 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'docker compose -f /opt/openclaw/docker-compose.yml exec -T openclaw-gateway \
    sh -lc "cat /home/node/.openclaw/workspace/memory/INDEX.md 2>/dev/null || echo no-index-yet"'
+```
+
+### Check builtin OpenClaw memorySearch status
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose exec -T openclaw-gateway openclaw memory status --deep
+'
+```
+
+### Rebuild builtin OpenClaw memorySearch index
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose exec -T openclaw-gateway openclaw memory index --force
+'
+```
+
+For this server, prefer running a forced rebuild off-hours and avoid launching multiple
+`openclaw memory ...` commands in parallel; the first large backfill can temporarily spike load.
+
+### Smoke-test builtin OpenClaw memorySearch
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose exec -T openclaw-gateway openclaw memory search "LightRAG"
+'
 ```
 
 ### Read workspace master index

@@ -21,7 +21,7 @@ clean operational channels, conservative memory, and a path from noisy inputs to
 | `Telegram Digest` | Start as a topic in the supergroup; split into private channel if it becomes noisy | Topic | Summaries from selected Telegram sources | Denis | Posts daily/periodic digests only. Source chats are separate allowlisted inputs, not the digest surface itself. | Publish |
 | `Signals` | Topic in the supergroup, optionally mirrored to DM for critical items | Topic | Time-sensitive alerts from email and Telegram | Denis | Speaks proactively only for high-importance, time-sensitive signals. Can pin critical alerts if allowed. | Alert / publish |
 | `Family` | Fully separate private group/supergroup, not a topic in ops | Separate group | Family domain and personal/family context | Family members and Denis | Conservative: by default requires mention or reply. Does not read the whole stream unless explicitly enabled for a narrow period. | Ingestion / family |
-| `Knowledge` | Standalone private channel plus Obsidian as canonical destination | Private channel | Finalized structured knowledge items, decisions, durable notes | Denis, bot | Posts only structured/curated items. Content is eligible for Obsidian and RAG after schema checks. | Knowledge |
+| `Knowledgebase` | Topic in ops supergroup plus Obsidian as canonical destination | Supergroup topic | **Dual-mode**: (1) ingestion — structured posts → Obsidian/RAG; (2) search — plain-text queries → `lightrag_hybrid` + memory_search → bot responds with cited snippets | Denis, bot | Structured posts go through CURATED gate. Plain-text triggers search over workspace + Obsidian wiki + signals. | Knowledge / Search |
 | `Ideas` | Separate private group/channel owned by Denis | Private group or channel | Fast capture of thoughts, links, raw ideas | Denis | Captures, lightly classifies, tags, and queues for later promotion. Not automatically long-term knowledge. | Capture |
 | `Sandbox / Lab` | Fully separate private group | Sandbox group | Testing prompts, Telegram behavior, tools, integrations | Denis, bot | Free to experiment. No production memory writes. May use wider permissions inside this isolated surface. | Testing |
 
@@ -48,7 +48,7 @@ Start with fewer Telegram surfaces, but keep the domain boundaries explicit:
 - Keep `Work Email`, `Telegram Digest`, and `Signals` as topics inside
   `Benka_Clawbot_SuperGroup` at first. They are operational outputs, not social spaces.
 - Keep `Family` separate from the supergroup. Family context must not mix with work, ops, or RAG logs.
-- Keep `Knowledge` separate. It is the clean gate into Obsidian/RAG, not a noisy discussion channel.
+- Keep `Knowledge` separate. It is the clean gate into Obsidian/RAG and the primary search interface for the knowledge base. Plain-text = search query; structured markdown = knowledge ingestion.
 - Keep `Ideas` separate if it will receive many quick links and fragments. It should feel frictionless
   without polluting knowledge memory.
 - Keep `Sandbox / Lab` separate because test permissions and prompts should never bleed into production.
@@ -392,8 +392,7 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
   with `inbox`, `approvals`, `tasks`, `signals`, `system`, `rag-log`, `inbox-email`, `work-email`,
   `telegram-digest`
 - Separate group: `Family`
-- Separate private channel: `Knowledge`
-- Separate capture group/channel: `Ideas`
+- Topics in ops supergroup: `📚 Knowledgebase` (topic_id=232) + `💡 Ideas` (topic_id=639)
 - Separate group: `Sandbox / Lab`
 
 ### Recommended Minimal Viable Topology
@@ -402,8 +401,7 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 - One forum supergroup:
   `inbox`, `approvals`, `tasks`, `signals`, `inbox-email`, `work-email`, `telegram-digest`, `rag-log`
 - Separate `Family`
-- Separate `Knowledge`
-- Use DM for ideas temporarily with explicit `#idea` until `Ideas` exists
+- Topics in supergroup: `📚 Knowledgebase` + `💡 Ideas`
 - Use a single `Sandbox / Lab` group for tests
 
 ### Recommended Safe-First Topology
@@ -411,8 +409,8 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 - DM only for control and approvals
 - Supergroup only for ops/status, all groups require mention by default
 - `Family` requires mention/reply and has no whole-stream read
-- `Knowledge` accepts only explicit structured posts
-- `Ideas` is capture-only, no RAG ingestion
+- `📚 Knowledgebase`: question → search; any content → bot auto-structures and saves (no manual fields)
+- `💡 Ideas`: capture-only, auto-queue, promoted to Knowledgebase on demand, no RAG ingestion
 - No automatic Work Email raw storage
 - No automatic Telegram source raw storage
 - `Sandbox / Lab` excluded from memory entirely

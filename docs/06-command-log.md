@@ -634,3 +634,137 @@ Result:
 - gateway remained healthy after config reload
 - all security settings applied as documented in `docs/07-architecture-and-security.md`
 - redacted artifacts updated in repo (`artifacts/openclaw/`)
+
+## 19. Builtin OpenClaw memorySearch enabled over curated wiki only
+
+Date: `2026-04-15`
+
+Goal: enable the gateway's builtin memory layer for fast local recall without breaking the existing
+LLM-Wiki / LightRAG architecture.
+
+Configuration applied to `/opt/openclaw/config/openclaw.json`:
+
+```json
+{
+  "memory": {
+    "citations": "auto"
+  },
+  "agents": {
+    "defaults": {
+      "memorySearch": {
+        "enabled": true,
+        "provider": "gemini",
+        "model": "gemini-embedding-001",
+        "extraPaths": ["/opt/obsidian-vault/wiki"],
+        "cache": {
+          "enabled": true,
+          "maxEntries": 50000
+        },
+        "query": {
+          "hybrid": {
+            "enabled": true,
+            "vectorWeight": 0.7,
+            "textWeight": 0.3,
+            "mmr": {
+              "enabled": true,
+              "lambda": 0.7
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Runtime change:
+
+- forwarded `GEMINI_API_KEY` into `openclaw-gateway` and `openclaw-cli`
+- reused the existing Gemini embedding key already present in `/opt/lightrag/.env`
+- kept the retrieval boundary narrow: builtin memory indexes only `MEMORY.md`, `memory/**/*.md`,
+  and `/opt/obsidian-vault/wiki/**/*.md`
+- explicitly did not expand builtin memory to `raw/signals`, `raw/articles`, `raw/documents`, or
+  legacy vault trees
+
+Why this shape:
+
+- builtin memory is a fast local recall layer for curated files
+- LightRAG remains the broader historical retrieval layer over `workspace + wiki + raw/signals`
+- raw vault sources stay out of retrieval until curated import materializes them into canonical wiki pages
+
+Applied on the live server with targeted config and compose updates, then verified via:
+
+- `curl http://127.0.0.1:18789/healthz`
+- `docker compose ps openclaw-gateway`
+- `openclaw memory index --force`
+- `openclaw memory status --deep`
+- `openclaw memory search "LightRAG"`
+
+## 20. Builtin memorySearch post-tuning for Hetzner CX23
+
+Date: `2026-04-15`
+
+Goal: reduce host impact from future builtin memory indexing and search on the small `CX23` VPS
+without changing the retrieval boundary.
+
+Configuration adjustments:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "memorySearch": {
+        "remote": {
+          "batch": {
+            "enabled": true,
+            "concurrency": 1,
+            "wait": false
+          }
+        },
+        "query": {
+          "hybrid": {
+            "candidateMultiplier": 2,
+            "mmr": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Why this shape:
+
+- `candidateMultiplier=2` shrinks the hybrid search candidate pool from the more expensive default
+- disabling MMR removes an extra reranking pass that is unnecessary on the small curated corpus
+- provider-side Gemini batch mode keeps embedding work gentler for future reindex runs
+- `concurrency=1` avoids turning reindex into a bursty background job on a 4 GB VPS
+
+Operational note:
+
+- after the first builtin memory backfill, avoid launching multiple `openclaw memory ...` commands
+  in parallel on this host
+- prefer one-at-a-time smoke checks (`memory status`, then `memory search`) and schedule forced
+  rebuilds off-hours when possible
+
+## 28. Knowledge channel search enabled
+
+Date: `2026-04-16`
+
+Goal: make the Telegram Knowledge channel dual-purpose — plain-text messages trigger knowledge base search (LightRAG hybrid + memory search), while structured posts continue to be ingested as CURATED.
+
+Changes:
+
+- `artifacts/openclaw/openclaw.json` — added `<knowledge-channel-id>` to `channels.telegram.groups` with `requireMention: false, groupPolicy: allowlist`
+- `artifacts/openclaw/telegram-surfaces.redacted.json` — added `search_mode` block to Knowledge surface `ingestion_policy`: trigger `plain_text_without_required_fields`, backends `lightrag_hybrid` + `memory_search`, max 5 results, snippet+citations format
+- `workspace/TELEGRAM_POLICY.md` — updated Knowledge mode: plain-text → search, structured → ingest
+- `workspace/TOOLS.md` — added `knowledge_channel_search` section with response format template
+- `docs/12-telegram-channel-architecture.md`, `docs/15-llm-wiki-query-flow.md`, `docs/03-operations.md` — updated to reflect dual-mode
+
+**Note:** `<knowledge-channel-id>` placeholder must be replaced with the real Telegram channel ID before deploying. Look up with:
+```bash
+python3 scripts/lookup-telegram-ids.py --chat Knowledge
+```
+Or check the actual channel in Telegram client → channel info → copy link (ID is the numeric part).

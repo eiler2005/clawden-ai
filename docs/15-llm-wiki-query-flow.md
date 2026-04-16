@@ -305,6 +305,8 @@ Then OpenClaw should:
 3. optionally open the referenced pages
 4. synthesize a final answer
 
+**Telegram entry point:** Any plain-text message in the `Knowledge` channel triggers this same flow automatically (`lightrag_hybrid` + memory_search → respond with cited snippets). Structured posts in the same channel continue to be ingested as CURATED knowledge.
+
 ### 6.3 If It Is Mixed
 
 Examples:

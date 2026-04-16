@@ -5,11 +5,12 @@ services:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - /opt/obsidian-vault:/opt/obsidian-vault:rw
     ports:
       - "${OPENCLAW_GATEWAY_PORT}:18789"
       - "${OPENCLAW_BRIDGE_PORT}:18790"
@@ -35,12 +36,13 @@ services:
       HOME: /home/node
       TERM: xterm-256color
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      AGENTMAIL_API_KEY: ${AGENTMAIL_API_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
       BROWSER: echo
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
+      - /opt/obsidian-vault:/opt/obsidian-vault:rw
     stdin_open: true
     tty: true
     init: true

@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-14`
+Snapshot date: `2026-04-15`
 
 ## Host
 
@@ -42,6 +42,31 @@ Snapshot date: `2026-04-14`
 - cron: every 30 minutes
 - validation on 2026-04-10: `processed=26`, `failed=0`; query for "Сто лет недосказанности Семихатов" returns `Книги и статьи.md`
 - see `docs/10-memory-architecture.md` and `docs/11-lightrag-setup.md`
+
+### OpenClaw builtin memorySearch
+
+- status: enabled in `/opt/openclaw/config/openclaw.json`
+- backend: builtin SQLite memory engine (not QMD)
+- embedding provider: Gemini `gemini-embedding-001` via `GEMINI_API_KEY` in the OpenClaw gateway env
+- default memory roots:
+  - `/opt/openclaw/workspace/MEMORY.md`
+  - `/opt/openclaw/workspace/memory/**/*.md`
+- extra indexed path:
+  - `/opt/obsidian-vault/wiki/**/*.md`
+- retrieval profile:
+  - intended for fast local recall over curated memory and canonical wiki pages
+  - does not index `/opt/obsidian-vault/raw/signals`
+  - does not index `/opt/obsidian-vault/raw/articles`
+  - does not index `/opt/obsidian-vault/raw/documents`
+  - does not index legacy vault folders outside `wiki/`
+- citations: `auto`
+- cache: enabled (`maxEntries=50000`)
+- post-tuning for `CX23`:
+  - provider-side batch embeddings enabled (`concurrency=1`, `wait=false`)
+  - hybrid candidate pool reduced to `2`
+  - MMR reranking disabled
+- relationship to LightRAG: builtin memory is the lightweight local recall layer; LightRAG remains
+  the broader historical retrieval layer for `workspace + wiki + raw/signals`
 
 ### Obsidian vault
 
@@ -136,6 +161,17 @@ That absence is intentional. Voice transcription was removed to keep the CX23 VP
 - `22/tcp` for SSH
 - actual server address and SSH details are intentionally kept only in `LOCAL_ACCESS.md`
 
+## Telegram knowledge topics
+
+Two forum topics in `Ben'ka_Clawbot_SuperGroup` (-1003592370241) for knowledge management:
+
+| Topic | ID | Mode | Behaviour |
+|---|---|---|---|
+| `📚 Knowledgebase` | 232 | knowledge | Question → search (LightRAG hybrid + memory); any other content → auto-structure + wiki_ingest |
+| `💡 Ideas` | 639 | idea_capture | Any content (forwarded post, link, text) → auto-capture + queue; promote to Knowledgebase on demand |
+
+Config: `telegram-topic-map.json`, `telegram-surfaces.policy.json` on server. See `docs/17-knowledge-management.md`.
+
 ## Deployment state
 
 The final deployment is a layered setup:
@@ -183,7 +219,7 @@ Workspace directory in container: `/home/node/.openclaw/workspace/`
 | `INDEX.md` | Master memory catalog: what lives where, navigation |
 | `MEMORY.md` | Long-term curated memory: projects, partnerships, professional facts |
 | `HEARTBEAT.md` | Lightweight periodic tasks (no heavy scanning) |
-| `TOOLS.md` | Workspace tools including lightrag_query |
+| `TOOLS.md` | Workspace tools: lightrag_query, knowledge_channel_search, ideas_capture |
 | `BOOT.md` | Session startup checklist (8-step, includes LightRAG health check) |
 
 ### Runtime-managed files (not tracked in git)
