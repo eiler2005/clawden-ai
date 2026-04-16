@@ -393,10 +393,13 @@ flowchart LR
         workemail["work-email"]
         radar["last30daysTrend"]
         signals["signals"]
+        knowledgebase["📚 knowledgebase"]
+        ideas["💡 ideas"]
     end
 
     Denis --> OC & SB & TD
     OC --> inbox & approvals & tasks & system & raglog
+    OC --> knowledgebase & ideas
     TD -->|"08 11 14 17 21 MSK"| tgdigest
     AE -->|"08 13 16 20 MSK"| inboxemail
     AWE -->|"8 slots MSK"| workemail
@@ -416,6 +419,8 @@ flowchart LR
 | `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution for forwarded mail |
 | `last30daysTrend` | signals-bridge | daily 07:00 MSK | Personal Feed — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
+| `knowledgebase` | OpenClaw | on demand | question → LightRAG hybrid search + citations; content → bot auto-structures + wiki ingest |
+| `ideas` | OpenClaw | on demand | frictionless capture — any forwarded post/link/thought → auto-tag + queue for later promotion |
 
 ---
 

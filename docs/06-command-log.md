@@ -749,22 +749,32 @@ Operational note:
 - prefer one-at-a-time smoke checks (`memory status`, then `memory search`) and schedule forced
   rebuilds off-hours when possible
 
-## 28. Knowledge channel search enabled
+## 28. Knowledgebase + Ideas topics: search, auto-ingest, dual-mode
 
 Date: `2026-04-16`
 
-Goal: make the Telegram Knowledge channel dual-purpose — plain-text messages trigger knowledge base search (LightRAG hybrid + memory search), while structured posts continue to be ingested as CURATED.
+### 28a. Knowledgebase topic (topic_id=232) — dual-mode
+
+Goal: make the Knowledgebase supergroup topic dual-purpose — plain-text messages trigger knowledge base search; any other content (forwarded post, link, plain text) is auto-structured and ingested by the bot without any manual fields from Denis.
 
 Changes:
 
-- `artifacts/openclaw/openclaw.json` — added `<knowledge-channel-id>` to `channels.telegram.groups` with `requireMention: false, groupPolicy: allowlist`
-- `artifacts/openclaw/telegram-surfaces.redacted.json` — added `search_mode` block to Knowledge surface `ingestion_policy`: trigger `plain_text_without_required_fields`, backends `lightrag_hybrid` + `memory_search`, max 5 results, snippet+citations format
-- `workspace/TELEGRAM_POLICY.md` — updated Knowledge mode: plain-text → search, structured → ingest
-- `workspace/TOOLS.md` — added `knowledge_channel_search` section with response format template
+- `artifacts/openclaw/telegram-surfaces.redacted.json` — added Knowledgebase surface: type `supergroup_topic`, chat_id `<ops-supergroup-chat-id>`, topic_id=232; `search_mode` with backends `lightrag_hybrid` + `memory_search`, max 5 results, snippet+citations format; `auto_structure: true`, `required_fields_filled_by: agent` (bot extracts title/domain/source/date/summary automatically)
+- `workspace/TELEGRAM_POLICY.md` — Knowledgebase row: question → search, any content → bot auto-extracts + wiki_ingest
+- `workspace/TOOLS.md` — `knowledge_channel` section: intent routing + response format template; bot extracts all metadata, Denis never fills structured fields manually
 - `docs/12-telegram-channel-architecture.md`, `docs/15-llm-wiki-query-flow.md`, `docs/03-operations.md` — updated to reflect dual-mode
 
-**Note:** `<knowledge-channel-id>` placeholder must be replaced with the real Telegram channel ID before deploying. Look up with:
-```bash
-python3 scripts/lookup-telegram-ids.py --chat Knowledge
-```
-Or check the actual channel in Telegram client → channel info → copy link (ID is the numeric part).
+**Note:** `openclaw.json` groups section was NOT changed — the existing supergroup entry already covers all topics including Knowledgebase.
+
+### 28b. Ideas topic (topic_id=639) — frictionless capture
+
+Goal: create a dedicated Ideas topic in the supergroup for zero-friction capture of Telegram posts, links, and thoughts; promote to Knowledgebase on demand.
+
+Changes:
+
+- Created forum topic `💡 Ideas` in `Ben'ka_Clawbot_SuperGroup` via Bot API `createForumTopic`; assigned topic_id=639
+- `artifacts/openclaw/telegram-surfaces.redacted.json` — added Ideas surface: type `supergroup_topic`, topic_id=639, mode `idea_capture`; bot auto-captures, classifies, tags, queues; no RAG write without explicit promotion
+- `workspace/TOOLS.md` — `ideas_capture` section: any message in topic_id=639 → auto-capture, respond "✅ Захвачено: [тема]. Тег: [domain]"
+- `workspace/TELEGRAM_POLICY.md` — Ideas row: any content → auto-capture + queue, promote on demand
+- `artifacts/openclaw/telegram-topic-map.json` — added `knowledgebase: 232` and `ideas: 639`
+- Pinned usage instructions in both topics via Bot API

@@ -40,6 +40,8 @@ Use a single operational forum supergroup with these topics:
 | `inbox-email` | Personal inbox scheduled digests | Summaries only; no raw email bodies by default |
 | `work-email` | Live topic for work-email summaries | Summaries only; no raw email bodies by default |
 | `telegram-digest` | Digest output from selected channels/chats | Digest summaries only |
+| `knowledgebase` | Knowledge base search + auto-ingest | LightRAG query returned inline; ingested content → CURATED gate → Obsidian wiki |
+| `ideas` | Frictionless idea capture queue | RAW queue only; promoted to Knowledgebase on demand; no automatic RAG write |
 
 ### Merge / Split Recommendations
 

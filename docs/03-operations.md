@@ -456,6 +456,28 @@ Post any plain-text message in the Knowledge channel — bot responds with top r
 
 **If bot doesn't respond:** check that Knowledgebase topic_id=232 is registered in `telegram-topic-map.json` and workspace is deployed.
 
+### Ideas capture workflow
+
+Forward any Telegram post, paste a link, or write any thought into the `💡 Ideas` topic (topic_id=639) — no formatting required.
+
+**What the bot does automatically:**
+1. Reads the content (forwarded post, URL, free text)
+2. Extracts the essence and assigns tags (domain, source_type)
+3. Scores importance; silently ignores if score < 0.35
+4. Queues the item (RAW, not yet in RAG)
+5. Replies: `✅ Захвачено: [тема]. Тег: [domain]`
+
+**Promoting to Knowledgebase:**
+```
+Бенька, промоутни лучшее из Ideas за эту неделю
+Бенька, добавь последний пост в базу знаний
+```
+Bot shows the list and asks for confirmation before writing to wiki.
+
+**Nothing goes to RAG automatically** — promotion is always an explicit step.
+
+**If bot doesn't respond to Ideas:** check that topic_id=639 is in `telegram-topic-map.json` and workspace is deployed.
+
 ### Check LightRAG health
 
 ```bash
