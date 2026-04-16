@@ -306,9 +306,18 @@
         "required_fields_filled_by": "agent",
         "classification_confidence_min": 0.7,
         "high_sensitivity_requires_approval": true,
+        "ingest_precedence": [
+          "explicit_save_command",
+          "forwarded_message",
+          "message_with_url",
+          "longform_multiline_content"
+        ],
         "search_mode": {
           "enabled": true,
-          "trigger": "plain_text_without_required_fields",
+          "trigger": "question_like_short_query",
+          "requires_question_signal": true,
+          "question_signals": ["?", "что", "как", "почему", "расскажи", "кто", "когда", "где", "объясни"],
+          "max_length_chars": 280,
           "backends": ["lightrag_hybrid", "memory_search"],
           "lightrag_mode": "hybrid",
           "max_results": 5,

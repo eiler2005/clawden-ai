@@ -73,8 +73,8 @@
       "model": {
         "primary": "openai-codex/gpt-5.4",
         "fallbacks": [
-          "omniroute/smart",
           "omniroute/medium",
+          "omniroute/smart",
           "omniroute/light"
         ]
       },

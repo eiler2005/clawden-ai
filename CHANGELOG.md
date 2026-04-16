@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **Telegram fallback order for knowledge workflows**: reordered OpenClaw model fallbacks in `artifacts/openclaw/openclaw.json` to `omniroute/medium` → `omniroute/smart` → `omniroute/light`. This makes Telegram-side capture, save, and promotion flows recover faster when `openai-codex/gpt-5.4` is temporarily unavailable instead of waiting on the heavier `smart` tier first.
+- **Ideas/Knowledgebase direct ingest guidance**: tightened agent instructions so `Ideas` promotion and `Knowledgebase` save prefer direct `wiki_ingest(url)` when a stable source URL already exists, and use `wiki_ingest(text)` only when no reliable URL is available. This reduces unnecessary summarization hops before the canonical wiki write path.
+- **Knowledgebase save routing precedence**: narrowed `Knowledgebase` search triggering to short question-like queries only, and made explicit save commands, forwarded posts, URLs, and long multiline notes prefer ingest first. This prevents long-form saved content from being handled as a conversational reply instead of `wiki_ingest`.
+- **Telegram pin templates for knowledge UX**: added canonical pinned-message text under `artifacts/openclaw/telegram-pins.redacted.md`. `Knowledgebase` now documents the default “long content = save” behavior and the escape hatch `обсуди:` for discussion without ingest; `Ideas` pin now points users to `Knowledgebase` for direct durable saves.
+- **`scripts/post-telegram-pins.sh`**: added a deploy helper that reads the live bot token and topic map on the server, posts fresh pin messages into `Knowledgebase` and `Ideas`, and pins the newly posted messages automatically.
+- **Ideas vs Knowledgebase operating principle**: documented the canonical rule that the split is by intent, not by topic: `Ideas` means "capture now, decide later", while `Knowledgebase` means "commit this to durable system knowledge". Added explicit examples based on the recent Sequoia article and the `coding agents` note.
+
 ### Added
 - **Auto-structured ingestion**: removed manual structured post format from Knowledgebase. Bot now auto-extracts title/domain/source/date/summary/sensitivity from any content (forwarded post, URL, plain text). User never fills fields manually. Updated `telegram-surfaces` configs, `workspace/TOOLS.md`, `workspace/TELEGRAM_POLICY.md`, pinned message in Knowledgebase, `docs/17-knowledge-management.md`.
 

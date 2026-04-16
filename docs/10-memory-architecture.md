@@ -396,3 +396,13 @@ Two Telegram topics drive the primary ingestion workflow. See [docs/17-knowledge
 | `📚 Knowledgebase` (id=232) | Question → search; any content → bot auto-structures + `wiki_ingest` | CURATED |
 
 Content reaches `CURATED` / Obsidian / LightRAG only after explicit promotion (Ideas) or direct save (Knowledgebase). User never fills structured fields manually — the bot extracts title, domain, source, date, summary, sensitivity automatically.
+
+Practical operator rule:
+
+- `Ideas` means "capture now, decide later"
+- `Knowledgebase` means "this should become durable system knowledge"
+
+So the split is by intent, not by topic:
+
+- raw stream / maybe-useful / inbox material → `Ideas`
+- durable knowledge / principles / references that should be searchable later → `Knowledgebase`

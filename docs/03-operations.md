@@ -449,6 +449,7 @@ Post any plain-text message in the Knowledge channel — bot responds with top r
 
 2. Forward a post, paste a link, or write any text to save
    → Bot auto-extracts title/domain/source/date/summary and saves to wiki (✅ Сохранено: ...)
+   Forwarded posts, explicit save commands, URLs, and long multiline notes must prefer ingest over conversational reply.
 
 3. Write: "xyzzy крокодил абракадабра"
    → Bot responds: "Ничего не найдено. Попробуй другие ключевые слова."

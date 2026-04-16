@@ -48,13 +48,15 @@ User message
      -> Agent runner
         -> Primary model: openai-codex/gpt-5.4
            on rate_limit / error:
-           -> Fallback 1: omniroute/smart
-           -> Fallback 2: omniroute/medium
+           -> Fallback 1: omniroute/medium
+           -> Fallback 2: omniroute/smart
            -> Fallback 3: omniroute/light
 ```
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
 This is channel-agnostic — applies to all surfaces (Telegram, web UI, API).
+`medium` is tried before `smart` because most Telegram workflows are short-form operational tasks,
+and a fast stable fallback is more useful there than jumping first to the heaviest tier.
 
 ### OmniRoute tiers
 
@@ -77,6 +79,12 @@ The agent (running in the primary model context) selects OmniRoute tiers for sub
 2. Standard dialog, Q&A, summarization → `medium`
 3. Classification, tagging, data extraction → `light`
 4. LightRAG lookups and classification → `light`
+5. Knowledgebase save, Ideas queue review, and Ideas promotion stay on the `medium` / direct-ingest path unless the user explicitly asks for deeper analysis
+
+For Telegram save/promote actions, the preferred write path is:
+
+- `wiki_ingest(url)` when a stable source URL already exists
+- `wiki_ingest(text)` only when there is no reliable URL or the source is a plain note
 
 The main user response is never proxied through OmniRoute when Codex is available.
 OmniRoute is for subtasks and fallback only.
