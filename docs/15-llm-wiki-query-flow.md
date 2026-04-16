@@ -302,8 +302,9 @@ Then OpenClaw should:
 
 1. call `lightrag_query(...)`
 2. inspect returned references
-3. optionally open the referenced pages
-4. synthesize a final answer
+3. open the top 2-5 referenced wiki/workspace pages
+4. if top results are index/tooling/navigation pages, follow one step deeper to the canonical content pages
+5. only then synthesize a final answer
 
 **Telegram entry point:** Only a short question-like message in the `Knowledge` channel should trigger this flow automatically (`lightrag_hybrid` + memory_search → respond with cited snippets). Forwarded posts, URLs, explicit save commands, and long-form multiline content in the same channel should be ingested as CURATED knowledge instead of being answered conversationally first.
 
@@ -376,7 +377,8 @@ Those are exactly the kinds of wiki-derived references we wanted to see.
 The safe rule is:
 
 - trust the references more than the prose blob
-- inspect source pages when precision matters
+- in `Knowledgebase` search, inspect source pages before answering, not only when precision "might" matter
+- do not claim "nothing relevant was found" until the top retrieved pages were actually opened
 
 This is why `workspace/TOOLS.md` explicitly says to check `references[].file_path` when the answer affects a decision.
 

@@ -193,3 +193,9 @@ LIVE > RAW > DERIVED
 POST http://lightrag:9621/query
 {"query": "...", "mode": "hybrid"}
 ```
+
+Для `Knowledgebase`-вопросов этого недостаточно само по себе:
+
+- после `lightrag_query` нужно открыть 2–5 top references и проверить сами страницы
+- если top results выглядят как `INDEX`, tool docs или navigation pages, пройти на один шаг глубже до содержательной wiki page
+- не говорить «релевантного контента нет», пока top-candidates не просмотрены

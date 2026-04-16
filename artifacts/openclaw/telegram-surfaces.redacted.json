@@ -320,6 +320,9 @@
           "max_length_chars": 280,
           "backends": ["lightrag_hybrid", "memory_search"],
           "lightrag_mode": "hybrid",
+          "min_references_to_open": 2,
+          "max_references_to_open": 5,
+          "generic_fallback_requires_reference_review": true,
           "max_results": 5,
           "response_format": "snippet_with_citations"
         }
