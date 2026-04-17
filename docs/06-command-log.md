@@ -778,3 +778,19 @@ Changes:
 - `workspace/TELEGRAM_POLICY.md` — Ideas row: any content → auto-capture + queue, promote on demand
 - `artifacts/openclaw/telegram-topic-map.json` — added `knowledgebase: 232` and `ideas: 639`
 - Pinned usage instructions in both topics via Bot API
+
+### 28c. Knowledgebase search fallback tightened
+
+Observed issue: a short `Knowledgebase` query could still call `web_search` and surface a tool error such as `fetch failed`, even though this topic is supposed to be a local knowledge lookup first.
+
+Fix:
+
+- `workspace/TOOLS.md` — explicit rule added: `Knowledgebase` search must stay on `lightrag_query + memory search` by default
+- `workspace/TELEGRAM_POLICY.md` — internet search is now opt-in only for this topic
+- `docs/15-llm-wiki-query-flow.md`, `docs/17-knowledge-management.md`, `docs/12-telegram-channel-architecture.md`, `docs/01-server-state.md` — aligned wording
+
+Practical rule:
+
+- in `Knowledgebase`, failure to retrieve local results is **not** a reason to auto-run `web_search`
+- first say "nothing relevant found in local knowledge base"
+- only then offer a separate internet search, unless Denis explicitly asked for internet/latest/online data in the original message

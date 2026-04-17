@@ -306,7 +306,7 @@ Then OpenClaw should:
 4. if top results are index/tooling/navigation pages, follow one step deeper to the canonical content pages
 5. only then synthesize a final answer
 
-**Telegram entry point:** Only a short question-like message in the `Knowledge` channel should trigger this flow automatically (`lightrag_hybrid` + memory_search → respond with cited snippets). Forwarded posts, URLs, explicit save commands, and long-form multiline content in the same channel should be ingested as CURATED knowledge instead of being answered conversationally first.
+**Telegram entry point:** Only a short question-like message in the `Knowledge` channel should trigger this flow automatically (`lightrag_hybrid` + memory_search → respond with cited snippets). In this path, internet `web_search` is not the default fallback; it should run only when the user explicitly asks for internet/latest/online search or the question inherently depends on fresh external data. Forwarded posts, URLs, explicit save commands, and long-form multiline content in the same channel should be ingested as CURATED knowledge instead of being answered conversationally first.
 
 ### 6.3 If It Is Mixed
 

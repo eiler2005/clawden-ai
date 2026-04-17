@@ -167,7 +167,7 @@ Two forum topics in `Ben'ka_Clawbot_SuperGroup` (-1003592370241) for knowledge m
 
 | Topic | ID | Mode | Behaviour |
 |---|---|---|---|
-| `📚 Knowledgebase` | 232 | knowledge | Question → search (LightRAG hybrid + memory); any other content → auto-structure + wiki_ingest |
+| `📚 Knowledgebase` | 232 | knowledge | Question → search (LightRAG hybrid + memory, internet opt-in only); any other content → auto-structure + wiki_ingest |
 | `💡 Ideas` | 639 | idea_capture | Any content (forwarded post, link, text) → auto-capture + queue; promote to Knowledgebase on demand |
 
 Config: `telegram-topic-map.json`, `telegram-surfaces.policy.json` on server. See `docs/17-knowledge-management.md`.
