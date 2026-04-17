@@ -329,8 +329,23 @@ def _strip_greeting(text: str) -> str:
     return re.sub(r"^(?:коллеги|добрый день|доброе утро|добрый вечер)[,!\s]+", "", text, flags=re.IGNORECASE).strip()
 
 
+def _strip_copy_block(text: str) -> str:
+    text = str(text or "")
+    cleaned = re.sub(
+        r"(?is)\bкопия\s*:\s*.*?(?=(?:коллеги|добрый день|доброе утро|добрый вечер|уважаемые|денис[,!\s]|$))",
+        " ",
+        text,
+    )
+    cleaned = re.sub(
+        r"(?is)\bcc\s*:\s*.*?(?=(?:hello|hi|dear|коллеги|добрый день|доброе утро|добрый вечер|$))",
+        " ",
+        cleaned,
+    )
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _compact_clauses(text: str, *, limit: int = 170) -> str:
-    cleaned = _strip_greeting(text)
+    cleaned = _strip_greeting(_strip_copy_block(text))
     parts = [part.strip(" ,;") for part in re.split(r"[.!?]+", cleaned) if part.strip(" ,;")]
     if not parts:
         return _compact_text(cleaned, limit=limit)
@@ -393,12 +408,58 @@ def _vacation_summary(subject: str, preview: str) -> str:
     return _ensure_sentence(_capitalize_first("; ".join(parts)))
 
 
+def _extract_project_code(text: str) -> str:
+    match = re.search(r"\b(?:ПР|PR)[-\s]?\d{2,6}\b", text, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    value = match.group(0).upper().replace(" ", "-")
+    if value.startswith("PR"):
+        return value
+    return value.replace("ПР", "ПР")
+
+
+def _extract_role_label(text: str) -> str:
+    role_patterns = [
+        (r"\b(?:бизнес[-\s]?аналитик|business analyst|системн(?:ый|ого)? аналитик|аналитик)\b", "аналитик"),
+        (r"\b(?:разработчик|developer|backend|frontend|fullstack)\b", "разработчик"),
+        (r"\b(?:qa|qc|тестировщик)\b", "тестировщик"),
+        (r"\b(?:devops)\b", "DevOps"),
+        (r"\b(?:архитектор|architect)\b", "архитектор"),
+        (r"\b(?:pm|project manager|менеджер проекта|руководитель проекта)\b", "менеджер проекта"),
+        (r"\b(?:дизайнер|designer)\b", "дизайнер"),
+    ]
+    lowered = text.lower()
+    for pattern, label in role_patterns:
+        if re.search(pattern, lowered, flags=re.IGNORECASE):
+            return label
+    return ""
+
+
+def _resource_request_summary(subject: str, preview: str) -> str:
+    haystack = " ".join([subject, preview])
+    lowered = haystack.lower()
+    if not any(token in lowered for token in ["ресурс", "ресурсы", "требуется", "нужен", "нужна", "нужны", "аналитик", "разработчик", "тестировщик"]):
+        return ""
+    project_code = _extract_project_code(haystack)
+    role_label = _extract_role_label(haystack)
+    if project_code and role_label:
+        return f"Запрос на усиление команды по {project_code}: требуется {role_label}."
+    if role_label:
+        return f"Запрос на усиление команды: требуется {role_label}."
+    if project_code:
+        return f"Запрос по ресурсам для {project_code}."
+    return ""
+
+
 def _message_summary(message: dict, *, limit: int = 170) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
-    snippet = _clean_preview_text(message.get("preview"), limit=limit)
+    snippet = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=limit)
     lowered = " ".join([subject, snippet]).lower()
     if "updated invitation" in lowered:
         return _calendar_message_summary(subject)
+    resource_summary = _resource_request_summary(subject, snippet)
+    if resource_summary:
+        return resource_summary
     if not subject and not snippet:
         return "(no subject)"
     if not subject:
@@ -419,13 +480,16 @@ def _message_summary(message: dict, *, limit: int = 170) -> str:
 
 def _important_summary(message: dict, *, limit: int = 170) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
-    preview = _clean_preview_text(message.get("preview"), limit=260)
+    preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
     lowered = " ".join([subject, preview]).lower()
 
     if "updated invitation" in lowered:
         return _calendar_update_summary(subject)
     if "отпуск" in lowered:
         return _vacation_summary(subject, preview)
+    resource_summary = _resource_request_summary(subject, preview)
+    if resource_summary:
+        return resource_summary
     if preview:
         return _compact_clauses(preview, limit=limit)
     return _message_summary(message, limit=limit)

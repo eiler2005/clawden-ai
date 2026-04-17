@@ -258,6 +258,56 @@ class FooterRenderingTests(unittest.TestCase):
             html,
         )
 
+    def test_mailbox_digest_turns_resource_requests_into_clear_plot(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 17, 10, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 17, 11, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m4",
+                    "thread_id": "t4",
+                    "timestamp": "2026-04-17T14:15:00+03:00",
+                    "subject": "ресурсы для ПР-2952",
+                    "sender_display": "Литус Татьяна Юрьевна",
+                    "preview": "Копия: Полевиков Сергей Геннадьевич; sotnikov; vf@vtb. Коллеги, добрый день. Денис, нам срочно требуется аналитик на ПР-2952. Во вложении детали.",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                }
+            ],
+            important_messages=[
+                {
+                    "message_id": "m4",
+                    "thread_id": "t4",
+                    "timestamp": "2026-04-17T14:15:00+03:00",
+                    "subject": "ресурсы для ПР-2952",
+                    "sender_display": "Литус Татьяна Юрьевна",
+                    "preview": "Копия: Полевиков Сергей Геннадьевич; sotnikov; vf@vtb. Коллеги, добрый день. Денис, нам срочно требуется аналитик на ПР-2952. Во вложении детали.",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                }
+            ],
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn(
+            "• 14:15 — <b>Литус Татьяна Юрьевна</b> — Запрос на усиление команды по ПР-2952: требуется аналитик. Вложения: 1.",
+            html,
+        )
+        self.assertIn(
+            "• 14:15 — <b>Литус Татьяна Юрьевна</b> — Запрос на усиление команды по ПР-2952: требуется аналитик.",
+            html,
+        )
+        self.assertNotIn("Копия:", html)
+
 
 if __name__ == "__main__":
     unittest.main()
