@@ -118,6 +118,12 @@ If you know nothing about the repo, read in this order:
 6. [workspace/TOOLS.md](../workspace/TOOLS.md)
 7. [workspace/TELEGRAM_POLICY.md](../workspace/TELEGRAM_POLICY.md)
 
+This is the official LLM path:
+
+```text
+docs/20 -> docs/19 -> docs/10 -> docs/15 -> docs/17 -> task-specific docs
+```
+
 That path gives:
 - repo context
 - intuitive memory model
@@ -140,11 +146,13 @@ Read:
 3. [docs/15-llm-wiki-query-flow.md](15-llm-wiki-query-flow.md)
 4. [docs/17-knowledge-management.md](17-knowledge-management.md)
 5. [artifacts/llm-wiki/SCHEMA.md](../artifacts/llm-wiki/SCHEMA.md)
+6. [docs/16-llm-wiki-storage-model.md](16-llm-wiki-storage-model.md) only if exact naming/storage rules are needed
 
 Key takeaway you should hold while reading:
 - `research/**` is a valid final state
 - canonical promotion is selective
 - lifecycle metadata is additive over the wiki-first model
+- `docs/16` is reference, not the main architecture entrypoint
 
 ### If the task is about LightRAG
 

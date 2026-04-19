@@ -2,6 +2,11 @@
 
 Snapshot date: `2026-04-15`
 
+This file is for live inventory and host state.
+For the actual memory model, use `docs/10-memory-architecture.md`.
+For the human explanation, use `docs/19-llm-wiki-memory-explained.md`.
+For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
+
 ## Host
 
 - provider: Hetzner Cloud

@@ -2,6 +2,11 @@
 
 For the intuitive memory explanation behind this workflow, see
 `docs/19-llm-wiki-memory-explained.md`.
+For the technical memory model, see `docs/10-memory-architecture.md`.
+For the runtime query path, see `docs/15-llm-wiki-query-flow.md`.
+
+This file is the **behavior contract** for `Ideas` and `Knowledgebase`.
+It is not the main architecture document for the full memory stack.
 
 Система управления знаниями построена на двух топиках в `Ben'ka_Clawbot_SuperGroup` и трёх бэкендах хранения.
 

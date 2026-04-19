@@ -1,7 +1,14 @@
 # LLM-Wiki Storage Model
 
-This document explains how the LLM-Wiki is organized after canonical identity and thematic
-navigation were introduced.
+This document is a **reference-only storage rules file**.
+
+It is no longer part of the primary learning path for the memory stack.
+
+Use it only when you need exact answers to questions like:
+- page naming
+- canonical slug collisions
+- typed folders vs themes
+- storage constraints for archive placement and topic maps
 
 Use it when the question is:
 
@@ -10,9 +17,17 @@ Use it when the question is:
 - "What is canonical and what is derived?"
 - "Why do we keep typed folders and `TOPICS.md` at the same time?"
 
+Read first before this file:
+- human explanation -> `docs/19-llm-wiki-memory-explained.md`
+- technical memory model -> `docs/10-memory-architecture.md`
+- runtime query path -> `docs/15-llm-wiki-query-flow.md`
+- exact machine rules -> `artifacts/llm-wiki/SCHEMA.md`
+
 ---
 
 ## 1. Storage Layers
+
+This section is intentionally brief because the architecture-level explanation now lives in `docs/10`.
 
 There are three distinct layers:
 

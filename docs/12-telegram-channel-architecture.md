@@ -3,6 +3,11 @@
 This document defines the Telegram topology, permissions model, context modes, memory policy, and
 RAG ingestion gates for Benka / Бенька.
 
+Use this file for Telegram surface design.
+For the global memory model, use `docs/10-memory-architecture.md`.
+For save/search semantics in `Ideas` and `Knowledgebase`, use `docs/17-knowledge-management.md`.
+For runtime retrieval behavior, use `docs/15-llm-wiki-query-flow.md`.
+
 The design goal is not "the bot reads everything." The design goal is controlled human interface,
 clean operational channels, conservative memory, and a path from noisy inputs to curated knowledge.
 

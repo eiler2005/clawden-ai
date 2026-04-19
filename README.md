@@ -169,6 +169,10 @@ with [docs/19-llm-wiki-memory-explained.md](docs/19-llm-wiki-memory-explained.md
 another LLM/agent trying to understand this repo fast, use
 [docs/20-llm-project-orientation.md](docs/20-llm-project-orientation.md).
 
+Recommended memory reading path:
+- human: `README -> docs/19 -> docs/10 -> docs/17 -> docs/15`
+- LLM/agent: `docs/20 -> docs/19 -> docs/10 -> docs/15 -> docs/17`
+
 ---
 
 ## Table of Contents
@@ -734,7 +738,7 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 | 13 | [ai-assistant-architecture](docs/13-ai-assistant-architecture.md) | Model routing, assistant behavior, approval boundaries |
 | 14 | [codex-skills](docs/14-codex-skills.md) | Project skill catalog for recurring Codex workflows |
 | 15 | [llm-wiki-query-flow](docs/15-llm-wiki-query-flow.md) | End-to-end LLM-Wiki flow: curated import, LightRAG retrieval, OpenClaw answer assembly |
-| 16 | [llm-wiki-storage-model](docs/16-llm-wiki-storage-model.md) | Canonical slugs, themes, topic maps, and wiki repair policy |
+| 16 | [llm-wiki-storage-model](docs/16-llm-wiki-storage-model.md) | Reference-only storage rules: slugs, themes, topic maps, archive placement |
 | 17 | [knowledge-management](docs/17-knowledge-management.md) | Knowledgebase and Ideas workflow: save, capture, promotion |
 | 19 | [llm-wiki-memory-explained](docs/19-llm-wiki-memory-explained.md) | Human-first explanation of `raw -> wiki -> LightRAG -> OpenClaw` |
 | 20 | [llm-project-orientation](docs/20-llm-project-orientation.md) | LLM-facing project map: read order, trust hierarchy, doc routing |

@@ -2,6 +2,11 @@
 
 This page is the shortest human-readable explanation of how memory works in this project.
 
+Recommended next step after this file:
+- technical model -> `docs/10-memory-architecture.md`
+- save and promotion behavior -> `docs/17-knowledge-management.md`
+- runtime answer path -> `docs/15-llm-wiki-query-flow.md`
+
 If you only want one mental model, use this:
 
 ```text
@@ -86,6 +91,12 @@ If you remember only one thing from this page, remember this:
 
 `raw` is not yet knowledge.  
 `wiki` is the usable memory artifact.
+
+After this page, the intended reading path for a human is:
+
+```text
+README -> docs/19 -> docs/10 -> docs/17 -> docs/15
+```
 
 ---
 

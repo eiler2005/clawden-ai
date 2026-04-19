@@ -3,28 +3,23 @@
 LightRAG is the knowledge graph brain for the memory system. It indexes curated markdown
 (workspace files + LLM-Wiki + raw signal digests) and provides hybrid retrieval (vector + graph traversal).
 
-See `docs/10-memory-architecture.md` for the full memory system context and
-`docs/15-llm-wiki-query-flow.md` for the end-to-end retrieval/answer path.
+This file is **ops/setup only**.
+
+If you need:
+- intuition -> `docs/19-llm-wiki-memory-explained.md`
+- memory architecture -> `docs/10-memory-architecture.md`
+- runtime query path -> `docs/15-llm-wiki-query-flow.md`
 
 ---
 
 ## Why LightRAG Exists
 
-OpenClaw sessions are persistent, but the model context window is still finite. Without an
-external retrieval layer, the bot has two bad choices: forget older decisions, or bulk-load many
-daily notes and raw files until the conversation becomes slow and noisy.
+Short version:
+- `wiki/` is the source of truth
+- `LightRAG` is the retrieval layer over curated markdown
+- use it for historical/contextual recall, not live-state truth
 
-LightRAG is the middle path:
-
-- It turns markdown notes into searchable chunks, entities, and relationships.
-- It lets Бенька ask narrow questions like "why did we choose X?" without reading an archive.
-- It connects related facts across workspace memory, daily notes, raw decision records, and
-  Obsidian notes.
-- It keeps retrieval as Derived-tier memory: useful context, not proof of current state.
-
-Use LightRAG for historical/contextual recall. Do not use it to answer whether a service is
-currently running, which config is active, or what the live server is doing right now. Those
-questions require live checks.
+This doc focuses on how to deploy, ingest, check health, and troubleshoot that layer.
 
 ---
 

@@ -1,5 +1,14 @@
 # LLM-Wiki: Personal Knowledge Base
 
+> Historical design background. This file is no longer the current canonical guide.
+> Current source of truth:
+> `docs/10-memory-architecture.md`,
+> `docs/15-llm-wiki-query-flow.md`,
+> `docs/17-knowledge-management.md`,
+> `docs/19-llm-wiki-memory-explained.md`,
+> `docs/20-llm-project-orientation.md`,
+> `artifacts/llm-wiki/SCHEMA.md`.
+
 ## What This Is
 
 A structured, LLM-maintained personal wiki that replaces the previous ad-hoc Obsidian vault.

@@ -9,8 +9,16 @@ This document explains the full end-to-end mechanics of the LLM-Wiki stack in th
 - how a final answer is assembled;
 - how to verify that the flow is actually working in production.
 
-If you want the same system explained in a more human-facing way first, read
-`docs/19-llm-wiki-memory-explained.md`.
+This is the **runtime/query doc**.
+
+Read first:
+- `docs/19-llm-wiki-memory-explained.md` for intuition
+- `docs/10-memory-architecture.md` for the technical memory model
+
+Then use this file for the question:
+- "How does OpenClaw actually answer from memory?"
+- "When does LightRAG get called?"
+- "What happens between retrieval and the final answer?"
 
 Use this document when the question is not "how do I deploy LightRAG?" but rather:
 
@@ -28,6 +36,9 @@ See also:
 ---
 
 ## 1. Executive Summary
+
+This file deliberately focuses on runtime behavior, not the full storage model.
+If you need folder rules, themes, canonical slugs, or storage constraints, use `docs/16` or `SCHEMA.md`.
 
 In this deployment:
 
@@ -61,7 +72,7 @@ OpenClaw reads references and writes the final answer
 
 ---
 
-## 2. Roles of Each Layer
+## 2. Runtime Roles of Each Layer
 
 ### 2.1 Canonical Source of Truth: `wiki/`
 

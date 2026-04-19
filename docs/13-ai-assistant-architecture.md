@@ -3,6 +3,11 @@
 This document describes the design principles, model routing, channel interaction model,
 and memory strategy for the Бенька / Benka AI assistant running on OpenClaw.
 
+Use this file for assistant behavior and routing policy.
+For the core memory architecture, use `docs/10-memory-architecture.md`.
+For the human explanation of `raw -> wiki -> LightRAG -> OpenClaw`, use `docs/19-llm-wiki-memory-explained.md`.
+For `Ideas` / `Knowledgebase` behavior, use `docs/17-knowledge-management.md`.
+
 ---
 
 ## Core Design Principles
