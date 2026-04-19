@@ -9,6 +9,9 @@ This document explains the full end-to-end mechanics of the LLM-Wiki stack in th
 - how a final answer is assembled;
 - how to verify that the flow is actually working in production.
 
+If you want the same system explained in a more human-facing way first, read
+`docs/19-llm-wiki-memory-explained.md`.
+
 Use this document when the question is not "how do I deploy LightRAG?" but rather:
 
 - "How does the LLM-Wiki actually work here?"
@@ -202,6 +205,9 @@ Public conceptual tools:
 - `wiki_lint()`
 
 In practice `wiki_ingest(...)` maps to `POST /trigger` on `wiki-import`.
+
+Maintenance endpoint:
+- `POST /maintain` for lifecycle-aware dry runs and safe archive refreshes
 
 ### 4.2 What `wiki-import` Does
 

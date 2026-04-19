@@ -50,6 +50,7 @@ Humans should not manually edit bot-owned system files except `SCHEMA.md`.
 | `decision` | `decisions/` | ADR-style records for important choices |
 | `session` | `sessions/` | Session or operational notes |
 | `research` | `research/` | Source-centric or synthesis-heavy analysis pages |
+| `archive/research` | `archive/research/` | Low-prominence archived research pages that remain searchable |
 
 Primary organization is by page type.  
 Themes are a **secondary navigation layer**, not a replacement for typed folders.
@@ -122,6 +123,9 @@ tags: [tag1, tag2]
 themes: [runtime, wiki]
 related:
   - research/some-research.md
+capture_state: promoted      # captured | promoted | synthesized | decided | archived
+review_status: fresh         # fresh | needs_review | superseded
+last_reviewed_at: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
 ```
@@ -139,6 +143,9 @@ tags: [tag1, tag2]
 themes: [memory, retrieval]
 related:
   - entities/some-entity.md
+capture_state: promoted
+review_status: fresh
+last_reviewed_at: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
 ```
@@ -156,6 +163,9 @@ tags: [infra, decisions]
 themes: [operations, retrieval]
 related:
   - entities/some-entity.md
+capture_state: decided
+review_status: fresh
+last_reviewed_at: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
 ```
@@ -182,6 +192,12 @@ tags: [tag1, tag2]
 themes: [wiki, memory]
 related:
   - concepts/some-concept.md
+capture_mode: knowledgebase  # knowledgebase | ideas | promotion
+curation_level: curated      # light | curated
+capture_state: captured
+review_status: fresh
+last_reviewed_at: YYYY-MM-DD
+archived_at: YYYY-MM-DD      # only for archived research pages
 updated: YYYY-MM-DD
 ---
 ```
@@ -189,6 +205,7 @@ updated: YYYY-MM-DD
 Rules:
 - every non-session page must have `themes`
 - entity and concept pages must support `aliases`
+- `capture_mode` describes the workflow path; `curation_level` describes curation depth; `capture_state` describes lifecycle stage
 - keep frontmatter flat and simple for Obsidian Properties / Bases compatibility
 
 ---
@@ -286,6 +303,14 @@ Steps:
 9. Rebuild `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`.
 10. Append to `LOG.md`.
 
+Lifecycle rules:
+- every explicit save must create or update `research/**` first
+- `research/**` is a valid final state and does not require automatic promotion
+- `Ideas` saves default to `capture_mode: ideas`, `curation_level: light`, `capture_state: captured`
+- `Knowledgebase` saves default to `capture_mode: knowledgebase`, `curation_level: curated`, `capture_state: captured`
+- `promotion` upgrades the same artifact chain; it does not create a second independent research family
+- canonical concepts/entities should stay sparse and selective
+
 Rule of thumb:
 - one source should usually touch multiple pages
 - canonical pages should get better over time
@@ -328,6 +353,7 @@ Checks:
 9. hub candidates
 10. empty sections
 11. `TOPICS.md` drift
+12. lifecycle candidates: promotion, synthesis, archive, stale review
 
 `repair=true` may:
 - merge duplicate canonical entities
@@ -336,6 +362,17 @@ Checks:
 - remove low-signal auto-generated decision pages
 - normalize aliases/themes
 - rebuild `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`
+
+`/maintain` workflow may:
+- report lifecycle candidates daily without mutating pages
+- archive safe low-signal `research/**` pages into `archive/research/**`
+- rebuild `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`, `LOG.md`
+
+Archive rules:
+- only `research` pages are archived automatically
+- canonical `entity` / `concept` / `decision` pages are not auto-archived in v1
+- archived research pages remain part of `wiki/**` and stay searchable through LightRAG
+- archived pages drop out of `OVERVIEW.md` prominence and are not primary topic exemplars
 
 ---
 

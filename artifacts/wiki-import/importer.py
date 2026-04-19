@@ -6,7 +6,7 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -30,6 +30,7 @@ SYSTEM_FILES = {
     "TOPICS.md",
     "CANONICALS.yaml",
 }
+ARCHIVE_ROOT = Path("archive/research")
 PAGE_FOLDERS = {
     "concept": "concepts",
     "entity": "entities",
@@ -443,6 +444,7 @@ class WikiImporter:
                 "page_paths": [str(path.relative_to(self.obsidian_root)) for path in page_paths],
                 "wiki_page_paths": [str(path.relative_to(self.obsidian_root)) for path in page_paths],
                 "capture_mode": normalized.capture_mode,
+                "capture_state": _capture_state_for_research(normalized.capture_mode),
                 "canonical_pages_updated": [str(path.relative_to(self.obsidian_root)) for path in canonical_paths],
                 "rag_enqueued_paths": [str(path.relative_to(self.obsidian_root)) for path in rag_enqueued_paths],
                 "rag_status": rag_status,
@@ -457,6 +459,54 @@ class WikiImporter:
             raise
         self._write_status({"ok": True, "last_import": result, "updated": _utc_now()})
         return result
+
+    def maintain(self, *, mode: str = "dry_run", actions: list[str] | None = None) -> dict[str, Any]:
+        self._ensure_layout()
+        normalized_mode = "apply" if str(mode).strip().lower() == "apply" else "dry_run"
+        requested_actions = [str(item).strip().lower() for item in (actions or ["report"]) if str(item).strip()]
+        if not requested_actions:
+            requested_actions = ["report"]
+        allowed_actions = {"report", "archive", "refresh_topics", "refresh_overview"}
+        invalid = [item for item in requested_actions if item not in allowed_actions]
+        if invalid:
+            raise ValueError(f"unsupported maintain actions: {', '.join(sorted(invalid))}")
+
+        lint_payload = self.lint(repair=False)
+        archive_moved_paths: list[str] = []
+        archive_mapping: dict[str, str] = {}
+        if normalized_mode == "apply" and "archive" in requested_actions:
+            archive_mapping = self._archive_research_pages(lint_payload.get("archive_candidates", []))
+            archive_moved_paths = [new for _, new in sorted(archive_mapping.items())]
+
+        if normalized_mode == "apply" and {"archive", "refresh_topics", "refresh_overview"} & set(requested_actions):
+            self._refresh_indexes_and_topics()
+            if archive_mapping:
+                pages = self._scan_pages()
+                self._append_log(
+                    operation="maintenance",
+                    source="wiki-import /maintain",
+                    description="Lifecycle upkeep",
+                    created=[self.wiki_root / rel_path for rel_path in archive_moved_paths],
+                    updated=[self.wiki_root / "INDEX.md", self.wiki_root / "OVERVIEW.md", self.wiki_root / "TOPICS.md"],
+                    insight="Archived low-signal research pages and rebuilt bot-maintained navigation pages.",
+                )
+        stale_review_candidates = _dedupe_preserve(
+            [*lint_payload.get("stale_promoted_pages", []), *lint_payload.get("stale_decisions", [])]
+        )
+        payload = {
+            "ok": True,
+            "mode": normalized_mode,
+            "actions": requested_actions,
+            "archive_moved_paths": archive_moved_paths,
+            "promotion_candidates": lint_payload.get("promotion_candidates", []),
+            "synthesis_candidates": lint_payload.get("synthesis_candidates", []),
+            "archive_candidates": lint_payload.get("archive_candidates", []),
+            "stale_review_candidates": stale_review_candidates,
+            "contradiction_review_candidates": lint_payload.get("contradiction_review_candidates", []),
+            "status": "applied" if normalized_mode == "apply" else "reported",
+        }
+        self._write_status({"ok": True, "last_maintain": payload, "updated": _utc_now()})
+        return payload
 
     def lint(self, *, repair: bool = False) -> dict[str, Any]:
         self._ensure_layout()
@@ -480,14 +530,23 @@ class WikiImporter:
         missing_themes = self._missing_theme_findings(pages)
         broken_canonicals = self._broken_canonical_findings(canonicals)
         topics_drift = self._topics_drift(pages)
+        promotion_candidates: list[str] = []
+        synthesis_candidates: list[str] = []
+        archive_candidates: list[str] = []
+        stale_promoted_pages: list[str] = []
+        stale_decisions: list[str] = []
+        contradiction_review_candidates: list[str] = []
+        active_pages = [page for page in pages if not _page_is_archived(page)]
+        repeated_theme_pages = self._repeated_theme_research_candidates(active_pages)
 
         for page in pages:
             updated = str(page["meta"].get("updated", "")).strip()
+            updated_age: int | None = None
             if updated:
                 try:
-                    age = (now - datetime.strptime(updated, "%Y-%m-%d").date()).days
-                    if age > 90:
-                        stale.append(f"{page['rel_path']} ({age} days)")
+                    updated_age = (now - datetime.strptime(updated, "%Y-%m-%d").date()).days
+                    if updated_age > 90:
+                        stale.append(f"{page['rel_path']} ({updated_age} days)")
                 except ValueError:
                     findings.append(f"- Invalid updated date: `{page['rel_path']}`")
             else:
@@ -499,6 +558,33 @@ class WikiImporter:
             missing_links.extend(self._missing_link_findings(page, pages))
             if incoming.get(page["slug"], 0) >= 5 and not bool(page["meta"].get("hub")):
                 hub_candidates.append(f"{page['rel_path']} ({incoming[page['slug']]} links)")
+
+            if _page_is_archived(page):
+                continue
+
+            review_age = _date_age_in_days(page["meta"].get("last_reviewed_at"), now)
+            page_type = str(page["meta"].get("type", ""))
+            capture_state = str(page["meta"].get("capture_state", "")).strip().lower()
+            curation_level = str(page["meta"].get("curation_level", "")).strip().lower()
+
+            if page_type in {"entity", "concept"} and (review_age is None or review_age > 180):
+                stale_promoted_pages.append(page["rel_path"])
+            if page_type == "decision" and (review_age is None or review_age > 180):
+                stale_decisions.append(page["rel_path"])
+            if page_type == "research":
+                canonical_backlinks = self._canonical_backlink_count(page, active_pages)
+                if curation_level == "light" and updated_age is not None and updated_age > 180 and canonical_backlinks == 0:
+                    archive_candidates.append(page["rel_path"])
+                if curation_level == "curated" and updated_age is not None and updated_age > 365 and page["rel_path"] in repeated_theme_pages:
+                    synthesis_candidates.append(page["rel_path"])
+                if page["rel_path"] in repeated_theme_pages:
+                    if curation_level == "light":
+                        promotion_candidates.append(page["rel_path"])
+                    else:
+                        synthesis_candidates.append(page["rel_path"])
+            if page_type in {"entity", "concept", "decision"} or capture_state == "promoted":
+                if self._has_newer_linked_research(page, active_pages, now):
+                    contradiction_review_candidates.append(page["rel_path"])
 
         report_lines = ["# Wiki Lint Report", ""]
         report_lines.append(f"- scanned_pages: {len(pages)}")
@@ -530,6 +616,21 @@ class WikiImporter:
         report_lines.append("## Stale Pages")
         report_lines.extend([f"- {item}" for item in stale] or ["- none"])
         report_lines.append("")
+        report_lines.append("## Promotion Candidates")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(promotion_candidates)] or ["- none"])
+        report_lines.append("")
+        report_lines.append("## Synthesis Candidates")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(synthesis_candidates)] or ["- none"])
+        report_lines.append("")
+        report_lines.append("## Archive Candidates")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(archive_candidates)] or ["- none"])
+        report_lines.append("")
+        report_lines.append("## Stale Promoted Pages")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(stale_promoted_pages)] or ["- none"])
+        report_lines.append("")
+        report_lines.append("## Stale Decisions")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(stale_decisions)] or ["- none"])
+        report_lines.append("")
         report_lines.append("## Empty Sections")
         report_lines.extend([f"- {item}" for item in empty_sections] or ["- none"])
         report_lines.append("")
@@ -540,7 +641,7 @@ class WikiImporter:
         report_lines.extend([f"- {item}" for item in hub_candidates] or ["- none"])
         report_lines.append("")
         report_lines.append("## Contradictions")
-        report_lines.append("- heuristic contradiction detection not implemented in v1.2")
+        report_lines.extend([f"- {item}" for item in _dedupe_preserve(contradiction_review_candidates)] or ["- none"])
         if repair_actions:
             report_lines.append("")
             report_lines.append("## Repair Actions")
@@ -553,6 +654,12 @@ class WikiImporter:
             "empty_section_count": len(empty_sections),
             "missing_link_count": len(missing_links),
             "hub_candidate_count": len(hub_candidates),
+            "promotion_candidates": _dedupe_preserve(promotion_candidates),
+            "synthesis_candidates": _dedupe_preserve(synthesis_candidates),
+            "archive_candidates": _dedupe_preserve(archive_candidates),
+            "stale_promoted_pages": _dedupe_preserve(stale_promoted_pages),
+            "stale_decisions": _dedupe_preserve(stale_decisions),
+            "contradiction_review_candidates": _dedupe_preserve(contradiction_review_candidates),
             "duplicate_basename_count": len(duplicate_basenames),
             "duplicate_token_slug_count": len(duplicate_token_slugs),
             "source_title_entity_count": len(source_title_entities),
@@ -586,6 +693,28 @@ class WikiImporter:
             except Exception:
                 payload["last_status"] = {"ok": False, "error": "status_file_unreadable"}
         return payload
+
+    def _archive_research_pages(self, rel_paths: list[str]) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for rel_path in rel_paths:
+            source_path = self.wiki_root / rel_path
+            if not source_path.exists() or source_path.parent.name != "research":
+                continue
+            archive_path = self.wiki_root / ARCHIVE_ROOT / source_path.name
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            text = source_path.read_text(encoding="utf-8")
+            meta, body = _split_frontmatter(text)
+            meta["capture_state"] = "archived"
+            meta["review_status"] = "superseded"
+            meta["archived_at"] = _today()
+            meta["updated"] = _today()
+            archive_path.write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
+            source_path.unlink()
+            mapping[rel_path] = str(archive_path.relative_to(self.wiki_root))
+        if mapping:
+            self._rewrite_related_paths(mapping)
+            self._rewrite_queue_paths(mapping)
+        return mapping
 
     def _find_queue_entry(self, queue: list[dict[str, Any]], fingerprint: str) -> dict[str, Any] | None:
         if not fingerprint:
@@ -1087,6 +1216,9 @@ class WikiImporter:
                 "tags": spec.tags or _tag_list(spec.name),
                 "themes": spec.themes or ["wiki"],
                 "related": [f"research/{research_slug}.md"],
+                "capture_state": _capture_state_for_canonical(normalized.capture_mode),
+                "review_status": "fresh",
+                "last_reviewed_at": _today(),
                 "updated": _today(),
             },
             title=spec.name,
@@ -1140,6 +1272,9 @@ class WikiImporter:
                 "tags": spec.tags or _tag_list(spec.name),
                 "themes": spec.themes or ["wiki"],
                 "related": [f"research/{research_slug}.md"] + [f"entities/{item.name}" for item in entity_paths],
+                "capture_state": _capture_state_for_canonical(normalized.capture_mode),
+                "review_status": "fresh",
+                "last_reviewed_at": _today(),
                 "updated": _today(),
             },
             title=spec.name,
@@ -1195,6 +1330,9 @@ class WikiImporter:
                 "tags": _tag_list(normalized.title),
                 "themes": themes,
                 "related": [f"entities/{item.slug}.md" for item in entity_specs] + [f"concepts/{item.slug}.md" for item in concept_specs],
+                "capture_state": _capture_state_for_research(normalized.capture_mode),
+                "review_status": "fresh",
+                "last_reviewed_at": _today(),
                 "updated": _today(),
             },
             title=normalized.title,
@@ -1242,6 +1380,9 @@ class WikiImporter:
                 "tags": spec.tags or ["decisions"],
                 "themes": spec.themes or ["operations"],
                 "related": related,
+                "capture_state": "decided",
+                "review_status": "fresh",
+                "last_reviewed_at": _today(),
                 "updated": _today(),
             },
             title=spec.name,
@@ -1265,8 +1406,10 @@ class WikiImporter:
         self._write_topics(pages)
 
     def _write_index(self, pages: list[dict[str, Any]]) -> None:
+        active_pages = [page for page in pages if not _page_is_archived(page)]
+        archived_research = [page for page in pages if _page_is_archived(page) and page["meta"].get("type") == "research"]
         by_type: dict[str, list[dict[str, Any]]] = {key: [] for key in PAGE_FOLDERS}
-        for page in self._unique_pages_by_slug(pages):
+        for page in self._unique_pages_by_slug(active_pages):
             by_type.setdefault(page["meta"].get("type", "research"), []).append(page)
 
         lines = [
@@ -1285,41 +1428,50 @@ class WikiImporter:
             "---",
             "",
             "## Concepts",
-            "| Page | Summary | Tags | Confidence | Updated |",
-            "|------|---------|------|------------|---------|",
+            "| Page | Summary | Tags | Confidence | State | Updated |",
+            "|------|---------|------|------------|-------|---------|",
         ]
-        lines.extend(_index_rows(by_type.get("concept", []), fields=["confidence", "updated"]) or ["| _(empty — populate via ingest)_ | | | | |"])
+        lines.extend(_index_rows(by_type.get("concept", []), fields=["confidence", "capture_state", "updated"]) or ["| _(empty — populate via ingest)_ | | | | | |"])
         lines.extend(
             [
                 "",
                 "## Entities",
-                "| Page | Summary | Tags | Status |",
-                "|------|---------|------|--------|",
+                "| Page | Summary | Tags | Status | State |",
+                "|------|---------|------|--------|-------|",
             ]
         )
-        lines.extend(_index_rows(by_type.get("entity", []), fields=["status"]) or ["| _(empty — populate via ingest)_ | | | |"])
+        lines.extend(_index_rows(by_type.get("entity", []), fields=["status", "capture_state"]) or ["| _(empty — populate via ingest)_ | | | | |"])
         lines.extend(
             [
                 "",
                 "## Decisions",
-                "| Page | Summary | Date | Status |",
-                "|------|---------|------|--------|",
+                "| Page | Summary | Date | Status | State |",
+                "|------|---------|------|--------|-------|",
             ]
         )
-        lines.extend(_index_rows(by_type.get("decision", []), fields=["date", "status"]) or ["| _(empty — populate via ingest)_ | | | |"])
+        lines.extend(_index_rows(by_type.get("decision", []), fields=["date", "status", "capture_state"]) or ["| _(empty — populate via ingest)_ | | | | |"])
         lines.extend(
             [
                 "",
-                "## Research",
-                "| Page | Summary | Tags | Updated |",
-                "|------|---------|------|---------|",
+                "## Active Research",
+                "| Page | Summary | Tags | Curation | State | Updated |",
+                "|------|---------|------|----------|-------|---------|",
             ]
         )
-        lines.extend(_index_rows(by_type.get("research", []), fields=["updated"]) or ["| _(empty — populate via ingest)_ | | | |"])
+        lines.extend(_index_rows(by_type.get("research", []), fields=["curation_level", "capture_state", "updated"]) or ["| _(empty — populate via ingest)_ | | | | | |"])
+        lines.extend(
+            [
+                "",
+                "## Archived Research",
+                "| Page | Summary | Tags | Archived At | State |",
+                "|------|---------|------|-------------|-------|",
+            ]
+        )
+        lines.extend(_index_rows(archived_research, fields=["archived_at", "capture_state"]) or ["| _(none)_ | | | | |"])
         lines.extend(["", "## Hub Pages (God Nodes)", "Pages with 5+ incoming wiki links:"])
-        incoming = self._incoming_link_counts(pages)
+        incoming = self._incoming_link_counts(active_pages)
         hub_lines = []
-        for page in sorted(self._unique_pages_by_slug(pages), key=lambda item: (-incoming.get(item["slug"], 0), item["rel_path"])):
+        for page in sorted(self._unique_pages_by_slug(active_pages), key=lambda item: (-incoming.get(item["slug"], 0), item["rel_path"])):
             count = incoming.get(page["slug"], 0)
             if count >= 5:
                 hub_lines.append(f"- [{page['meta'].get('name', page['slug'])}]({page['rel_path']}) — {count} links")
@@ -1327,7 +1479,9 @@ class WikiImporter:
         (self.wiki_root / "INDEX.md").write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
     def _write_overview(self, pages: list[dict[str, Any]]) -> None:
-        unique_pages = self._unique_pages_by_slug(pages)
+        active_pages = [page for page in pages if not _page_is_archived(page)]
+        archived_pages = [page for page in pages if _page_is_archived(page)]
+        unique_pages = self._unique_pages_by_slug(active_pages)
         incoming = self._incoming_link_counts(unique_pages)
         hubs = sorted(unique_pages, key=lambda item: (-incoming.get(item["slug"], 0), item["rel_path"]))[:5]
         recent = sorted(
@@ -1361,7 +1515,8 @@ class WikiImporter:
             "---",
             "",
             "## Active Focus",
-            f"- Curated wiki pages: {len(unique_pages)}",
+            f"- Active wiki pages: {len(unique_pages)}",
+            f"- Archived research pages: {len(archived_pages)}",
             f"- Queue entries: {len(queue)}",
             "- Prefer `OVERVIEW.md` for boot, `TOPICS.md` for thematic navigation, and `INDEX.md` for full registry.",
             "",
@@ -1386,7 +1541,9 @@ class WikiImporter:
         (self.wiki_root / "OVERVIEW.md").write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
     def _write_topics(self, pages: list[dict[str, Any]]) -> None:
-        unique_pages = self._unique_pages_by_slug(pages)
+        active_pages = [page for page in pages if not _page_is_archived(page)]
+        archived_pages = [page for page in pages if _page_is_archived(page)]
+        unique_pages = self._unique_pages_by_slug(active_pages)
         incoming = self._incoming_link_counts(unique_pages)
         lines = [
             "# LLM-Wiki Topics",
@@ -1396,9 +1553,12 @@ class WikiImporter:
         ]
         for theme in THEME_ORDER:
             themed = [page for page in unique_pages if theme in (page["meta"].get("themes", []) or [])]
+            archived_themed = [page for page in archived_pages if theme in (page["meta"].get("themes", []) or [])]
             lines.extend(["", f"## {THEME_LABELS[theme]}"])
             if not themed:
                 lines.append("- _(no pages yet)_")
+                if archived_themed:
+                    lines.append(f"- Archived research pages: {len(archived_themed)}")
                 continue
             entities = sorted(
                 [page for page in themed if page["meta"].get("type") == "entity"],
@@ -1429,6 +1589,9 @@ class WikiImporter:
             lines.append("")
             lines.append("### Research and Synthesis")
             lines.extend([f"- [[{page['slug']}]]" for page in research] or ["- none"])
+            if archived_themed:
+                lines.append("")
+                lines.append(f"- Archived research pages: {len(archived_themed)}")
         (self.wiki_root / "TOPICS.md").write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
     def _repair_existing_wiki(self) -> list[str]:
@@ -1803,6 +1966,7 @@ class WikiImporter:
             self.wiki_root / "decisions",
             self.wiki_root / "sessions",
             self.wiki_root / "research",
+            self.wiki_root / ARCHIVE_ROOT,
             self.wiki_root / "templates",
             self.raw_root / "articles",
             self.raw_root / "documents",
@@ -1880,6 +2044,82 @@ class WikiImporter:
                 if slug in known:
                     counts[slug] = counts.get(slug, 0) + 1
         return counts
+
+    def _canonical_backlink_count(self, page: dict[str, Any], pages: list[dict[str, Any]]) -> int:
+        count = 0
+        rel_path = page["rel_path"]
+        for other in pages:
+            if other["rel_path"] == rel_path:
+                continue
+            if other["meta"].get("type") not in {"entity", "concept", "decision"}:
+                continue
+            related = [str(item) for item in other["meta"].get("related", []) or []]
+            if rel_path in related:
+                count += 1
+                continue
+            if f"[[{page['slug']}]]" in other["body"]:
+                count += 1
+        return count
+
+    def _repeated_theme_research_candidates(self, pages: list[dict[str, Any]]) -> set[str]:
+        theme_counts: dict[str, int] = defaultdict(int)
+        for page in pages:
+            if page["meta"].get("type") != "research":
+                continue
+            for theme in page["meta"].get("themes", []) or []:
+                theme_counts[str(theme)] += 1
+        candidates: set[str] = set()
+        for page in pages:
+            if page["meta"].get("type") != "research":
+                continue
+            themes = [str(theme) for theme in page["meta"].get("themes", []) or []]
+            if any(theme_counts.get(theme, 0) >= 3 for theme in themes):
+                candidates.add(page["rel_path"])
+        return candidates
+
+    def _has_newer_linked_research(self, page: dict[str, Any], pages: list[dict[str, Any]], now: date) -> bool:
+        page_review_date = _date_value(page["meta"].get("last_reviewed_at")) or _date_value(page["meta"].get("updated"))
+        page_themes = set(self._normalize_themes(page["meta"].get("themes", [])))
+        for rel_path in [str(item) for item in page["meta"].get("related", []) or []]:
+            related_page = next((item for item in pages if item["rel_path"] == rel_path), None)
+            if related_page is None or related_page["meta"].get("type") != "research" or _page_is_archived(related_page):
+                continue
+            related_date = _date_value(related_page["meta"].get("updated"))
+            related_themes = set(self._normalize_themes(related_page["meta"].get("themes", [])))
+            overlap = page_themes & related_themes
+            if overlap and page_review_date and related_date and related_date > page_review_date:
+                return True
+            if overlap and not page_review_date:
+                return True
+        return False
+
+    def _rewrite_related_paths(self, mapping: dict[str, str]) -> None:
+        if not mapping:
+            return
+        for path in sorted(self.wiki_root.rglob("*.md")):
+            if path.name in SYSTEM_FILES or path.name == "CANONICALS.yaml":
+                continue
+            text = path.read_text(encoding="utf-8")
+            meta, body = _split_frontmatter(text)
+            related = [str(item) for item in meta.get("related", []) or []]
+            updated_related = [mapping.get(item, item) for item in related]
+            if updated_related != related:
+                meta["related"] = _dedupe_preserve(updated_related)
+                path.write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
+
+    def _rewrite_queue_paths(self, mapping: dict[str, str]) -> None:
+        if not mapping:
+            return
+        queue = self._load_queue()
+        changed = False
+        for item in queue:
+            current = str(item.get("research_path", "")).strip()
+            if current in mapping:
+                item["research_path"] = mapping[current]
+                item["updated"] = _utc_now()
+                changed = True
+        if changed:
+            self._save_queue(queue)
 
     def _missing_link_findings(self, page: dict[str, Any], pages: list[dict[str, Any]]) -> list[str]:
         findings: list[str] = []
@@ -2137,6 +2377,14 @@ def _normalize_capture_mode(value: str) -> str:
     return "knowledgebase"
 
 
+def _capture_state_for_research(capture_mode: str) -> str:
+    return "promoted" if capture_mode == "promotion" else "captured"
+
+
+def _capture_state_for_canonical(capture_mode: str) -> str:
+    return "promoted" if capture_mode == "promotion" else "captured"
+
+
 def _dedupe_paths(paths: list[Path]) -> list[Path]:
     result: list[Path] = []
     seen: set[str] = set()
@@ -2152,6 +2400,8 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
 def _overview_priority(page: dict[str, Any]) -> int:
     page_type = str(page["meta"].get("type", ""))
     curation_level = str(page["meta"].get("curation_level", "")).strip().lower()
+    if _page_is_archived(page):
+        return 0
     if page_type == "decision":
         return 5
     if page_type in {"entity", "concept"}:
@@ -2383,6 +2633,28 @@ def _index_rows(pages: list[dict[str, Any]], *, fields: list[str]) -> list[str]:
     return rows
 
 
+def _page_is_archived(page: dict[str, Any]) -> bool:
+    capture_state = str(page["meta"].get("capture_state", "")).strip().lower()
+    return capture_state == "archived" or page["rel_path"].startswith("archive/")
+
+
+def _date_value(value: Any) -> date | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _date_age_in_days(value: Any, now: date) -> int | None:
+    parsed = _date_value(value)
+    if parsed is None:
+        return None
+    return (now - parsed).days
+
+
 def _empty_markdown_sections(body: str) -> list[str]:
     headers = list(re.finditer(r"^##\s+(.+)$", body, flags=re.M))
     empty: list[str] = []
@@ -2449,7 +2721,8 @@ def _default_overview_text() -> str:
         "_Bot-maintained cold-start summary. Keep compact._\n\n"
         "---\n\n"
         "## Active Focus\n"
-        "- LLM-Wiki rollout is active.\n"
+        "- Active wiki pages: 0\n"
+        "- Archived research pages: 0\n"
         "- Prefer canonical wiki pages over raw sources for retrieval.\n"
         "- Read `TOPICS.md` for thematic navigation and `SCHEMA.md` before any wiki write operation.\n\n"
         "## Active Themes\n"
@@ -2479,21 +2752,25 @@ def _default_index_text() -> str:
         "- [Operation Log](LOG.md)\n\n"
         "---\n\n"
         "## Concepts\n"
-        "| Page | Summary | Tags | Confidence | Updated |\n"
-        "|------|---------|------|------------|---------|\n"
-        "| _(empty — populate via ingest)_ | | | | |\n\n"
+        "| Page | Summary | Tags | Confidence | State | Updated |\n"
+        "|------|---------|------|------------|-------|---------|\n"
+        "| _(empty — populate via ingest)_ | | | | | |\n\n"
         "## Entities\n"
-        "| Page | Summary | Tags | Status |\n"
-        "|------|---------|------|--------|\n"
-        "| _(empty — populate via ingest)_ | | | |\n\n"
+        "| Page | Summary | Tags | Status | State |\n"
+        "|------|---------|------|--------|-------|\n"
+        "| _(empty — populate via ingest)_ | | | | |\n\n"
         "## Decisions\n"
-        "| Page | Summary | Date | Status |\n"
-        "|------|---------|------|--------|\n"
-        "| _(empty — populate via ingest)_ | | | |\n\n"
-        "## Research\n"
-        "| Page | Summary | Tags | Updated |\n"
-        "|------|---------|------|---------|\n"
-        "| _(empty — populate via ingest)_ | | | |\n\n"
+        "| Page | Summary | Date | Status | State |\n"
+        "|------|---------|------|--------|-------|\n"
+        "| _(empty — populate via ingest)_ | | | | |\n\n"
+        "## Active Research\n"
+        "| Page | Summary | Tags | Curation | State | Updated |\n"
+        "|------|---------|------|----------|-------|---------|\n"
+        "| _(empty — populate via ingest)_ | | | | | |\n\n"
+        "## Archived Research\n"
+        "| Page | Summary | Tags | Archived At | State |\n"
+        "|------|---------|------|-------------|-------|\n"
+        "| _(none)_ | | | | |\n\n"
         "## Hub Pages (God Nodes)\n"
         "_Pages with 5+ incoming wiki links. Populated after first lint run._\n"
     )

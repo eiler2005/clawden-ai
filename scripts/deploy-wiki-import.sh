@@ -52,6 +52,7 @@ EOF
 
   sudo chmod 600 wiki-import.env
   sudo chmod +x /opt/wiki-import/entrypoint.sh
+  sudo chmod +x /opt/wiki-import/sync-openclaw-cron-jobs.sh
   sudo docker compose build
   sudo docker compose down 2>/dev/null || true
   sudo docker compose up -d wiki-import
@@ -66,6 +67,21 @@ EOF
   done
   if [ "$ready" -ne 1 ]; then
     echo "wiki-import did not become healthy in time." >&2
+    exit 1
+  fi
+
+  /opt/wiki-import/sync-openclaw-cron-jobs.sh
+
+  gateway_ready=0
+  for _ in $(seq 1 60); do
+    if sudo docker ps --format "{{.Names}} {{.Status}}" | grep -q "openclaw-openclaw-gateway-1 .*healthy"; then
+      gateway_ready=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "$gateway_ready" -ne 1 ]; then
+    echo "OpenClaw gateway did not become healthy after wiki-import cron sync." >&2
     exit 1
   fi
 '

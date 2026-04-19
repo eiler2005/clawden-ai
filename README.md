@@ -156,6 +156,19 @@ Bridge services run on independent schedules, triggered via **Redis Streams**:
 
 The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. Retrieval is intentionally split by profile: OpenClaw builtin `memorySearch` covers fast local recall over curated memory files plus `wiki/`, while LightRAG indexes the broader curated layer (`workspace`, `wiki/`, `raw/signals/`) for deeper historical lookups. Raw vault sources such as `raw/articles/` and `raw/documents/` stay out of both retrieval layers until curated import materializes them into visible wiki pages. For explicit user saves, the wiki page is the proof of storage; LightRAG indexing is secondary.
 
+The shortest mental model is:
+
+```text
+raw sources -> curated wiki -> LightRAG index -> OpenClaw answers
+```
+
+In other words: `wiki/` is the durable source of truth, `LightRAG` is the retrieval layer on top of it, and explicit saves are only considered complete once they create a visible wiki artifact.
+
+If you want the shortest human explanation of why this exists and how the memory cycle works, start
+with [docs/19-llm-wiki-memory-explained.md](docs/19-llm-wiki-memory-explained.md). If you are
+another LLM/agent trying to understand this repo fast, use
+[docs/20-llm-project-orientation.md](docs/20-llm-project-orientation.md).
+
 ---
 
 ## Table of Contents
@@ -722,6 +735,10 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 | 14 | [codex-skills](docs/14-codex-skills.md) | Project skill catalog for recurring Codex workflows |
 | 15 | [llm-wiki-query-flow](docs/15-llm-wiki-query-flow.md) | End-to-end LLM-Wiki flow: curated import, LightRAG retrieval, OpenClaw answer assembly |
 | 16 | [llm-wiki-storage-model](docs/16-llm-wiki-storage-model.md) | Canonical slugs, themes, topic maps, and wiki repair policy |
+| 17 | [knowledge-management](docs/17-knowledge-management.md) | Knowledgebase and Ideas workflow: save, capture, promotion |
+| 18 | [claude-llm-wiki-memory-lifecycle-prompt](docs/18-claude-llm-wiki-memory-lifecycle-prompt.md) | Prompt pack for external model critique of memory lifecycle |
+| 19 | [llm-wiki-memory-explained](docs/19-llm-wiki-memory-explained.md) | Human-first explanation of `raw -> wiki -> LightRAG -> OpenClaw` |
+| 20 | [llm-project-orientation](docs/20-llm-project-orientation.md) | LLM-facing project map: read order, trust hierarchy, doc routing |
 
 ---
 

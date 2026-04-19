@@ -8,6 +8,9 @@ Use a placeholder in committed docs and keep the real value only in `LOCAL_ACCES
 export OPENCLAW_HOST="deploy@<server-host>"
 ```
 
+For the intuitive memory overview, read `docs/19-llm-wiki-memory-explained.md`. For the
+LLM-oriented doc map, read `docs/20-llm-project-orientation.md`.
+
 ## Container-only operational rule
 
 For this deployment, OpenClaw runtime changes happen in Docker, not on the host OS.
@@ -543,6 +546,36 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
     -d "{\"source_type\":\"url\",\"source\":\"https://example.com/article\",\"target_kind\":\"auto\",\"capture_mode\":\"knowledgebase\"}" | jq .
 '
 ```
+
+### Run wiki lifecycle maintenance manually
+
+Dry-run report:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  token="$(sudo awk -F= "/^WIKI_IMPORT_TOKEN=/{print substr(\$0, length(\$1)+2)}" /opt/wiki-import/wiki-import.env | tail -n1)"
+  curl -sf -X POST http://127.0.0.1:8095/maintain \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d "{\"mode\":\"dry_run\",\"actions\":[\"report\"]}" | jq .
+'
+```
+
+Apply safe archive + bot-managed refresh:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  token="$(sudo awk -F= "/^WIKI_IMPORT_TOKEN=/{print substr(\$0, length(\$1)+2)}" /opt/wiki-import/wiki-import.env | tail -n1)"
+  curl -sf -X POST http://127.0.0.1:8095/maintain \
+    -H "Authorization: Bearer ${token}" \
+    -H "Content-Type: application/json" \
+    -d "{\"mode\":\"apply\",\"actions\":[\"report\",\"archive\",\"refresh_topics\",\"refresh_overview\"]}" | jq .
+'
+```
+
+`wiki-import` now ships with an OpenClaw cron-store sync helper:
+- daily dry-run lifecycle report
+- weekly safe archive + overview/topics refresh
 
 ### Backfill historical `Knowledgebase` posts into wiki
 

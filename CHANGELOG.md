@@ -8,15 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **LLM-Wiki lifecycle metadata**: wiki pages now distinguish workflow origin (`capture_mode`), curation depth (`curation_level`), and lifecycle stage (`capture_state`). `wiki-import` adds review metadata, lifecycle-aware lint diagnostics, and a new `/maintain` endpoint for safe archive/report refreshes.
+- **Research archive policy**: low-signal research pages can now move into `wiki/archive/research/**` while staying inside `wiki/**` for LightRAG recall. `OVERVIEW.md` and `TOPICS.md` now treat archived research as lower-prominence material instead of deleting it from the knowledge graph.
+- **wiki-import deployment flow**: `scripts/deploy-wiki-import.sh` now syncs dedicated OpenClaw cron jobs for daily lifecycle dry-run reports and weekly safe archive refreshes.
 - **Knowledge capture is now wiki-first by contract**: explicit saves from `📚 Knowledgebase`, `💡 Ideas`, and Ideas promotion are documented and implemented as `raw -> wiki/research -> optional canonical pages -> LightRAG`, instead of treating LightRAG upload as the primary success condition.
 - **Ideas capture semantics**: `💡 Ideas` no longer means “outside wiki until promotion”. Explicit captures now create a visible light-curated `wiki/research/**` page immediately; promotion deepens the same artifact chain instead of materializing it from scratch.
 - **Telegram save UX**: pinned messages, agent instructions, and knowledge-management docs now describe wiki-first success replies with a concrete `wiki/research/**` page path and separate `LightRAG` freshness status.
 - **Knowledgebase historical-save recovery**: documented and operationalized a dedicated backfill path for old `Knowledgebase` posts that were previously handled as `raw/articles + LightRAG` without visible wiki artifacts.
 
 ### Added
+- **Human-first memory explainer**: added `docs/19-llm-wiki-memory-explained.md` with Mermaid diagrams for vault structure, compile flow, explicit save flow, query path, and the role split between `wiki`, `LightRAG`, and OpenClaw.
+- **LLM-facing project orientation**: added `docs/20-llm-project-orientation.md` so another model can understand what this repo is, which docs are canonical by topic, and how to navigate the current architecture without scanning the whole tree blindly.
+- **wiki-import cron sync helper**: added `artifacts/wiki-import/sync-openclaw-cron-jobs.sh` to patch the OpenClaw cron store with lifecycle maintenance jobs safely and idempotently.
 - **`wiki-import` capture modes**: `POST /trigger` now supports `capture_mode` (`knowledgebase` / `ideas` / `promotion`) plus promotion reuse via stable fingerprint, returns `wiki_page_paths`, `canonical_pages_updated`, `rag_enqueued_paths`, `rag_status`, and `status`, and performs immediate non-blocking RAG enqueue only for touched `wiki/**/*.md` pages.
 - **Knowledge-capture tests**: added unit coverage for ideas light-curation saves, promotion reuse of existing research pages, wiki-first response payloads, partial success when LightRAG enqueue fails, and explicit rejection of raw-to-LightRAG uploads in interactive save flows.
 - **`scripts/backfill-knowledgebase-to-wiki.sh`**: the Knowledgebase backfill helper now runs as a two-stage replay: every historical item is first materialized as a source-centric `ideas` capture, and only high-signal articles are immediately re-run through `promotion` to deepen canonical wiki pages without reviving broad graph noise.
+- **Claude/Gemini research prompt for memory lifecycle**: added `docs/18-claude-llm-wiki-memory-lifecycle-prompt.md` so the current LLM-Wiki lifecycle problem can be handed to another model with consistent context, constraints, and evaluation criteria.
 
 ### Fixed
 - **Knowledgebase search routing**: clarified that `📚 Knowledgebase` search is local-first (`LightRAG` + builtin memory) and must not auto-fallback to internet `web_search`. Internet lookup is now opt-in only for this topic unless Denis explicitly asks for web/latest/online information or the request inherently depends on fresh external data. This fixes the misleading case where a temporary `web_search fetch failed` looked like a knowledge-base miss instead of a tool failure on an unnecessary route.

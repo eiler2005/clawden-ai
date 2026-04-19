@@ -56,6 +56,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/lint":
             self._handle_lint(payload)
             return
+        if self.path == "/maintain":
+            self._handle_maintain(payload)
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
     def log_message(self, fmt: str, *args) -> None:
@@ -85,6 +88,18 @@ class Handler(BaseHTTPRequestHandler):
         try:
             with LOCK:
                 result = IMPORTER.lint(repair=repair)
+            self._send_json(HTTPStatus.OK, result)
+        except Exception as exc:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"})
+
+    def _handle_maintain(self, payload: dict) -> None:
+        mode = str(payload.get("mode") or "dry_run").strip()
+        actions = payload.get("actions") or ["report"]
+        if isinstance(actions, str):
+            actions = [actions]
+        try:
+            with LOCK:
+                result = IMPORTER.maintain(mode=mode, actions=list(actions))
             self._send_json(HTTPStatus.OK, result)
         except Exception as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"})

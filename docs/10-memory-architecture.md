@@ -4,6 +4,8 @@
 
 For a full end-to-end explanation of how LLM-Wiki, LightRAG, and OpenClaw interact during answer
 generation, see `docs/15-llm-wiki-query-flow.md`.
+For the short human-facing explanation of why the memory system exists and how `raw -> wiki ->
+LightRAG -> OpenClaw` works, see `docs/19-llm-wiki-memory-explained.md`.
 
 The OpenClaw bot (Бенька) uses a multi-layer external memory system. The LLM remembers nothing
 between sessions by itself — all persistence lives in files and a knowledge graph.

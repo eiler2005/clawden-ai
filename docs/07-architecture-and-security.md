@@ -419,10 +419,16 @@ Internal API:
 - `GET /status`
 - `POST /trigger`
 - `POST /lint`
+- `POST /maintain`
 
 LightRAG ingest remains read-only and narrowed to curated wiki pages plus `raw/signals`.
 Direct `POST /documents/upload` from interactive Knowledgebase/Ideas save flows is out of policy;
 the only valid path is through `wiki-import`.
+
+Operational upkeep is split from ingest:
+- daily dry-run maintenance reports can surface lifecycle candidates without mutating pages
+- weekly apply maintenance may archive low-signal `research/**` pages into `wiki/archive/research/**`
+- archived research pages remain searchable because they still live under `wiki/**`
 
 ---
 

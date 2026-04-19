@@ -1,5 +1,8 @@
 # Knowledge Management: Ideas + Knowledgebase
 
+For the intuitive memory explanation behind this workflow, see
+`docs/19-llm-wiki-memory-explained.md`.
+
 Система управления знаниями построена на двух топиках в `Ben'ka_Clawbot_SuperGroup` и трёх бэкендах хранения.
 
 ---

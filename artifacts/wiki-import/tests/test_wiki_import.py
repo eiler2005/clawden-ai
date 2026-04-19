@@ -25,6 +25,7 @@ def scaffold(root: Path) -> None:
         wiki / "decisions",
         wiki / "sessions",
         wiki / "research",
+        wiki / "archive" / "research",
         raw / "articles",
         raw / "documents",
         raw / "signals",
@@ -58,6 +59,7 @@ class WikiImportTests(unittest.TestCase):
             self.assertTrue((root / result["raw_path"]).exists())
             self.assertTrue(any(path.startswith("wiki/research/") for path in result["page_paths"]))
             self.assertEqual(result["capture_mode"], "knowledgebase")
+            self.assertEqual(result["capture_state"], "captured")
             self.assertIn("rag_status", result)
             self.assertIn("status", result)
             queue_text = (root / "wiki" / "IMPORT-QUEUE.md").read_text(encoding="utf-8")
@@ -172,6 +174,7 @@ class WikiImportTests(unittest.TestCase):
             research_text = research_path.read_text(encoding="utf-8")
             self.assertIn("capture_mode: ideas", research_text)
             self.assertIn("curation_level: light", research_text)
+            self.assertIn("capture_state: captured", research_text)
             self.assertFalse(any((root / "wiki" / "entities").glob("unknown-builder*.md")))
             self.assertFalse(any((root / "wiki" / "decisions").glob("*.md")))
 
@@ -202,10 +205,12 @@ class WikiImportTests(unittest.TestCase):
             second_research = [path for path in second["wiki_page_paths"] if path.startswith("wiki/research/")]
             self.assertEqual(first_research, second_research)
             self.assertEqual(second["capture_mode"], "promotion")
+            self.assertEqual(second["capture_state"], "promoted")
             research_path = root / first_research[0]
             research_text = research_path.read_text(encoding="utf-8")
             self.assertIn("capture_mode: promotion", research_text)
             self.assertIn("curation_level: curated", research_text)
+            self.assertIn("capture_state: promoted", research_text)
             self.assertTrue(second["canonical_pages_updated"])
 
     @patch("importer.requests.get")
@@ -469,6 +474,135 @@ class WikiImportTests(unittest.TestCase):
             self.assertEqual(result["status"], "partial_success")
             self.assertEqual(result["rag_status"], "failed")
             self.assertTrue(any(path.startswith("wiki/research/") for path in result["wiki_page_paths"]))
+
+    def test_maintain_archives_old_light_research_and_rebuilds_indexes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scaffold(root)
+            archived_source = root / "wiki" / "research" / "old-note.md"
+            archived_source.write_text(
+                "---\n"
+                "type: research\n"
+                "name: Old Note\n"
+                "source: manual\n"
+                "captured_at: '2025-01-01T00:00:00+00:00'\n"
+                "imported_at: '2025-01-01T00:00:00+00:00'\n"
+                "capture_mode: ideas\n"
+                "curation_level: light\n"
+                "raw_source: raw/articles/old-note.md\n"
+                "confidence: INFERRED\n"
+                "tags: [old]\n"
+                "themes: [wiki]\n"
+                "related: []\n"
+                "capture_state: captured\n"
+                "review_status: fresh\n"
+                "last_reviewed_at: '2025-01-01'\n"
+                "updated: '2025-01-01'\n"
+                "---\n\n"
+                "# Old Note\n\n"
+                "## Summary\nOld research page.\n",
+                encoding="utf-8",
+            )
+            importer = WikiImporter(obsidian_root=root, state_root=root / "state")
+
+            result = importer.maintain(mode="apply", actions=["report", "archive", "refresh_topics", "refresh_overview"])
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["status"], "applied")
+            self.assertIn("archive/research/old-note.md", result["archive_moved_paths"])
+            self.assertFalse(archived_source.exists())
+            archived_path = root / "wiki" / "archive" / "research" / "old-note.md"
+            self.assertTrue(archived_path.exists())
+            archived_text = archived_path.read_text(encoding="utf-8")
+            self.assertIn("capture_state: archived", archived_text)
+            self.assertIn("review_status: superseded", archived_text)
+            overview = (root / "wiki" / "OVERVIEW.md").read_text(encoding="utf-8")
+            self.assertIn("Archived research pages: 1", overview)
+
+    def test_lint_reports_lifecycle_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scaffold(root)
+            (root / "wiki" / "research" / "theme-one.md").write_text(
+                "---\n"
+                "type: research\nname: Theme One\nsource: manual\ncapture_mode: ideas\ncuration_level: light\n"
+                "raw_source: raw/articles/theme-one.md\nconfidence: INFERRED\ntags: [theme]\nthemes: [memory]\n"
+                "related: []\ncapture_state: captured\nreview_status: fresh\nlast_reviewed_at: '2025-01-01'\nupdated: '2025-01-01'\n"
+                "---\n\n# Theme One\n\n## Summary\nA repeated memory theme.\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "research" / "theme-two.md").write_text(
+                "---\n"
+                "type: research\nname: Theme Two\nsource: manual\ncapture_mode: ideas\ncuration_level: light\n"
+                "raw_source: raw/articles/theme-two.md\nconfidence: INFERRED\ntags: [theme]\nthemes: [memory]\n"
+                "related: []\ncapture_state: captured\nreview_status: fresh\nlast_reviewed_at: '2025-01-01'\nupdated: '2025-01-01'\n"
+                "---\n\n# Theme Two\n\n## Summary\nAnother repeated memory theme.\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "research" / "theme-three.md").write_text(
+                "---\n"
+                "type: research\nname: Theme Three\nsource: manual\ncapture_mode: knowledgebase\ncuration_level: curated\n"
+                "raw_source: raw/articles/theme-three.md\nconfidence: INFERRED\ntags: [theme]\nthemes: [memory]\n"
+                "related: []\ncapture_state: promoted\nreview_status: fresh\nlast_reviewed_at: '2025-01-01'\nupdated: '2025-01-01'\n"
+                "---\n\n# Theme Three\n\n## Summary\nCurated repeated memory theme.\n",
+                encoding="utf-8",
+            )
+            importer = WikiImporter(obsidian_root=root, state_root=root / "state")
+
+            result = importer.lint()
+
+            self.assertTrue(result["ok"])
+            self.assertIn("research/theme-one.md", result["archive_candidates"])
+            self.assertIn("research/theme-one.md", result["promotion_candidates"])
+            self.assertIn("research/theme-three.md", result["synthesis_candidates"])
+
+    def test_decision_pages_get_decided_capture_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scaffold(root)
+            importer = WikiImporter(obsidian_root=root, state_root=root / "state")
+
+            result = importer.import_source(
+                ImportRequest(
+                    source_type="text",
+                    source="# Choose LightRAG\n\n## Decision\nWe decided to use LightRAG.\n\n## Options considered\nQdrant.\n\n## Consequences\nHybrid retrieval wins.\n",
+                    title="Choose LightRAG",
+                    import_goal="Capture the decision and rationale.",
+                    capture_mode="knowledgebase",
+                )
+            )
+
+            self.assertTrue(result["ok"])
+            decision_pages = list((root / "wiki" / "decisions").glob("*.md"))
+            self.assertEqual(len(decision_pages), 1)
+            self.assertIn("capture_state: decided", decision_pages[0].read_text(encoding="utf-8"))
+
+    def test_lint_reports_contradiction_review_candidates_from_newer_research(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scaffold(root)
+            (root / "wiki" / "concepts" / "agent-memory.md").write_text(
+                "---\n"
+                "type: concept\nname: Agent Memory\naliases: [agent memory]\nconfidence: CONFIRMED\nhub: false\n"
+                "tags: [memory]\nthemes: [memory]\nrelated: [research/memory-note.md]\n"
+                "capture_state: promoted\nreview_status: fresh\nlast_reviewed_at: '2025-01-01'\nupdated: '2025-01-01'\n"
+                "---\n\n# Agent Memory\n\n## Definition\nCanonical memory page.\n",
+                encoding="utf-8",
+            )
+            (root / "wiki" / "research" / "memory-note.md").write_text(
+                "---\n"
+                "type: research\nname: Memory Note\nsource: manual\ncapture_mode: promotion\ncuration_level: curated\n"
+                "raw_source: raw/articles/memory-note.md\nconfidence: INFERRED\ntags: [memory]\nthemes: [memory]\n"
+                "related: [concepts/agent-memory.md]\ncapture_state: promoted\nreview_status: fresh\nlast_reviewed_at: '2026-04-01'\nupdated: '2026-04-01'\n"
+                "---\n\n# Memory Note\n\n## Summary\nNewer research page that should trigger review.\n",
+                encoding="utf-8",
+            )
+            importer = WikiImporter(obsidian_root=root, state_root=root / "state")
+
+            result = importer.lint()
+
+            self.assertTrue(result["ok"])
+            self.assertIn("concepts/agent-memory.md", result["contradiction_review_candidates"])
 
     def test_lint_repair_merges_duplicates_and_rewrites_links(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
