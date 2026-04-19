@@ -38,8 +38,8 @@
 1. Бенька читает всё в топике без упоминания
 2. Извлекает суть, присваивает теги (domain, source_type)
 3. Оценивает важность; если < 0.35 — молча игнорирует
-4. Добавляет в очередь (RAW/DERIVED, вне RAG)
-5. Отвечает кратко: `✅ Захвачено: [тема]. Тег: [domain]`
+4. Создаёт `raw/**` + light-curated `wiki/research/**` через `wiki_ingest(capture_mode=ideas)`
+5. Отвечает кратко: `✅ Захвачено в wiki: [тема]`
 
 **Промоушен в Knowledgebase:**
 ```
@@ -50,7 +50,7 @@
 Бот покажет список и попросит подтверждение перед записью.
 
 **Что НЕ происходит автоматически:**
-- Контент НЕ уходит в RAG/Obsidian без промоушена
+- Контент не превращается сразу в heavy canonical graph без нужной уверенности
 - Бот НЕ пишет длинный анализ на каждый пост
 
 ---
@@ -69,7 +69,7 @@
 
 Короткая формула:
 
-- `Ideas` — inbox / queue / capture
+- `Ideas` — capture now, curate deeper later
 - `Knowledgebase` — commit в wiki
 
 Это означает:
@@ -159,8 +159,9 @@ https://some-article.com/interesting
 → ✅ Сохранено: «Личная заметка» → personal
 ```
 
-Бот инжестит в Obsidian wiki → LightRAG (переиндексация через 30 мин).
+Бот инжестит в Obsidian wiki сразу, а потом делает immediate LightRAG enqueue по затронутым `wiki/**` страницам.
 Если бот вместо `✅ Сохранено: ...` начинает просто спорить или комментировать длинный пост, значит сообщение было ошибочно смаршрутизировано как диалог, а не как ingest.
+Если бот говорит только про `LightRAG upload`, `track_id` или `queued`, а реальной `wiki/research/**` страницы нет, это тоже ошибка маршрута.
 Рекомендуемый pinned message для топика должен явно обещать: длинный контент здесь сохраняется по умолчанию, а `обсуди:` отключает автосохранение.
 Если во время сохранения был промежуточный tool failure, но следующий retry успешно завершил запись, пользовательский итог должен оставаться человеческим: короткое объяснение причины сбоя + подтверждение, что финальное сохранение прошло. Сырой `Edit failed` не должен становиться главным пользовательским сообщением.
 
@@ -187,11 +188,33 @@ https://some-article.com/interesting
    ты говоришь «да» / «нет» / «вот этот»
    │
    ▼
-6. прямой `wiki_ingest(url|text)` → Obsidian wiki → LightRAG index
+6. прямой `wiki_ingest(url|text)` → `raw/**` + `wiki/research/**` → optional canonical updates → LightRAG index
    │
    ▼
 7. Через 30 мин поиск находит это в 📚 Knowledgebase
 ```
+
+Для исторических постов из `📚 Knowledgebase`, которые раньше были сохранены как `raw/articles + LightRAG`
+без реальной wiki-страницы, используем backfill helper:
+
+```bash
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/backfill-knowledgebase-to-wiki.sh --dry-run
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/backfill-knowledgebase-to-wiki.sh --apply
+```
+
+Он берёт только неслужебные человеческие сообщения из topic `232` и прогоняет их через
+`wiki-import` в два шага: сначала в source-centric light mode, чтобы historical saves точно
+материализовались в `wiki/research/**`, а затем точечно запускает `promotion` для high-signal
+материалов. Так legacy saves становятся частью настоящей LLM-Wiki, но без массового заднего
+раздувания canonical graph.
+
+High-signal auto-promotion intentionally uses a narrow heuristic set:
+- URL article source
+- strong title markers such as `architecture`, `memory`, `metrics`, `evaluation`, `retrieval`, `taxonomy`, `framework`
+- known topic pairs such as `llm + memory`, `llm + metrics`, `agent + architecture`
+- body/source signals such as `arxiv.org`, `benchmark`, `grammar`, `evaluation`
+
+Everything else stays in `ideas/light` until Denis explicitly asks for promotion.
 
 ---
 
@@ -202,7 +225,8 @@ https://some-article.com/interesting
 | Obsidian wiki | `/opt/obsidian-vault/wiki/**/*.md` | Syncthing + LightRAG cron 30 мин |
 | Workspace memory | `/opt/openclaw/workspace/*.md` | Deploy workspace |
 | Signals/digests | `/opt/obsidian-vault/raw/signals/**/*.md` | Telethon Digest → LightRAG cron |
-| Ideas (после промоушена) | → wiki/ | wiki-import bridge |
+| Ideas explicit save | → wiki/research/ (light curation) | wiki-import bridge |
+| Ideas (после промоушена) | existing wiki artifact gets enriched | wiki-import bridge |
 
 ---
 
@@ -212,7 +236,7 @@ https://some-article.com/interesting
 |---|---|---|
 | Любой вопрос | 📚 Knowledgebase | Поиск по всей базе |
 | Любой пост / ссылка / текст | 📚 Knowledgebase | Авто-структура + сохранение в wiki |
-| Любой пост / ссылка / текст | 💡 Ideas | Авто-захват в очередь |
+| Любой пост / ссылка / текст | 💡 Ideas | Light-curated save в `wiki/research/**` |
 | `Бенька, промоутни из Ideas` | inbox / DM | Пакетный промоушен с подтверждением |
 | `Бенька, что в очереди Ideas?` | inbox / DM | Показать накопленное |
 

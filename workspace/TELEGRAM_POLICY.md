@@ -13,8 +13,8 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 | `Telegram Digest` | Digest | Publish summaries from selected Telegram sources. Do not ingest noisy chatter into memory. |
 | `Signals` | Alert | Publish only important, time-sensitive alerts. Be brief and proactive. |
 | `Family` | Family | Separate domain. Require mention/reply by default. No long-term memory without explicit approval. |
-| `Knowledge` | Knowledge | **Search**: только короткий вопросоподобный текст → `lightrag_hybrid` + memory_search → ответ с цитатами. В этом режиме не запускать интернет-поиск по умолчанию; `web_search` допустим только по явной просьбе Дениса («поищи в интернете / latest / online») или когда вопрос по смыслу требует внешней свежей информации. **Save**: явная save-команда, пересланный пост, URL или длинный multiline текст → бот сам извлекает title/domain/source/date/summary/sensitivity и вызывает `wiki_ingest`. Если есть сомнение между search и save, выбирать save. Исключение: префикс `обсуди:` явно отключает автосохранение для этого сообщения. Денис не заполняет структуру вручную. Если промежуточный tool step упал, но retry succeeded, не выносить сырой internal tool error как самостоятельный пользовательский итог; при вопросе про сбой объяснять последний failure человечески и по контексту. |
-| `Ideas` | Idea capture | Capture любой контент: ссылки, пересланные посты из Telegram, мысли, фрагменты. Бот классифицирует, тегирует и ставит в очередь. Для промоушена в Knowledgebase нужно явное подтверждение. |
+| `Knowledge` | Knowledge | **Search**: только короткий вопросоподобный текст → `lightrag_hybrid` + memory_search → ответ с цитатами. В этом режиме не запускать интернет-поиск по умолчанию; `web_search` допустим только по явной просьбе Дениса («поищи в интернете / latest / online`) или когда вопрос по смыслу требует внешней свежей информации. **Save**: явная save-команда, пересланный пост, URL или длинный multiline текст → бот сам извлекает title/domain/source/date/summary/sensitivity и вызывает `wiki_ingest(capture_mode=knowledgebase)`. Успех save подтверждается только реальной `wiki/research/**` страницей + `raw/**`, а не статусом LightRAG. Если есть сомнение между search и save, выбирать save. Исключение: префикс `обсуди:` явно отключает автосохранение для этого сообщения. Денис не заполняет структуру вручную. Если промежуточный tool step упал, но retry succeeded, не выносить сырой internal tool error как самостоятельный пользовательский итог; при вопросе про сбой объяснять последний failure человечески и по контексту. |
+| `Ideas` | Idea capture | Capture любой контент: ссылки, пересланные посты из Telegram, мысли, фрагменты. Бот классифицирует, тегирует и вызывает `wiki_ingest(capture_mode=ideas)`, так что materialized `wiki/research/**` страница появляется сразу, но с light curation. Promotion в Knowledgebase углубляет уже существующий artifact chain и требует явное подтверждение. |
 | `Sandbox / Lab` | Sandbox | Test-only. Never write production memory from sandbox unless explicitly promoted. |
 
 ## Permission Assumptions
@@ -31,7 +31,7 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 - Telegram messages are not memory by default.
 - Ordinary chat stays `LIVE` / ephemeral.
 - Operational status goes to compact `OPLOG`, not long-term memory.
-- Ideas go to `RAW`/`DERIVED` queue, not RAG, until promoted.
+- Ideas explicit saves create `raw/**` + `wiki/research/**` immediately, but stay light-curated until promotion.
 - Knowledge goes to `CURATED` only after structure and sensitivity checks.
 - Stable user preferences go to `LONG_TERM` only when explicit or strongly policy-approved.
 - Family long-term memory always requires explicit approval.
@@ -51,6 +51,7 @@ Before writing to Obsidian or RAG:
    chatter.
 6. Final knowledge requires structured fields: title, domain, source, date, summary, decision/claims,
    next actions, sensitivity.
+7. For explicit saves, `LightRAG` is secondary: create the wiki artifact first, then index touched `wiki/**` pages only.
 
 ## Approval Required
 

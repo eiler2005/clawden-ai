@@ -104,6 +104,11 @@ Roles:
 - `raw/articles/`: stored sources waiting for curated import; **not** directly indexed in v1
 - `raw/documents/`: stored sources waiting for curated import; **not** directly indexed in v1
 
+Important distinction:
+
+- passive scheduled feeds may remain in raw/derived layers without a wiki page;
+- explicit user saves must leave a visible `wiki/research/**` artifact immediately.
+
 This separation matters because it prevents the retrieval layer from being flooded with noisy source material before the bot has synthesized it into a stable wiki shape.
 
 ### 2.3 Retrieval Engine: `LightRAG`
@@ -179,6 +184,17 @@ Supported input types:
 - `text`
 - `server_path`
 
+Supported capture modes:
+
+- `knowledgebase`
+- `ideas`
+- `promotion`
+
+`curation_level` is a workflow signal, not a value judgment about the source:
+
+- `light` means “safe source-centric landing page first”
+- `curated` means “this item has passed promotion and can update canonical concepts/entities”
+
 Public conceptual tools:
 
 - `wiki_read(page_path)`
@@ -194,11 +210,13 @@ For a new source, the bridge:
 1. normalizes the source;
 2. saves it under `raw/articles/` or `raw/documents/`;
 3. writes/updates `wiki/IMPORT-QUEUE.md`;
-4. reads `SCHEMA.md`, `CANONICALS.yaml`, `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`;
-5. resolves canonical entities and aliases before page creation;
-6. materializes or updates canonical pages plus one source-centric `research/` page;
-7. regenerates `OVERVIEW.md`, `TOPICS.md`, and `INDEX.md`;
-8. appends to `LOG.md`.
+4. creates or updates one source-centric `wiki/research/**` page;
+5. reads `SCHEMA.md`, `CANONICALS.yaml`, `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`;
+6. resolves canonical entities and aliases before any deeper page creation;
+7. optionally updates canonical pages if confidence is high enough for the chosen capture mode;
+8. regenerates `OVERVIEW.md`, `TOPICS.md`, and `INDEX.md`;
+9. appends to `LOG.md`;
+10. only then enqueues touched `wiki/**/*.md` pages for immediate LightRAG indexing.
 
 The bridge is intentionally a **single writer** for bot-owned wiki artifacts.
 
@@ -208,7 +226,8 @@ This design preserves a clean boundary:
 
 - OpenClaw does not need direct arbitrary write access to the vault;
 - knowledge is materialized into a readable wiki;
-- only after that does LightRAG index the result.
+- only after that does LightRAG index the result;
+- an explicit save is successful because the wiki artifact exists, not because LightRAG returned `uploaded`.
 
 That means the memory layer stays inspectable and debuggable.
 
@@ -236,6 +255,7 @@ The tracked ingest script is:
 - `/opt/lightrag/scripts/lightrag-ingest.sh`
 
 It runs on cron and can be triggered manually.
+Interactive explicit saves additionally use immediate enqueue from inside `wiki-import`, but only for touched `wiki/**/*.md` pages.
 
 ### 5.2 What It Does
 
@@ -258,6 +278,11 @@ There is a gap between:
 
 - "file uploaded"
 - and "file fully usable in retrieval"
+
+That is why explicit save UX must stay wiki-first:
+
+- `wiki/research/**` existing means the knowledge is saved;
+- `rag_status=queued/indexed/delayed` only describes search freshness.
 
 So immediately after a large ingest it is normal to see:
 

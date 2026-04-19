@@ -406,6 +406,7 @@ for curated imports into the Obsidian vault:
 - saves normalized sources into `/opt/obsidian-vault/raw/articles` or `/opt/obsidian-vault/raw/documents`
 - updates `/opt/obsidian-vault/wiki/**/*`
 - regenerates `OVERVIEW.md`, `INDEX.md`, and `IMPORT-QUEUE.md`
+- enqueues touched `wiki/**/*.md` pages into LightRAG only after the wiki write succeeds
 - returns lint/import status over internal HTTP only
 
 Why this exists:
@@ -420,6 +421,8 @@ Internal API:
 - `POST /lint`
 
 LightRAG ingest remains read-only and narrowed to curated wiki pages plus `raw/signals`.
+Direct `POST /documents/upload` from interactive Knowledgebase/Ideas save flows is out of policy;
+the only valid path is through `wiki-import`.
 
 ---
 

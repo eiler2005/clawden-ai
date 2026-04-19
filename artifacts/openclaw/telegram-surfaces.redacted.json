@@ -279,7 +279,7 @@
       "name": "Knowledgebase",
       "chat_id": "<ops-supergroup-chat-id>",
       "topic_id": "<knowledgebase-topic-id>",
-      "purpose": "Dual-mode: (1) curated knowledge ingestion — structured posts with required fields go to CURATED/LONG_TERM → Obsidian → RAG; (2) knowledge base search — plain-text queries trigger lightrag_hybrid + memory_search and respond with cited snippets.",
+      "purpose": "Dual-mode: (1) explicit saves materialize durable wiki artifacts (`raw/**` + `wiki/research/**`) first and only then enqueue touched wiki pages to LightRAG; (2) knowledge base search — plain-text queries trigger lightrag_hybrid + memory_search and respond with cited snippets.",
       "type": "supergroup_topic",
       "bot_mode": "knowledge",
       "category": ["knowledge"],
@@ -296,7 +296,7 @@
         "read_whole_stream_by_default": true
       },
       "memory_policy": {
-        "auto_ingestion": "schema_and_sensitivity_gated",
+        "auto_ingestion": "wiki_first_explicit_save",
         "allowed_classes": ["CURATED", "LONG_TERM"],
         "obsidian_sync": true,
         "rag_index": true
@@ -332,7 +332,7 @@
       "name": "Ideas",
       "chat_id": "<ops-supergroup-chat-id>",
       "topic_id": "<ideas-topic-id>",
-      "purpose": "Fast capture of thoughts, links, Telegram posts, raw ideas. Bot classifies, tags, queues for later promotion to Knowledgebase.",
+      "purpose": "Fast capture of thoughts, links, Telegram posts, and raw ideas. Bot materializes a light-curated `wiki/research/**` page immediately, then allows later promotion to Knowledgebase for deeper canonical enrichment.",
       "type": "supergroup_topic",
       "bot_mode": "idea_capture",
       "category": ["capture"],
@@ -349,14 +349,14 @@
         "read_whole_stream_by_default": true
       },
       "memory_policy": {
-        "auto_ingestion": "light_classification_only",
+        "auto_ingestion": "light_wiki_capture",
         "allowed_classes": ["RAW", "DERIVED"],
-        "rag_index": false,
-        "obsidian_sync": false,
+        "rag_index": true,
+        "obsidian_sync": true,
         "promotion_required_for_curated": true
       },
       "ingestion_policy": {
-        "default_action": "capture_tag_and_queue",
+        "default_action": "capture_tag_and_materialize_research_page",
         "promotion_to_knowledge_requires_approval": true,
         "ignore_low_information_fragments_below": 0.35
       }

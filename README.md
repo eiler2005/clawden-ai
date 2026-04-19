@@ -53,8 +53,8 @@ Everything is observable through a Telegram supergroup with 11 dedicated topics 
 **Knowledge graph memory**
 - LightRAG indexes curated wiki pages plus raw signal digests using graph + vector hybrid retrieval
 - Vault syncs bidirectionally between Mac and server via Syncthing — write a note on Mac, it's searchable on the server within minutes
-- **`📚 Knowledgebase` topic**: write any question → bot searches across Obsidian wiki + workspace + signals and replies with cited snippets; forward any post or link → bot auto-extracts title/domain/summary and saves to wiki
-- **`💡 Ideas` topic**: forward anything (posts, links, thoughts) → bot auto-captures and queues; promote to Knowledgebase on demand with a single command
+- **`📚 Knowledgebase` topic**: write any question → bot searches across Obsidian wiki + workspace + signals and replies with cited snippets; forward any post or link → bot auto-extracts title/domain/summary and saves it into `wiki/research/**` first, then enqueues the touched wiki pages into LightRAG
+- **`💡 Ideas` topic**: forward anything (posts, links, thoughts) → bot auto-captures into `wiki/research/**` with lighter curation; promotion later enriches the same artifact chain instead of creating it from scratch
 
 **Self-hosted, private**
 - Runs entirely on a single private Hetzner server — no SaaS, no data sent to third parties beyond the LLM API calls you configure
@@ -154,7 +154,7 @@ Bridge services run on independent schedules, triggered via **Redis Streams**:
 
 ### Memory & Context
 
-The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. Retrieval is intentionally split by profile: OpenClaw builtin `memorySearch` covers fast local recall over curated memory files plus `wiki/`, while LightRAG indexes the broader curated layer (`workspace`, `wiki/`, `raw/signals/`) for deeper historical lookups. Raw vault sources such as `raw/articles/` and `raw/documents/` stay out of both retrieval layers until curated import materializes them into canonical wiki pages.
+The Obsidian vault is the long-term memory store. Notes sync bidirectionally between Mac and server via Syncthing. A bot-maintained `wiki/` holds curated pages, while `raw/signals/` stores daily signal snapshots. Retrieval is intentionally split by profile: OpenClaw builtin `memorySearch` covers fast local recall over curated memory files plus `wiki/`, while LightRAG indexes the broader curated layer (`workspace`, `wiki/`, `raw/signals/`) for deeper historical lookups. Raw vault sources such as `raw/articles/` and `raw/documents/` stay out of both retrieval layers until curated import materializes them into visible wiki pages. For explicit user saves, the wiki page is the proof of storage; LightRAG indexing is secondary.
 
 ---
 
@@ -420,7 +420,7 @@ flowchart LR
 | `last30daysTrend` | signals-bridge | daily 07:00 MSK | Personal Feed — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
 | `knowledgebase` | OpenClaw | on demand | question → LightRAG hybrid search + citations; content → bot auto-structures + wiki ingest |
-| `ideas` | OpenClaw | on demand | frictionless capture — any forwarded post/link/thought → auto-tag + queue for later promotion |
+| `ideas` | OpenClaw | on demand | frictionless capture — any forwarded post/link/thought → light-curated `wiki/research/**`; promotion later deepens curation |
 
 ---
 
@@ -561,7 +561,7 @@ DERIVED — MEMORY.md, daily notes         quick recall, not canonical
 
 **LightRAG** indexes only `/opt/openclaw/workspace/`, `/opt/obsidian-vault/wiki/`, and `/opt/obsidian-vault/raw/signals/` every 30 minutes via `lightrag-ingest.sh`. Hybrid vector + graph retrieval. OpenClaw queries it at `http://lightrag:9621/query` (internal) or `http://127.0.0.1:8020/query` (host).
 
-**Curated import** goes through the internal `wiki-import` bridge. `raw/articles/` and `raw/documents/` are stored in the vault but stay out of LightRAG until curated import materializes them into canonical wiki pages, assigns themes, and rebuilds `TOPICS.md`.
+**Curated import** goes through the internal `wiki-import` bridge. `raw/articles/` and `raw/documents/` are stored in the vault but stay out of LightRAG until curated import materializes them into visible wiki pages, assigns themes, and rebuilds `TOPICS.md`. Explicit saves always create `wiki/research/**` first; only after that does LightRAG enqueue the touched wiki pages.
 
 See [`docs/10-memory-architecture.md`](docs/10-memory-architecture.md) for the full design.
 

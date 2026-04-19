@@ -15,8 +15,14 @@ TOKEN = os.environ.get("WIKI_IMPORT_TOKEN", "").strip()
 OBSIDIAN_ROOT = Path(os.environ.get("WIKI_IMPORT_OBSIDIAN_ROOT", "/app/obsidian"))
 HOST_OPT_ROOT = Path(os.environ.get("WIKI_IMPORT_HOST_OPT_ROOT", "/host-opt"))
 STATE_ROOT = Path(os.environ.get("WIKI_IMPORT_STATE_ROOT", "/app/state"))
+LIGHTRAG_URL = os.environ.get("WIKI_IMPORT_LIGHTRAG_URL", "http://lightrag:9621").strip()
 
-IMPORTER = WikiImporter(obsidian_root=OBSIDIAN_ROOT, host_opt_root=HOST_OPT_ROOT, state_root=STATE_ROOT)
+IMPORTER = WikiImporter(
+    obsidian_root=OBSIDIAN_ROOT,
+    host_opt_root=HOST_OPT_ROOT,
+    state_root=STATE_ROOT,
+    lightrag_url=LIGHTRAG_URL,
+)
 LOCK = threading.Lock()
 
 
@@ -63,6 +69,8 @@ class Handler(BaseHTTPRequestHandler):
                 target_kind=str(payload.get("target_kind") or "auto").strip(),
                 title=str(payload.get("title") or "").strip(),
                 import_goal=str(payload.get("import_goal") or "").strip(),
+                capture_mode=str(payload.get("capture_mode") or "knowledgebase").strip(),
+                promote_fingerprint=str(payload.get("promote_fingerprint") or "").strip(),
             )
             if not request.source_type or not request.source:
                 raise ValueError("source_type and source are required")

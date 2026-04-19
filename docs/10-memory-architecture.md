@@ -297,6 +297,10 @@ New Obsidian source material should flow through the LLM-Wiki pipeline:
 If a document is still only in `raw/articles` or `raw/documents`, it is stored source material, not
 part of the searchable memory profile.
 
+For explicit user saves, the save is considered successful only after a visible `wiki/research/**`
+page exists. `LightRAG` indexing is a secondary step over the resulting wiki pages, not the primary
+proof that the knowledge was stored.
+
 ### Query interface
 
 ```
@@ -392,14 +396,21 @@ Two Telegram topics drive the primary ingestion workflow. See [docs/17-knowledge
 
 | Topic | Behaviour | Memory class |
 |---|---|---|
-| `💡 Ideas` (id=639) | Any forwarded post / link / text → auto-capture + queue | RAW/DERIVED |
+| `💡 Ideas` (id=639) | Any forwarded post / link / text → light-curated `wiki/research/**` capture via `wiki_ingest(capture_mode=ideas)` | explicit-light |
 | `📚 Knowledgebase` (id=232) | Question → search; any content → bot auto-structures + `wiki_ingest` | CURATED |
 
-Content reaches `CURATED` / Obsidian / LightRAG only after explicit promotion (Ideas) or direct save (Knowledgebase). User never fills structured fields manually — the bot extracts title, domain, source, date, summary, sensitivity automatically.
+Content reaches durable wiki storage on every explicit save. The difference is curation depth:
+- `Ideas` creates a visible `wiki/research/**` landing page immediately, but keeps curation light
+- `Knowledgebase` creates the same landing page with stronger curated intent
+- promotion from `Ideas` enriches the existing artifact chain instead of materializing it for the first time
+
+Passive scheduled feeds such as `telegram-digest` and `signals` are a separate storage class and do
+not have to create wiki pages unless explicitly promoted or saved. User never fills structured
+fields manually — the bot extracts title, domain, source, date, summary, sensitivity automatically.
 
 Practical operator rule:
 
-- `Ideas` means "capture now, decide later"
+- `Ideas` means "capture now into wiki, curate deeper later"
 - `Knowledgebase` means "this should become durable system knowledge"
 
 So the split is by intent, not by topic:

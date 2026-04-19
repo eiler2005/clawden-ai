@@ -79,7 +79,7 @@ The agent (running in the primary model context) selects OmniRoute tiers for sub
 2. Standard dialog, Q&A, summarization → `medium`
 3. Classification, tagging, data extraction → `light`
 4. LightRAG lookups and classification → `light`
-5. Knowledgebase save, Ideas queue review, and Ideas promotion stay on the `medium` / direct-ingest path unless the user explicitly asks for deeper analysis
+5. Knowledgebase save, Ideas capture, and Ideas promotion stay on the `medium` wiki-first path unless the user explicitly asks for deeper analysis
 
 For Telegram save/promote actions, the preferred write path is:
 
@@ -130,8 +130,8 @@ _light · delegated · 5% · simple_
 | Telegram Digest (topic) | Digest | Low | Digest summaries only |
 | Signals (topic) | Alert | High, narrow | Compact alert record |
 | Family (separate group) | Family | Low, mention-only | Never without explicit approval |
-| Knowledgebase (supergroup topic, id=232) | Knowledge | Low | Question → search; any content → auto-structured CURATED + wiki_ingest |
-| Ideas (supergroup topic, id=639) | Idea capture | Low | RAW queue, auto-captured, promoted to Knowledgebase on demand |
+| Knowledgebase (supergroup topic, id=232) | Knowledge | Low | Question → search; explicit save content → auto-structured `raw/**` + `wiki/research/**` + optional canonical enrichment |
+| Ideas (supergroup topic, id=639) | Idea capture | Low | Light-curated `raw/**` + `wiki/research/**` immediately; promoted to Knowledgebase later for deeper enrichment |
 | Sandbox / Lab | Testing | Free | Never production memory |
 
 ### Trigger rules
@@ -232,7 +232,7 @@ Only structured, curated content:
 - **Telegram Digest curated notes** — high-signal items extracted by OmniRoute medium;
   written to `/app/obsidian/Telegram Digest/Curated/` → uploaded via `ingest:rag:queue`
 - Obsidian vault markdown (synced from Mac via Syncthing) — picked up by the 30-min cron ingest script
-- Ideas promoted to Knowledgebase (bot auto-structures, no manual fields needed)
+- Explicit saves from Knowledgebase or Ideas go through `wiki-import`; only the resulting wiki pages are enqueued to LightRAG
 - `CURATED` knowledge items with required fields
 - Redacted root-cause / `#canon` decision records
 

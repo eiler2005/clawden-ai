@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- **Knowledge capture is now wiki-first by contract**: explicit saves from `📚 Knowledgebase`, `💡 Ideas`, and Ideas promotion are documented and implemented as `raw -> wiki/research -> optional canonical pages -> LightRAG`, instead of treating LightRAG upload as the primary success condition.
+- **Ideas capture semantics**: `💡 Ideas` no longer means “outside wiki until promotion”. Explicit captures now create a visible light-curated `wiki/research/**` page immediately; promotion deepens the same artifact chain instead of materializing it from scratch.
+- **Telegram save UX**: pinned messages, agent instructions, and knowledge-management docs now describe wiki-first success replies with a concrete `wiki/research/**` page path and separate `LightRAG` freshness status.
+- **Knowledgebase historical-save recovery**: documented and operationalized a dedicated backfill path for old `Knowledgebase` posts that were previously handled as `raw/articles + LightRAG` without visible wiki artifacts.
+
+### Added
+- **`wiki-import` capture modes**: `POST /trigger` now supports `capture_mode` (`knowledgebase` / `ideas` / `promotion`) plus promotion reuse via stable fingerprint, returns `wiki_page_paths`, `canonical_pages_updated`, `rag_enqueued_paths`, `rag_status`, and `status`, and performs immediate non-blocking RAG enqueue only for touched `wiki/**/*.md` pages.
+- **Knowledge-capture tests**: added unit coverage for ideas light-curation saves, promotion reuse of existing research pages, wiki-first response payloads, partial success when LightRAG enqueue fails, and explicit rejection of raw-to-LightRAG uploads in interactive save flows.
+- **`scripts/backfill-knowledgebase-to-wiki.sh`**: the Knowledgebase backfill helper now runs as a two-stage replay: every historical item is first materialized as a source-centric `ideas` capture, and only high-signal articles are immediately re-run through `promotion` to deepen canonical wiki pages without reviving broad graph noise.
+
 ### Fixed
 - **Knowledgebase search routing**: clarified that `📚 Knowledgebase` search is local-first (`LightRAG` + builtin memory) and must not auto-fallback to internet `web_search`. Internet lookup is now opt-in only for this topic unless Denis explicitly asks for web/latest/online information or the request inherently depends on fresh external data. This fixes the misleading case where a temporary `web_search fetch failed` looked like a knowledge-base miss instead of a tool failure on an unnecessary route.
 - **Knowledgebase pin text**: updated the canonical pinned message so it now states the same rule explicitly for users: short questions use local knowledge search by default, and internet search runs only on an explicit request such as `поищи в интернете`.

@@ -20,6 +20,11 @@ There are three distinct layers:
 - `wiki/` — curated markdown knowledge base
 - `LightRAG` — derived retrieval index on top of selected markdown
 
+Important operating rule:
+
+- passive scheduled feeds may remain outside `wiki/`
+- every explicit user save must materialize a visible wiki artifact immediately
+
 Inside `wiki/`, typed folders are still the primary storage structure:
 
 - `entities/`
@@ -141,6 +146,7 @@ Research pages:
 - source-centric or synthesis-centric
 - can connect multiple entities and themes
 - are the right place for import-specific or question-specific synthesis
+- are the mandatory landing pages for explicit saves from `Knowledgebase`, `Ideas`, and promotions
 
 Decision pages:
 
@@ -178,7 +184,7 @@ When reading as a human:
 
 When importing:
 
-- canonical entities should update first
-- research page comes next
+- explicit saves create the research page first
+- canonical entities update only when confidence is sufficient
 - concepts are added only when they are real concepts
 - themes and links keep the graph coherent

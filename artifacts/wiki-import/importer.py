@@ -71,6 +71,20 @@ THEME_KEYWORDS = {
     "operations": ["deploy", "operations", "setup", "health", "cron", "runbook", "maintenance"],
 }
 CANONICAL_CONCEPTS = {
+    "agent architecture": {
+        "slug": "agent-architecture",
+        "name": "Agent Architecture",
+        "aliases": ["agent architecture", "ai agent architecture"],
+        "tags": ["agents", "architecture"],
+        "themes": ["runtime", "retrieval"],
+    },
+    "context compression": {
+        "slug": "context-compression",
+        "name": "Context Compression",
+        "aliases": ["context compression", "context summarization"],
+        "tags": ["context", "compression"],
+        "themes": ["memory", "runtime"],
+    },
     "knowledge graph": {
         "slug": "knowledge-graph",
         "name": "Knowledge Graph",
@@ -105,6 +119,48 @@ CANONICAL_CONCEPTS = {
         "aliases": ["hybrid retrieval"],
         "tags": ["retrieval"],
         "themes": ["retrieval", "memory"],
+    },
+    "agent memory": {
+        "slug": "agent-memory",
+        "name": "Agent Memory",
+        "aliases": ["agent memory", "llm agent memory"],
+        "tags": ["memory", "agents"],
+        "themes": ["memory", "retrieval"],
+    },
+    "memory taxonomy": {
+        "slug": "memory-taxonomy",
+        "name": "Memory Taxonomy",
+        "aliases": ["memory taxonomy", "memory taxonomies"],
+        "tags": ["memory", "taxonomy"],
+        "themes": ["memory"],
+    },
+    "llm evaluation": {
+        "slug": "llm-evaluation",
+        "name": "LLM Evaluation",
+        "aliases": ["llm evaluation", "model evaluation"],
+        "tags": ["evaluation", "llm"],
+        "themes": ["wiki", "signals"],
+    },
+    "outcome based evaluation": {
+        "slug": "outcome-based-evaluation",
+        "name": "Outcome-Based Evaluation",
+        "aliases": ["outcome based evaluation", "outcome-driven evaluation"],
+        "tags": ["evaluation", "outcomes"],
+        "themes": ["wiki", "operations"],
+    },
+    "structured generation": {
+        "slug": "structured-generation",
+        "name": "Structured Generation",
+        "aliases": ["structured generation", "grammar constrained generation"],
+        "tags": ["generation", "grammar"],
+        "themes": ["runtime", "wiki"],
+    },
+    "llm development rules": {
+        "slug": "llm-development-rules",
+        "name": "LLM Development Rules",
+        "aliases": ["llm development rules", "rules for llm projects"],
+        "tags": ["llm", "development", "rules"],
+        "themes": ["wiki", "operations"],
     },
 }
 STOPWORDS = {
@@ -282,6 +338,8 @@ class ImportRequest:
     target_kind: str = "auto"
     title: str = ""
     import_goal: str = ""
+    capture_mode: str = "knowledgebase"
+    promote_fingerprint: str = ""
 
 
 @dataclass
@@ -297,6 +355,8 @@ class NormalizedSource:
     summary: str
     host: str = ""
     import_goal: str = ""
+    capture_mode: str = "knowledgebase"
+    promote_fingerprint: str = ""
 
 
 @dataclass
@@ -313,20 +373,29 @@ class PageSpec:
 
 
 class WikiImporter:
-    def __init__(self, *, obsidian_root: Path, host_opt_root: Path | None = None, state_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        obsidian_root: Path,
+        host_opt_root: Path | None = None,
+        state_root: Path | None = None,
+        lightrag_url: str | None = None,
+    ) -> None:
         self.obsidian_root = Path(obsidian_root)
         self.host_opt_root = Path(host_opt_root) if host_opt_root else Path("/host-opt")
         self.state_root = Path(state_root or "/app/state")
         self.wiki_root = self.obsidian_root / "wiki"
         self.raw_root = self.obsidian_root / "raw"
+        self.lightrag_url = (lightrag_url or "").strip().rstrip("/")
 
     def import_source(self, request: ImportRequest) -> dict[str, Any]:
         self._ensure_layout()
         normalized = self._normalize_source(request)
         queue = self._load_queue()
+        existing_entry = self._find_queue_entry(queue, normalized.promote_fingerprint or normalized.fingerprint)
         entry = self._upsert_queue_entry(
             queue,
-            normalized.fingerprint,
+            normalized.promote_fingerprint or normalized.fingerprint,
             {
                 "status": "processing",
                 "source_type": normalized.source_type,
@@ -334,6 +403,7 @@ class WikiImporter:
                 "title": normalized.title,
                 "source": normalized.source,
                 "raw_path": normalized.raw_path,
+                "capture_mode": normalized.capture_mode,
                 "updated": _utc_now(),
                 "error": "",
             },
@@ -342,28 +412,41 @@ class WikiImporter:
 
         result: dict[str, Any] = {}
         try:
-            page_paths = self._materialize_wiki(normalized)
+            page_paths, canonical_paths, research_path = self._materialize_wiki(normalized, existing_entry=existing_entry)
             self._refresh_indexes_and_topics()
+            updated_index_paths = [
+                self.wiki_root / "INDEX.md",
+                self.wiki_root / "OVERVIEW.md",
+                self.wiki_root / "TOPICS.md",
+            ]
             self._append_log(
                 operation="ingest",
                 source=normalized.source,
                 description=normalized.title,
                 created=[path for path in page_paths if path.exists()],
-                updated=[self.wiki_root / "INDEX.md", self.wiki_root / "OVERVIEW.md", self.wiki_root / "TOPICS.md"],
-                insight=f"Imported {normalized.target_kind} source into canonical wiki pages and topic maps.",
+                updated=updated_index_paths,
+                insight=f"Imported {normalized.capture_mode} {normalized.target_kind} source into wiki pages and topic maps.",
             )
             entry["status"] = "done"
-            entry["research_path"] = str(
-                next((path.relative_to(self.obsidian_root) for path in page_paths if path.parent.name == "research"), "")
-            )
+            entry["research_path"] = str(research_path.relative_to(self.obsidian_root))
             entry["updated"] = _utc_now()
             entry["error"] = ""
+            entry["capture_mode"] = normalized.capture_mode
             self._save_queue(queue)
+            rag_targets = _dedupe_paths([research_path, *canonical_paths, *updated_index_paths])
+            rag_status, rag_enqueued_paths = self._enqueue_rag_paths(rag_targets)
+            status = "success" if rag_status in {"queued", "indexed"} else "partial_success"
             result = {
                 "ok": True,
                 "fingerprint": normalized.fingerprint,
                 "raw_path": normalized.raw_path,
                 "page_paths": [str(path.relative_to(self.obsidian_root)) for path in page_paths],
+                "wiki_page_paths": [str(path.relative_to(self.obsidian_root)) for path in page_paths],
+                "capture_mode": normalized.capture_mode,
+                "canonical_pages_updated": [str(path.relative_to(self.obsidian_root)) for path in canonical_paths],
+                "rag_enqueued_paths": [str(path.relative_to(self.obsidian_root)) for path in rag_enqueued_paths],
+                "rag_status": rag_status,
+                "status": status,
                 "queue_status": entry["status"],
             }
         except Exception as exc:
@@ -504,6 +587,81 @@ class WikiImporter:
                 payload["last_status"] = {"ok": False, "error": "status_file_unreadable"}
         return payload
 
+    def _find_queue_entry(self, queue: list[dict[str, Any]], fingerprint: str) -> dict[str, Any] | None:
+        if not fingerprint:
+            return None
+        for item in queue:
+            if item.get("fingerprint") == fingerprint:
+                return item
+        return None
+
+    def _allowed_rag_roots(self) -> tuple[Path, ...]:
+        return (
+            self.wiki_root,
+            self.raw_root / "signals",
+            self.obsidian_root / "workspace",
+        )
+
+    def _enqueue_rag_paths(self, paths: list[Path]) -> tuple[str, list[Path]]:
+        if not self.lightrag_url:
+            return "delayed", []
+        allowed_paths = [path for path in _dedupe_paths(paths) if path.exists()]
+        if not allowed_paths:
+            return "delayed", []
+
+        uploaded: list[Path] = []
+        try:
+            health = requests.get(f"{self.lightrag_url}/health", timeout=5)
+            if health.status_code >= 400:
+                return "delayed", []
+        except requests.RequestException:
+            return "delayed", []
+
+        for path in allowed_paths:
+            if not self._path_is_allowed_for_rag(path):
+                self._append_log(
+                    operation="policy",
+                    source=str(path),
+                    description="Rejected direct RAG target outside curated boundary",
+                    created=[],
+                    updated=[],
+                    insight="Immediate LightRAG enqueue only accepts workspace, wiki, and raw/signals paths.",
+                )
+                continue
+            try:
+                with path.open("rb") as handle:
+                    response = requests.post(
+                        f"{self.lightrag_url}/documents/upload",
+                        files={"file": (path.name, handle, "text/markdown")},
+                        timeout=30,
+                    )
+                response.raise_for_status()
+                uploaded.append(path)
+            except requests.RequestException:
+                return ("delayed" if uploaded else "failed"), uploaded
+
+        if not uploaded:
+            return "failed", []
+
+        try:
+            requests.post(f"{self.lightrag_url}/documents/reprocess_failed", timeout=15)
+        except requests.RequestException:
+            return "delayed", uploaded
+        return "queued", uploaded
+
+    def _path_is_allowed_for_rag(self, path: Path) -> bool:
+        try:
+            resolved = path.resolve()
+        except FileNotFoundError:
+            return False
+        for root in self._allowed_rag_roots():
+            try:
+                resolved.relative_to(root.resolve())
+                return True
+            except ValueError:
+                continue
+        return False
+
     def _normalize_source(self, request: ImportRequest) -> NormalizedSource:
         source_type = request.source_type.strip().lower()
         if source_type not in {"url", "text", "server_path"}:
@@ -515,6 +673,7 @@ class WikiImporter:
         return self._normalize_server_path(request)
 
     def _normalize_url(self, request: ImportRequest) -> NormalizedSource:
+        capture_mode = _normalize_capture_mode(request.capture_mode)
         response = requests.get(
             request.source,
             timeout=30,
@@ -566,9 +725,12 @@ class WikiImporter:
             summary=_summary_from_markdown(markdown),
             host=host,
             import_goal=request.import_goal.strip(),
+            capture_mode=capture_mode,
+            promote_fingerprint=request.promote_fingerprint.strip(),
         )
 
     def _normalize_text(self, request: ImportRequest) -> NormalizedSource:
+        capture_mode = _normalize_capture_mode(request.capture_mode)
         title = request.title.strip() or _title_from_text(request.source)
         markdown = request.source.strip()
         target_kind = _resolve_target_kind(request.target_kind, "article")
@@ -597,9 +759,12 @@ class WikiImporter:
             markdown=markdown,
             summary=_summary_from_markdown(markdown),
             import_goal=request.import_goal.strip(),
+            capture_mode=capture_mode,
+            promote_fingerprint=request.promote_fingerprint.strip(),
         )
 
     def _normalize_server_path(self, request: ImportRequest) -> NormalizedSource:
+        capture_mode = _normalize_capture_mode(request.capture_mode)
         host_path = Path(request.source)
         readable_path = self._resolve_host_path(host_path)
         if not readable_path.exists():
@@ -652,15 +817,30 @@ class WikiImporter:
             markdown=markdown,
             summary=_summary_from_markdown(markdown),
             import_goal=request.import_goal.strip(),
+            capture_mode=capture_mode,
+            promote_fingerprint=request.promote_fingerprint.strip(),
         )
 
-    def _materialize_wiki(self, normalized: NormalizedSource) -> list[Path]:
+    def _materialize_wiki(
+        self,
+        normalized: NormalizedSource,
+        *,
+        existing_entry: dict[str, Any] | None = None,
+    ) -> tuple[list[Path], list[Path], Path]:
         pages = self._scan_pages()
         canonicals = self._load_canonicals()
         entity_specs = self._select_entity_specs(normalized, pages, canonicals)
         occupied = {page["slug"] for page in pages}
         occupied.update(spec.slug for spec in entity_specs)
         existing_research = self._match_existing_research(normalized.title, pages)
+        if existing_entry and str(existing_entry.get("research_path", "")).strip():
+            research_path = self.obsidian_root / str(existing_entry["research_path"])
+            if research_path.exists():
+                existing_research = PageSpec(
+                    slug=research_path.stem,
+                    name=str(existing_entry.get("title") or normalized.title),
+                    page_type="research",
+                )
         research_slug = existing_research.slug if existing_research else self._unique_page_slug(slugify(normalized.title) or "imported-source", occupied, "research")
         occupied.add(research_slug)
         concept_specs = self._select_concept_specs(normalized, pages, canonicals, entity_specs, occupied)
@@ -678,7 +858,10 @@ class WikiImporter:
             page_paths.append(self._write_decision_page(decision_spec, normalized, entity_specs, concept_specs))
 
         self._update_hub_flags()
-        return page_paths
+        canonical_paths = [*entity_paths, *concept_paths]
+        if decision_spec is not None:
+            canonical_paths.extend(path for path in page_paths if path.parent.name == "decisions")
+        return page_paths, canonical_paths, research_path
 
     def _select_entity_specs(
         self,
@@ -689,6 +872,7 @@ class WikiImporter:
         context = f"{normalized.title}\n{normalized.import_goal}\n{normalized.summary}\n{normalized.markdown[:4000]}"
         entity_specs: list[PageSpec] = []
         seen: set[str] = set()
+        light_capture = normalized.capture_mode == "ideas"
 
         for canonical in canonicals:
             if canonical.get("type") != "entity":
@@ -699,26 +883,29 @@ class WikiImporter:
                     seen.add(spec.slug)
                     entity_specs.append(spec)
 
-        if normalized.host and normalized.host not in GENERIC_HOST_LABELS:
+        if normalized.host and normalized.host not in GENERIC_HOST_LABELS and not light_capture:
             host_label = normalized.host.replace("www.", "").split(":")[0]
-            host_match = self._match_existing_or_canonical_entity(host_label, pages, canonicals)
+            host_match = self._match_existing_entity_or_canonical_only(host_label, pages, canonicals)
             if host_match and host_match.slug not in seen:
                 seen.add(host_match.slug)
                 entity_specs.append(host_match)
 
-        for candidate in _dedupe_preserve(_extract_entities(normalized.title, normalized.markdown)):
-            spec = self._match_existing_or_canonical_entity(candidate, pages, canonicals)
-            if spec is None or spec.slug in seen:
-                continue
-            seen.add(spec.slug)
-            entity_specs.append(spec)
+        allow_freeform_entities = not (normalized.capture_mode == "promotion" and normalized.source_type == "url")
+        if not light_capture and allow_freeform_entities:
+            title_for_entity_extraction = normalized.title
+            for candidate in _dedupe_preserve(_extract_entities(title_for_entity_extraction, normalized.markdown)):
+                spec = self._match_existing_or_canonical_entity(candidate, pages, canonicals)
+                if spec is None or spec.slug in seen:
+                    continue
+                seen.add(spec.slug)
+                entity_specs.append(spec)
 
-        if not entity_specs and not _is_document_title_artifact(normalized.title):
+        if not light_capture and allow_freeform_entities and not entity_specs and not _is_document_title_artifact(normalized.title):
             fallback = self._match_existing_or_canonical_entity(normalized.title, pages, canonicals)
             if fallback is not None:
                 entity_specs.append(fallback)
 
-        return entity_specs[:3]
+        return entity_specs[: (2 if light_capture else 3)]
 
     def _select_concept_specs(
         self,
@@ -728,6 +915,8 @@ class WikiImporter:
         entity_specs: list[PageSpec],
         occupied: set[str],
     ) -> list[PageSpec]:
+        if normalized.capture_mode == "ideas":
+            return []
         concepts: list[PageSpec] = []
         seen: set[str] = set()
         context = f"{normalized.title}\n{normalized.import_goal}\n{normalized.summary}\n{normalized.markdown[:5000]}"
@@ -772,7 +961,10 @@ class WikiImporter:
                     )
                 )
 
+        allow_freeform_keywords = not (normalized.capture_mode == "promotion" and normalized.source_type == "url")
         for keyword in _dedupe_preserve(_extract_keywords(normalized.title, normalized.markdown)):
+            if not allow_freeform_keywords:
+                break
             human = _humanize_name(keyword)
             lookup = _normalize_lookup(human)
             if not lookup or lookup in entity_aliases or _is_document_title_artifact(human):
@@ -858,6 +1050,8 @@ class WikiImporter:
         concept_specs: list[PageSpec],
         occupied: set[str],
     ) -> PageSpec | None:
+        if normalized.capture_mode == "ideas":
+            return None
         if not _should_create_decision(normalized):
             return None
         lower_title = normalized.title.strip()
@@ -920,6 +1114,8 @@ class WikiImporter:
                 ),
                 ("Sources", f"- [{normalized.title}]({_raw_link(normalized.raw_path)})"),
             ],
+            replace_meta=True,
+            replace_sections=True,
         )
         path.write_text(content, encoding="utf-8")
         return path
@@ -964,6 +1160,8 @@ class WikiImporter:
                 ),
                 ("Sources", f"- [{normalized.title}]({_raw_link(normalized.raw_path)})"),
             ],
+            replace_meta=True,
+            replace_sections=True,
         )
         path.write_text(content, encoding="utf-8")
         return path
@@ -987,6 +1185,12 @@ class WikiImporter:
             meta={
                 "type": "research",
                 "name": normalized.title,
+                "source": normalized.source,
+                "captured_at": _utc_now(),
+                "imported_at": _utc_now(),
+                "capture_mode": normalized.capture_mode,
+                "curation_level": "light" if normalized.capture_mode == "ideas" else "curated",
+                "raw_source": normalized.raw_path,
                 "confidence": "INFERRED",
                 "tags": _tag_list(normalized.title),
                 "themes": themes,
@@ -997,7 +1201,9 @@ class WikiImporter:
             sections=[
                 ("Question", normalized.import_goal or f"What should the wiki preserve from `{normalized.raw_path}`?"),
                 ("Sources", f"- [{normalized.title}]({_raw_link(normalized.raw_path)}) — normalized {normalized.source_type} source"),
+                ("Summary", normalized.summary or "Source captured and materialized into the wiki."),
                 ("Findings", _top_findings(normalized.markdown)),
+                ("Key Takeaways", _top_takeaways(normalized.markdown, normalized.summary)),
                 ("Synthesis", normalized.summary or "Source imported and linked into the wiki."),
                 (
                     "Connections",
@@ -1010,6 +1216,8 @@ class WikiImporter:
                     ),
                 ),
             ],
+            replace_meta=True,
+            replace_sections=True,
         )
         path.write_text(content, encoding="utf-8")
         return path
@@ -1044,6 +1252,8 @@ class WikiImporter:
                 ("Consequences", "- Pro: durable, searchable synthesis\n- Con: importer remains heuristic and should be reviewed"),
                 ("Status", "Closed unless a more explicit ADR supersedes this page."),
             ],
+            replace_meta=True,
+            replace_sections=True,
         )
         path.write_text(content, encoding="utf-8")
         return path
@@ -1120,7 +1330,15 @@ class WikiImporter:
         unique_pages = self._unique_pages_by_slug(pages)
         incoming = self._incoming_link_counts(unique_pages)
         hubs = sorted(unique_pages, key=lambda item: (-incoming.get(item["slug"], 0), item["rel_path"]))[:5]
-        recent = sorted(unique_pages, key=lambda item: (str(item["meta"].get("updated", "")), item["rel_path"]), reverse=True)[:5]
+        recent = sorted(
+            unique_pages,
+            key=lambda item: (
+                _overview_priority(item),
+                str(item["meta"].get("updated", "")),
+                item["rel_path"],
+            ),
+            reverse=True,
+        )[:5]
         decisions = [page for page in unique_pages if page["meta"].get("type") == "decision"][:5]
         queue = self._load_queue()
         queue_counts: dict[str, int] = {}
@@ -1509,10 +1727,19 @@ class WikiImporter:
             return host_path
         return self.obsidian_root / host_path
 
-    def _render_page_content(self, *, path: Path, meta: dict[str, Any], title: str, sections: list[tuple[str, str]]) -> str:
+    def _render_page_content(
+        self,
+        *,
+        path: Path,
+        meta: dict[str, Any],
+        title: str,
+        sections: list[tuple[str, str]],
+        replace_meta: bool = False,
+        replace_sections: bool = False,
+    ) -> str:
         existing_meta, existing_body = _split_frontmatter(path.read_text(encoding="utf-8")) if path.exists() else ({}, "")
-        merged_meta = self._merge_meta(existing_meta, meta)
-        merged_sections = self._merge_sections(existing_body, sections)
+        merged_meta = dict(meta) if replace_meta else self._merge_meta(existing_meta, meta)
+        merged_sections = list(sections) if replace_sections else self._merge_sections(existing_body, sections)
         return self._render_page(meta=merged_meta, title=title, sections=merged_sections)
 
     def _render_page(self, *, meta: dict[str, Any], title: str, sections: list[tuple[str, str]]) -> str:
@@ -1743,6 +1970,34 @@ class WikiImporter:
             themes=self._infer_themes(candidate),
         )
 
+    def _match_existing_entity_or_canonical_only(
+        self,
+        candidate: str,
+        pages: list[dict[str, Any]],
+        canonicals: list[dict[str, Any]],
+    ) -> PageSpec | None:
+        lookup = _normalize_lookup(candidate)
+        if not lookup or _is_document_title_artifact(candidate):
+            return None
+        for canonical in canonicals:
+            if canonical.get("type") == "entity" and self._canonical_matches_label(candidate, canonical):
+                return self._page_spec_from_canonical(canonical, "entity")
+        for page in pages:
+            if page["meta"].get("type") != "entity":
+                continue
+            values = [page["slug"], str(page["meta"].get("name", "")), *(page["meta"].get("aliases", []) or [])]
+            if any(_normalize_lookup(value) == lookup for value in values if str(value).strip()):
+                return PageSpec(
+                    slug=page["slug"],
+                    name=str(page["meta"].get("name", page["slug"])),
+                    page_type="entity",
+                    subtype=str(page["meta"].get("subtype", "project")),
+                    aliases=[str(item) for item in page["meta"].get("aliases", []) or []],
+                    tags=[str(item) for item in page["meta"].get("tags", []) or []],
+                    themes=self._normalize_themes(page["meta"].get("themes", [])),
+                )
+        return None
+
     def _canonical_matches_context(self, context: str, canonical: dict[str, Any]) -> bool:
         normalized_context = _normalize_lookup(context)
         for value in [canonical.get("slug", ""), canonical.get("name", ""), *(canonical.get("aliases", []) or [])]:
@@ -1875,6 +2130,39 @@ class WikiImporter:
             handle.write("\n".join(block))
 
 
+def _normalize_capture_mode(value: str) -> str:
+    capture_mode = str(value or "").strip().lower()
+    if capture_mode in {"ideas", "promotion"}:
+        return capture_mode
+    return "knowledgebase"
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _overview_priority(page: dict[str, Any]) -> int:
+    page_type = str(page["meta"].get("type", ""))
+    curation_level = str(page["meta"].get("curation_level", "")).strip().lower()
+    if page_type == "decision":
+        return 5
+    if page_type in {"entity", "concept"}:
+        return 4
+    if page_type == "research" and curation_level == "curated":
+        return 3
+    if page_type == "research":
+        return 2
+    return 1
+
+
 def slugify(value: str) -> str:
     lowered = value.lower()
     lowered = re.sub(r"[^a-z0-9]+", "-", lowered)
@@ -1934,6 +2222,27 @@ def _dump_frontmatter(meta: dict[str, Any]) -> str:
 
 def _fingerprint(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _top_takeaways(markdown: str, summary: str) -> str:
+    bullets = _bullet_lines(markdown)[:4]
+    if bullets:
+        return "\n".join(f"- {line}" for line in bullets)
+    if summary.strip():
+        return f"- {summary.strip()}"
+    findings = _top_findings(markdown)
+    if findings.strip():
+        return findings
+    return "- Source captured; detailed takeaways still need curation."
+
+
+def _bullet_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith(("- ", "* ")):
+            lines.append(line[2:].strip())
+    return [line for line in lines if line]
 
 
 def _render_raw_markdown(

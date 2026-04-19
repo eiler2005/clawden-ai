@@ -86,7 +86,15 @@ _(если ничего нет: «Ничего не найдено. Попроб
    - `sensitivity` — low (по умолчанию), medium/high если чувствительное
 3. Если есть надёжный canonical URL статьи/поста — предпочесть `wiki_ingest({source_type: "url", source: "https://..."})`
 4. Иначе вызвать `wiki_ingest({source_type: "text", source: "[извлечённый markdown]"})`
-5. Ответить кратко: `✅ Сохранено: [title] → [domain]`
+5. Убедиться, что результат содержит `wiki_page_paths` и `raw_path`; без этого save не считается успешным
+6. Ответить кратко в wiki-first формате:
+
+```
+✅ Сохранено в wiki: {title}
+Страница: {wiki_page_path}
+Источник: {raw_path}
+LightRAG: {rag_status}
+```
 
 Если содержание слишком короткое или непонятное (<0.35 importance) — уточнить у Дениса одним вопросом.
 Не давать сначала длинный содержательный комментарий на такой пост. В `Knowledgebase` при save-intent сначала ingest + короткое подтверждение, и только потом при отдельной просьбе обсуждение.
@@ -113,20 +121,20 @@ Pinned UX для топика должен явно объяснять это п
 1. Извлечь суть: о чём, откуда, ключевые тезисы
 2. Присвоить теги (domain, topic, source_type)
 3. Оценить важность (0.0–1.0); если < 0.35 — игнорировать молча
-4. Добавить в очередь (RAW/DERIVED, no rag_index, no obsidian_sync)
-5. Ответить кратко: `✅ Захвачено: [тема]. Тег: [domain]. Очередь: +1`
+4. Вызвать `wiki_ingest(..., capture_mode="ideas")`, чтобы сразу создать `raw/**` + `wiki/research/**`
+5. Ответить кратко в wiki-first формате: `✅ Захвачено в wiki: [тема]` + `Страница: wiki/research/...`
 
 Промоушен в Knowledgebase:
 - Только по явной команде Дениса: «промоутни», «сохрани в базу», «добавь в knowledgebase»
 - Перед промоушеном запросить подтверждение
 - При промоуте использовать самый короткий write-path:
-  - если у элемента есть исходный URL → `wiki_ingest({source_type: "url", source: "<url>"})`
-  - если URL нет, но есть внятный текст/пересланное сообщение → `wiki_ingest({source_type: "text", source: "[извлечённый markdown]"})`
+  - если у элемента есть исходный URL → `wiki_ingest({source_type: "url", source: "<url>", capture_mode: "promotion", promote_fingerprint: "<existing_fingerprint>"})`
+  - если URL нет, но есть внятный текст/пересланное сообщение → `wiki_ingest({source_type: "text", source: "[извлечённый markdown]", capture_mode: "promotion", promote_fingerprint: "<existing_fingerprint>"})`
 - Queue listing, confirmation и promotion — это `medium` или прямой deterministic workflow, не `smart`, если Денис не просит глубокий разбор
 
 НЕ делать:
 - Не промоутить автоматически без явной команды
-- Не сохранять в RAG/Obsidian до промоушена
+- Не считать `Ideas`-capture успешным без реальной `wiki/research/**` страницы
 - Не отвечать на каждый пост длинным анализом — только краткое подтверждение захвата
 
 Health-check: `GET http://lightrag:9621/health`
@@ -157,15 +165,19 @@ Read-only fetch страницы из `wiki/` по относительному 
 Оркестрационный вызов во внутренний `wiki-import` bridge.
 Сам OpenClaw не пишет в vault напрямую; bridge:
 - принимает `source_type: url | text | server_path`
+- принимает `capture_mode: knowledgebase | ideas | promotion`
 - сохраняет нормализованный source в `raw/articles/` или `raw/documents/`
-- сначала canonicalizes identity через `CANONICALS.yaml`
+- всегда materializes `wiki/research/**` как landing page
+- затем canonicalizes identity через `CANONICALS.yaml` с разной глубиной по `capture_mode`
 - затем назначает `themes` и обновляет `TOPICS.md`
 - обновляет wiki pages, `INDEX.md`, `OVERVIEW.md`, `TOPICS.md`, `LOG.md`
+- только после wiki-write делает immediate enqueue затронутых `wiki/**/*.md` в LightRAG
+- никогда не считает upload в LightRAG primary success criterion
 
 Примеры:
-- `wiki_ingest({"source_type":"url","source":"https://..."})`
-- `wiki_ingest({"source_type":"text","source":"...markdown/text..."})`
-- `wiki_ingest({"source_type":"server_path","source":"/opt/obsidian-vault/raw/documents/file.pdf"})`
+- `wiki_ingest({"source_type":"url","source":"https://...","capture_mode":"knowledgebase"})`
+- `wiki_ingest({"source_type":"text","source":"...markdown/text...","capture_mode":"ideas"})`
+- `wiki_ingest({"source_type":"server_path","source":"/opt/obsidian-vault/raw/documents/file.pdf","capture_mode":"promotion","promote_fingerprint":"..."})`
 
 ### wiki_lint — health check for wiki
 

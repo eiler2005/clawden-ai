@@ -21,8 +21,8 @@ clean operational channels, conservative memory, and a path from noisy inputs to
 | `Telegram Digest` | Start as a topic in the supergroup; split into private channel if it becomes noisy | Topic | Summaries from selected Telegram sources | Denis | Posts daily/periodic digests only. Source chats are separate allowlisted inputs, not the digest surface itself. | Publish |
 | `Signals` | Topic in the supergroup, optionally mirrored to DM for critical items | Topic | Time-sensitive alerts from email and Telegram | Denis | Speaks proactively only for high-importance, time-sensitive signals. Can pin critical alerts if allowed. | Alert / publish |
 | `Family` | Fully separate private group/supergroup, not a topic in ops | Separate group | Family domain and personal/family context | Family members and Denis | Conservative: by default requires mention or reply. Does not read the whole stream unless explicitly enabled for a narrow period. | Ingestion / family |
-| `Knowledgebase` | Topic in ops supergroup plus Obsidian as canonical destination | Supergroup topic | **Dual-mode**: (1) ingestion — structured posts → Obsidian/RAG; (2) search — plain-text queries → `lightrag_hybrid` + memory_search → bot responds with cited snippets | Denis, bot | Structured posts go through CURATED gate. Plain-text triggers search over workspace + Obsidian wiki + signals. Internet search is opt-in only, not the default fallback for this topic. | Knowledge / Search |
-| `Ideas` | Separate private group/channel owned by Denis | Private group or channel | Fast capture of thoughts, links, raw ideas | Denis | Captures, lightly classifies, tags, and queues for later promotion. Not automatically long-term knowledge. | Capture |
+| `Knowledgebase` | Topic in ops supergroup plus Obsidian as canonical destination | Supergroup topic | **Dual-mode**: (1) ingestion — explicit saves materialize `raw/**` + `wiki/research/**`, then index touched wiki pages; (2) search — plain-text queries → `lightrag_hybrid` + memory_search → bot responds with cited snippets | Denis, bot | Structured posts go through CURATED gate. Plain-text triggers search over workspace + Obsidian wiki + signals. Internet search is opt-in only, not the default fallback for this topic. LightRAG is secondary to the wiki artifact. | Knowledge / Search |
+| `Ideas` | Separate private group/channel owned by Denis | Private group or channel | Fast capture of thoughts, links, raw ideas | Denis | Captures material into `raw/**` + light-curated `wiki/research/**` immediately, then allows later promotion/enrichment. Not automatically full canonical knowledge. | Capture |
 | `Sandbox / Lab` | Fully separate private group | Sandbox group | Testing prompts, Telegram behavior, tools, integrations | Denis, bot | Free to experiment. No production memory writes. May use wider permissions inside this isolated surface. | Testing |
 
 ### Topic Layout For `Benka_Clawbot_SuperGroup`
@@ -41,7 +41,7 @@ Use a single operational forum supergroup with these topics:
 | `work-email` | Live topic for work-email summaries | Summaries only; no raw email bodies by default |
 | `telegram-digest` | Digest output from selected channels/chats | Digest summaries only |
 | `knowledgebase` | Knowledge base search + auto-ingest | LightRAG query returned inline; ingested content → CURATED gate → Obsidian wiki |
-| `ideas` | Frictionless idea capture queue | RAW queue only; promoted to Knowledgebase on demand; no automatic RAG write |
+| `ideas` | Frictionless idea capture queue | Light-curated `wiki/research/**` capture now; promoted to Knowledgebase for deeper enrichment later |
 
 ### Merge / Split Recommendations
 
@@ -102,7 +102,7 @@ Legend:
 | Alert mode | `Signals`, DM mirror for critical | High but narrow | Yes, only for important time-sensitive items | Briefly | Yes | Store compact alert record only | Yes, notification/escalation | Required for external action |
 | Family mode | `Family` | Low | Only when mentioned/replied to by default | Only on request | Minimal | No long-term writes without explicit approval | No, except reminders explicitly requested | Required for any memory/action |
 | Knowledge mode | `Knowledge` | Low | Yes, to acknowledge ingestion or schema issues | Yes | Yes | Yes, curated only | Yes, Obsidian/RAG write path | Optional if item is explicitly posted to Knowledge; required if sensitive |
-| Idea-capture mode | `Ideas` | Low | Yes, to confirm capture/classification | Short | Yes | RAW/DERIVED queue only, not long-term by default | Yes, create review tasks | Optional for capture; required for promotion |
+| Idea-capture mode | `Ideas` | Low | Yes, to confirm capture/classification | Short | Yes | Light-curated wiki capture; stronger canonicalization only on promotion | Yes, create review tasks | Optional for capture; required for promotion |
 | Sandbox mode | `Sandbox / Lab` | Medium | Yes | Yes | Yes | No production memory | Test workflows only | Required before touching production |
 
 ### Workflow Boundaries
@@ -180,8 +180,8 @@ Legend:
 | Work email requiring external reply | Ask approval before draft/send; store only action summary |
 | Family message with transient logistics | Respond only; no memory |
 | Family stable preference explicitly confirmed | `LONG_TERM` profile/preference entry |
-| Raw idea/link from Denis | Ideas queue with tags; no RAG unless promoted |
-| Idea promoted by Denis | Curated note in Knowledge/Obsidian; RAG eligible |
+| Raw idea/link from Denis | Light-curated `wiki/research/**` capture + raw source; promotion may deepen canonical links |
+| Idea promoted by Denis | Enrich existing wiki artifact into stronger curated knowledge; RAG eligible |
 | Finalized decision posted to Knowledge | Obsidian + RAG + compact workspace decision record |
 | Credential, token, password, private key | Never index; redact; store only secret-location metadata if needed |
 | Ops incident root cause | Redacted raw decision/root-cause record + RAG eligible |
@@ -195,7 +195,7 @@ Legend:
 | Telegram source | 50-channel chatter | Summarize only top items above threshold; no raw chatter |
 | Family | "Pick up groceries" | No memory; optional reminder if asked |
 | Family | "Remember that school meeting is every Tuesday" | Ask/confirm, then store as explicit family preference/task |
-| Ideas | "Maybe build X with LightRAG + Obsidian" | Ideas queue with domain/tags; later review |
+| Ideas | "Maybe build X with LightRAG + Obsidian" | Light-curated `wiki/research/**` page now; later review/promotion |
 | Knowledge | Structured note with decision and rationale | Obsidian + RAG |
 
 ---
@@ -225,8 +225,8 @@ Telegram surfaces:
   approval.
 - Knowledge: finalized structured knowledge channel. Items here may become Obsidian notes and RAG
   documents after schema and sensitivity checks.
-- Ideas: fast capture for thoughts, links, raw ideas, future project notes. Classify lightly and
-  queue. Do not promote to long-term knowledge without review.
+- Ideas: fast capture for thoughts, links, raw ideas, future project notes. Materialize a visible
+  `wiki/research/**` page immediately, but keep curation light until promotion/review.
 - Sandbox / Lab: test-only surface. Never write production memory from sandbox unless Denis
   explicitly copies/promotes content into Knowledge or Ideas.
 
@@ -257,7 +257,7 @@ Memory policy:
 - Use LONG_TERM/profile/preferences only for stable facts and explicit preferences.
 - Family long-term memory always requires explicit approval.
 - Work email can be summarized without storing full raw content.
-- Ideas can be tagged and queued, but not treated as final knowledge until promoted.
+- Ideas can be captured into visible wiki pages immediately, but should not be treated as fully curated canonical knowledge until promoted.
 
 RAG / LightRAG / Obsidian:
 - Do not dump noisy Telegram chatter into RAG.
@@ -411,8 +411,8 @@ fields are enforced by Telegram/OpenClaw config, while others are enforced by ru
 - DM only for control and approvals
 - Supergroup only for ops/status, all groups require mention by default
 - `Family` requires mention/reply and has no whole-stream read
-- `📚 Knowledgebase`: question → search; any content → bot auto-structures and saves (no manual fields)
-- `💡 Ideas`: capture-only, auto-queue, promoted to Knowledgebase on demand, no RAG ingestion
+- `📚 Knowledgebase`: question → search; any content → bot auto-structures and saves into wiki first (no manual fields)
+- `💡 Ideas`: capture-first, but still creates a visible light-curated wiki research page; promotion deepens the same artifact later
 - No automatic Work Email raw storage
 - No automatic Telegram source raw storage
 - `Sandbox / Lab` excluded from memory entirely

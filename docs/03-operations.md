@@ -465,8 +465,9 @@ Forward any Telegram post, paste a link, or write any thought into the `💡 Ide
 1. Reads the content (forwarded post, URL, free text)
 2. Extracts the essence and assigns tags (domain, source_type)
 3. Scores importance; silently ignores if score < 0.35
-4. Queues the item (RAW, not yet in RAG)
-5. Replies: `✅ Захвачено: [тема]. Тег: [domain]`
+4. Creates `raw/**` + light-curated `wiki/research/**`
+5. Enqueues the touched wiki pages to LightRAG
+6. Replies with a wiki-first confirmation
 
 **Promoting to Knowledgebase:**
 ```
@@ -475,7 +476,8 @@ Forward any Telegram post, paste a link, or write any thought into the `💡 Ide
 ```
 Bot shows the list and asks for confirmation before writing to wiki.
 
-**Nothing goes to RAG automatically** — promotion is always an explicit step.
+**Ideas now create a visible wiki research page immediately**, but promotion is still explicit for
+deeper canonical enrichment.
 
 **If bot doesn't respond to Ideas:** check that topic_id=639 is in `telegram-topic-map.json` and workspace is deployed.
 
@@ -497,6 +499,9 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 Healthy indexing should converge to `failed=0`. Upload success alone is not enough: documents can
 be accepted by `/documents/upload` and still fail later during LLM extraction.
+
+For interactive explicit saves, do not use `uploaded` as the primary success criterion. First check
+that a `wiki/research/**` page exists for the saved item; only then inspect LightRAG freshness.
 
 For LLM-Wiki rollout v2, `documents/status_counts` should not suddenly jump because of legacy vault
 folders or bulk `raw/articles` imports. If it does, the ingest boundary has drifted.
@@ -535,9 +540,25 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   curl -sf -X POST http://127.0.0.1:8095/trigger \
     -H "Authorization: Bearer ${token}" \
     -H "Content-Type: application/json" \
-    -d "{\"source_type\":\"url\",\"source\":\"https://example.com/article\",\"target_kind\":\"auto\"}" | jq .
+    -d "{\"source_type\":\"url\",\"source\":\"https://example.com/article\",\"target_kind\":\"auto\",\"capture_mode\":\"knowledgebase\"}" | jq .
 '
 ```
+
+### Backfill historical `Knowledgebase` posts into wiki
+
+Use this when old `Knowledgebase` saves were handled as `raw/RAG-first` and need to be
+materialized into real `wiki/research/**` pages.
+
+```bash
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/backfill-knowledgebase-to-wiki.sh --dry-run
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/backfill-knowledgebase-to-wiki.sh --apply
+```
+
+The script reads only the `📚 Knowledgebase` forum topic, skips bot/service chatter and short
+question-like search messages, and replays the remaining human content through `wiki-import` in two
+steps: first a source-centric `ideas` capture to guarantee `wiki/research/**`, then an immediate
+`promotion` pass only for high-signal materials. This keeps historical saves visible in the wiki
+without reintroducing broad ontology explosion.
 
 ### Query LightRAG directly (for debugging)
 
