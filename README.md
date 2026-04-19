@@ -736,7 +736,6 @@ See [`docs/07-architecture-and-security.md`](docs/07-architecture-and-security.m
 | 15 | [llm-wiki-query-flow](docs/15-llm-wiki-query-flow.md) | End-to-end LLM-Wiki flow: curated import, LightRAG retrieval, OpenClaw answer assembly |
 | 16 | [llm-wiki-storage-model](docs/16-llm-wiki-storage-model.md) | Canonical slugs, themes, topic maps, and wiki repair policy |
 | 17 | [knowledge-management](docs/17-knowledge-management.md) | Knowledgebase and Ideas workflow: save, capture, promotion |
-| 18 | [claude-llm-wiki-memory-lifecycle-prompt](docs/18-claude-llm-wiki-memory-lifecycle-prompt.md) | Prompt pack for external model critique of memory lifecycle |
 | 19 | [llm-wiki-memory-explained](docs/19-llm-wiki-memory-explained.md) | Human-first explanation of `raw -> wiki -> LightRAG -> OpenClaw` |
 | 20 | [llm-project-orientation](docs/20-llm-project-orientation.md) | LLM-facing project map: read order, trust hierarchy, doc routing |
 
