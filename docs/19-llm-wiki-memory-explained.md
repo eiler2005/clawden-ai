@@ -487,4 +487,5 @@ See also:
 - [10-memory-architecture.md](10-memory-architecture.md)
 - [15-llm-wiki-query-flow.md](15-llm-wiki-query-flow.md)
 - [17-knowledge-management.md](17-knowledge-management.md)
+- [18-telegram-historical-ingest.md](18-telegram-historical-ingest.md)
 - [20-llm-project-orientation.md](20-llm-project-orientation.md)

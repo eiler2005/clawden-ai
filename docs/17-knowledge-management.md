@@ -224,6 +224,9 @@ High-signal auto-promotion intentionally uses a narrow heuristic set:
 
 Everything else stays in `ideas/light` until Denis explicitly asks for promotion.
 
+Для исторических Telegram-каналов и повторяемых incremental updates см.
+[docs/18-telegram-historical-ingest.md](18-telegram-historical-ingest.md).
+
 ---
 
 ## Источники данных для поиска
@@ -255,4 +258,5 @@ Everything else stays in `ideas/light` until Denis explicitly asks for promotion
 - [docs/10-memory-architecture.md](10-memory-architecture.md) — классы памяти (RAW/DERIVED/CURATED)
 - [docs/11-lightrag-setup.md](11-lightrag-setup.md) — LightRAG API и индексация
 - [docs/15-llm-wiki-query-flow.md](15-llm-wiki-query-flow.md) — как работает поиск внутри
+- [docs/18-telegram-historical-ingest.md](18-telegram-historical-ingest.md) — historical Telegram ingest и incremental updates
 - [docs/12-telegram-channel-architecture.md](12-telegram-channel-architecture.md) — все Telegram-поверхности
