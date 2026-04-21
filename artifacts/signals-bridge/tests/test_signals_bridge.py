@@ -493,6 +493,31 @@ class MatchingTests(unittest.TestCase):
         )
         self.assertIsNotNone(candidate)
 
+    def test_telegram_author_keywords_match_sleng_si_and_yuashka_forms(self) -> None:
+        rule = {
+            "id": "telegram-gukov-fx",
+            "source_id": "telegram-trader-speki",
+            "kind": "author_keywords",
+            "sender_ids": [777],
+            "keywords": ["си", "юань", "cny"],
+            "tags": ["fx"],
+        }
+        candidate = match_telegram_rule(
+            ruleset_id="trading",
+            ruleset_title="Trading",
+            rule=rule,
+            message={
+                "chat_id": -1001,
+                "chat_name": "Example Trader Chat",
+                "message_id": 2,
+                "sender_id": 777,
+                "author": "Евгений Гуков",
+                "text": "сиху чуть взял на отскок, юашку пока не трогал",
+                "timestamp": "2026-04-12T12:00:00+00:00",
+            },
+        )
+        self.assertIsNotNone(candidate)
+
     def test_telegram_author_keywords_other_author_ignored(self) -> None:
         rule = {
             "id": "telegram-gukov-fx",
@@ -600,6 +625,8 @@ class MatchingTests(unittest.TestCase):
         self.assertFalse(keyword_matches("Сейчас и мысли совсем о другом.", "си"))
         self.assertTrue(keyword_matches("По СИ вижу интересный сценарий.", "си"))
         self.assertTrue(keyword_matches("Сишка смотрится бодро.", "сишка"))
+        self.assertTrue(keyword_matches("сиху чуть взял на отскок.", "си"))
+        self.assertTrue(keyword_matches("юашку пока не трогал.", "юань"))
 
     def test_telegram_content_keywords_short_word_inside_longer_word_ignored(self) -> None:
         rule = {

@@ -1210,6 +1210,7 @@ Delivery format:
 
 - Telegram-derived signal items include a direct source link to the originating post when one can be constructed.
 - Email-derived signal items retain a compact excerpt in the rendered batch so the operator can read the core message without opening the raw mailbox.
+- Telegram keyword matching stays deterministic, but now includes a small alias layer for recurring trading slang so canonical rules like `си` / `юань` / `cny` also catch narrow forms such as `сиху` and `юашку` without widening into generic FX chatter.
 
 ### Deploy
 

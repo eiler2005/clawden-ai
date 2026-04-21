@@ -24,6 +24,12 @@ TRADINGVIEW_USER_PATTERNS = [
     re.compile(r"\b@(?P<user>[A-Za-z0-9_.-]{3,64})\b"),
 ]
 HASHTAG_RE_TEMPLATE = r"(?<!\w){tag}\b"
+KEYWORD_ALIASES = {
+    "си": ("сиха", "сиху"),
+    "юань": ("юашка", "юашку", "юашки"),
+    "cny": ("юашка", "юашку", "юашки"),
+    "yuan": ("юашка", "юашку", "юашки"),
+}
 
 
 def utc_now_iso() -> str:
@@ -66,6 +72,11 @@ def keyword_matches(text: str, keyword: str) -> bool:
     normalized_keyword = str(keyword or "").strip().casefold()
     if not normalized_keyword:
         return False
+    candidates = (normalized_keyword, *KEYWORD_ALIASES.get(normalized_keyword, ()))
+    return any(_contains_keyword(normalized_text, candidate) for candidate in candidates)
+
+
+def _contains_keyword(normalized_text: str, normalized_keyword: str) -> bool:
     pattern = re.compile(rf"(?<!\w){re.escape(normalized_keyword)}(?!\w)")
     return bool(pattern.search(normalized_text))
 
