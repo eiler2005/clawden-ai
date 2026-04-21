@@ -95,7 +95,7 @@ to `processed > 0` and `failed = 0`.
 During processing, LightRAG:
 
 - splits documents into text chunks;
-- calls the configured extraction LLM (`gemini-2.5-flash-lite`);
+- calls the configured extraction LLM (`light` via OmniRoute's OpenAI-compatible endpoint);
 - extracts entities and relationships;
 - stores vectors in NanoVectorDB and graph edges in NetworkX;
 - records document lifecycle in `kv_store_doc_status.json`.
@@ -131,18 +131,20 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 | Graph storage | NetworkX (built-in) | File-based, no Neo4j |
 | Vector storage | NanoVectorDB (built-in) | File-based, no Qdrant |
 | KV storage | JsonKV (built-in) | File-based, no Redis |
-| LLM | `gemini-2.5-flash-lite` | Stable direct Gemini extraction for bulk LightRAG indexing |
-| Embedding | `gemini-embedding-001` | Same API key, dim=3072 |
+| LLM | `OmniRoute light` via OpenAI-compatible binding | Keeps LightRAG on a stable local endpoint and adds provider fallback around the LLM hop |
+| Embedding | `gemini-embedding-001` | Direct Gemini embeddings, dim=3072, single embedding space for the whole index |
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
 
-**One API key total: Google Gemini.** Free tier covers typical RAG workload.  
-Get key: https://aistudio.google.com/app/apikey
+**Current split:** LLM requests go through OmniRoute; embeddings stay on direct Gemini.
+This means LightRAG currently needs:
+- one OmniRoute API key for `LLM_BINDING=openai`
+- one Gemini API key for `EMBEDDING_BINDING=gemini`
 
-**Free tier limits (important for bulk ingestion):**
+**Gemini free tier limits (still important for embeddings during bulk ingestion):**
 - 15 requests per minute (RPM)
 - 1,500 requests per day (RPD) — resets at UTC midnight (03:00 МСК)
-- If RPD is exhausted during bulk indexing: wait for reset, or add billing to the GCP project
+- If Gemini RPD is exhausted during bulk indexing: wait for reset, or add billing to the GCP project
 
 ---
 
@@ -232,14 +234,14 @@ Generate it with:
 Or manually from template `scripts/lightrag.env.template`:
 
 ```env
-# LLM: Google Gemini Flash
-LLM_BINDING=gemini
-LLM_MODEL=gemini-2.5-flash-lite
-LLM_BINDING_API_KEY=<gemini-api-key>
-LLM_BINDING_HOST=https://generativelanguage.googleapis.com
+# LLM: OmniRoute OpenAI-compatible endpoint
+LLM_BINDING=openai
+LLM_MODEL=light
+LLM_BINDING_API_KEY=<omniroute-api-key>
+LLM_BINDING_HOST=http://omniroute:20129/v1
 LLM_MAX_TOKEN_SIZE=32768
 
-# Embeddings: Google Gemini (same key)
+# Embeddings: Google Gemini
 EMBEDDING_BINDING=gemini
 EMBEDDING_MODEL=gemini-embedding-001
 EMBEDDING_BINDING_API_KEY=<gemini-api-key>
@@ -266,7 +268,9 @@ LIGHTRAG_WORKING_DIR=/app/data
 WEBUI_TITLE=БенькаMemory
 ```
 
-Only `LLM_BINDING_API_KEY` / `EMBEDDING_BINDING_API_KEY` (Gemini key) are secret.
+Secrets in this setup:
+- `LLM_BINDING_API_KEY` = OmniRoute API key
+- `EMBEDDING_BINDING_API_KEY` = Gemini API key
 
 ---
 

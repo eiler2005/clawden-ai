@@ -53,7 +53,7 @@ Everything is observable through a Telegram supergroup with 11 dedicated topics 
 **Knowledge graph memory**
 - LightRAG indexes curated wiki pages plus raw signal digests using graph + vector hybrid retrieval
 - Vault syncs bidirectionally between Mac and server via Syncthing — write a note on Mac, it's searchable on the server within minutes
-- **`📚 Knowledgebase` topic**: write any question → bot searches across Obsidian wiki + workspace + signals and replies with cited snippets; forward any post or link → bot auto-extracts title/domain/summary and saves it into `wiki/research/**` first, then enqueues the touched wiki pages into LightRAG
+- **`📚 Knowledgebase` topic**: write any question → bot searches across Obsidian wiki + workspace + signals, opens top refs, and answers in a grounded expanded format with citations plus source links when provenance exists; forward any post or link → bot auto-extracts title/domain/summary and saves it into `wiki/research/**` first, then enqueues the touched wiki pages into LightRAG
 - **`💡 Ideas` topic**: forward anything (posts, links, thoughts) → bot auto-captures into `wiki/research/**` with lighter curation; promotion later enriches the same artifact chain instead of creating it from scratch
 
 **Self-hosted, private**
@@ -92,12 +92,12 @@ Everything runs inside Docker containers on a single Hetzner CX23 (3 vCPU / 4 GB
 │  │                                                                  │  │
 │  │  smart  → Kiro/Claude Sonnet → OpenRouter/Claude → OR/Kimi      │  │
 │  │  medium → Kiro/Claude Haiku  → Gemini Flash → OpenRouter/Qwen3  │  │
-│  │  light  → Gemini Flash → OpenRouter/Qwen3-8B → Kiro/Haiku       │  │
+│  │  light  → Kiro/Claude Haiku → Gemini Flash → OpenRouter/Qwen3   │  │
 │  └──────────────────┬───────────────────────────────────────────────┘  │
 │                     │                                                   │
 │  ┌──────────────────▼───────────────────────────┐                      │
 │  │  LightRAG  (Docker)   127.0.0.1:8020         │                      │
-│  │  LLM: Gemini 2.5 Flash Lite                  │                      │
+│  │  LLM: OmniRoute light                        │                      │
 │  │  Embedding: gemini-embedding-001 (dim=3072)  │                      │
 │  │  Storage: NetworkX · NanoVectorDB · JsonKV   │                      │
 │  │  inputs: workspace/ + obsidian/ (read-only)  │                      │
@@ -274,7 +274,7 @@ graph LR
 |---------|------|----------------|----------|
 | **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | gpt-5.4 (OAuth Plus) |
 | **OmniRoute** | Smart model dispatcher, 3-tier routing with failover | `127.0.0.1:20128` (UI), `:20129` (API) | — |
-| **LightRAG** | Knowledge graph, hybrid vector+graph retrieval | `127.0.0.1:8020` | Gemini 2.5 Flash Lite (direct) |
+| **LightRAG** | Knowledge graph, hybrid vector+graph retrieval | `127.0.0.1:8020` | OmniRoute `light` + Gemini embeddings |
 | **wiki-import** | Curated import bridge for `url` / `text` / `server_path` into LLM-Wiki | `127.0.0.1:8095` | deterministic v1 |
 | **Redis Streams** | Async integration bus, consumer groups, DLQ | internal only | — |
 | **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OmniRoute `light` |
@@ -436,7 +436,7 @@ flowchart LR
 | `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution for forwarded mail |
 | `last30daysTrend` | signals-bridge | daily 07:00 MSK | Personal Feed — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
-| `knowledgebase` | OpenClaw | on demand | question → LightRAG hybrid search + citations; content → bot auto-structures + wiki ingest |
+| `knowledgebase` | OpenClaw | on demand | question → LightRAG hybrid search + grounded expanded answer with citations/source links; content → bot auto-structures + wiki ingest |
 | `ideas` | OpenClaw | on demand | frictionless capture — any forwarded post/link/thought → light-curated `wiki/research/**`; promotion later deepens curation |
 
 ---
@@ -449,10 +449,10 @@ OmniRoute dispatches tasks across three tiers with automatic provider failover.
 |------|----------|---------------|
 | **smart** | Code review, architecture, long context (>8K) | Kiro/Claude Sonnet → OpenRouter/Claude 3.5 → OpenRouter/Kimi K2 |
 | **medium** | Summarization, Q&A, digests | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-30B |
-| **light** | Classification, signals enrichment, tagging | Gemini 2.0 Flash → OpenRouter/Qwen3-8B → Kiro/Claude Haiku |
+| **light** | Classification, signals enrichment, tagging | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-8B |
 
-**Primary model:** OpenAI gpt-5.4 via OAuth Plus — main OpenClaw conversation, not routed through OmniRoute.  
-**LightRAG:** Direct Gemini `gemini-2.5-flash-lite` for batch stability.  
+**Primary model:** OpenAI gpt-5.4 via OAuth Plus — main OpenClaw conversation, not routed through OmniRoute.
+**LightRAG:** OmniRoute `light` for LLM extraction/summarization, direct Gemini `gemini-embedding-001` for embeddings.
 **Last30Days reasoning:** OpenRouter `google/gemini-2.5-flash-lite` via `OPENROUTER_API_KEY` in `signals.env`.
 
 | Provider | Auth | Cost |

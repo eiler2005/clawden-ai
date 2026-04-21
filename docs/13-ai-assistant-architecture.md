@@ -72,7 +72,7 @@ It provides three routing tiers, each with a priority fallback list internally:
 |------|--------------|----------|
 | `smart` | kiro/claude-sonnet-4.5 | Code generation, architecture review, multi-step reasoning, context >8K tokens |
 | `medium` | kiro/claude-haiku-4.5 | Q&A, summarization, translation, standard dialog |
-| `light` | gemini/gemini-2.0-flash | Classification, data extraction, formatting, quick lookups |
+| `light` | kiro/claude-haiku-4.5 | Classification, data extraction, formatting, quick lookups |
 
 Each tier has internal fallbacks (e.g., openrouter models) if the primary fails.
 

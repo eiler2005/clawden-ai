@@ -794,3 +794,63 @@ Practical rule:
 - in `Knowledgebase`, failure to retrieve local results is **not** a reason to auto-run `web_search`
 - first say "nothing relevant found in local knowledge base"
 - only then offer a separate internet search, unless Denis explicitly asked for internet/latest/online data in the original message
+
+## 29. Knowledgebase grounded-answer + source-links runtime rollout
+
+Date: `2026-04-21`
+
+Goal:
+
+- strengthen `Knowledgebase` search answers without changing the wiki-first storage architecture
+- require broader, source-grounded answers for thoughts/posts/themes
+- prefer human-usable source links (`Wiki`, canonical URL, Telegram deeplink) over raw vault paths
+
+Contract changes:
+
+- `workspace/TOOLS.md` — search path tightened to:
+  `lightrag_query + memory_search -> open 2-5 refs -> extract 2-4 supportable facts -> grounded expanded answer`
+- `workspace/AGENTS.md` and `workspace/TELEGRAM_POLICY.md` — added degraded-answer guard and
+  explicit requirement to include source links when provenance exists
+- `artifacts/openclaw/telegram-surfaces.redacted.json` — `Knowledgebase.search_mode.response_format`
+  changed from snippet-style replies to `grounded_expanded_with_source_links`
+- `artifacts/openclaw/telegram-pins/knowledgebase.txt` — pinned instructions updated to explain
+  broader answers and provenance-aware source links
+- `docs/15-llm-wiki-query-flow.md`, `docs/17-knowledge-management.md`,
+  `docs/21-knowledgebase-query-quality.md` — aligned with the new retrieval-to-synthesis contract
+- `scripts/smoke-check-knowledge.sh` — extended from health-only smoke checks to answer-quality
+  regression checks (`has_refs`, `expected_ref_hit`, `degraded_answer`, `has_source_links`)
+
+Representative deployment shape:
+
+```bash
+# sync workspace instructions used by runtime synthesis
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/deploy-workspace.sh
+
+# replace active Telegram surface policy after backup
+scp artifacts/openclaw/telegram-surfaces.redacted.json deploy@<server-host>:/tmp/telegram-surfaces.policy.json
+ssh deploy@<server-host> '
+  sudo cp /opt/openclaw/config/telegram-surfaces.policy.json \
+    /opt/openclaw/config/telegram-surfaces.policy.json.bak-$(date -u +%Y%m%dT%H%M%SZ)
+  sudo install -m 0644 /tmp/telegram-surfaces.policy.json \
+    /opt/openclaw/config/telegram-surfaces.policy.json
+'
+
+# restart gateway and refresh Telegram pins
+ssh deploy@<server-host> 'cd /opt/openclaw && sudo docker compose restart openclaw-gateway'
+OPENCLAW_HOST="deploy@<server-host>" bash scripts/post-telegram-pins.sh
+```
+
+Validation performed:
+
+- gateway health: `curl http://127.0.0.1:18789/healthz`
+- `LightRAG` convergence: `curl http://127.0.0.1:8020/health` + `/documents/status_counts`
+- `Knowledgebase` regression smoke check via `scripts/smoke-check-knowledge.sh`
+- live Telegram owner-session test inside the real `Knowledgebase` topic
+
+Observed result:
+
+- runtime picked up the new contract after workspace + policy deploy and gateway restart
+- Telegram answers became broader and started including explicit source sections
+- retrieval quality and provenance were good enough to surface original web links for factual queries
+- remaining weakness shifted from missing data to synthesis quality and link ranking: raw vault paths
+  can still appear as fallback when cleaner provenance links are not extracted first

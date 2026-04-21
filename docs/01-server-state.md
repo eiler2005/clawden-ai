@@ -32,8 +32,8 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
 - Docker networks: `lightrag_default` + `openclaw_default`; OpenClaw container uses `http://lightrag:9621`
 - input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
-- LLM: direct Gemini `gemini-2.5-flash-lite` (`MAX_ASYNC=1`, `TIMEOUT=180`) for stable bulk extraction
-- embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, not routed through OmniRoute)
+- LLM: OmniRoute OpenAI-compatible endpoint `http://omniroute:20129/v1` with model `light` (`LLM_BINDING=openai`, `MAX_ASYNC=1`, `TIMEOUT=180`)
+- embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, kept outside OmniRoute to preserve one embedding space)
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
 - active ingest boundary:
@@ -52,7 +52,7 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 
 - status: enabled in `/opt/openclaw/config/openclaw.json`
 - backend: builtin SQLite memory engine (not QMD)
-- embedding provider: Gemini `gemini-embedding-001` via `GEMINI_API_KEY` in the OpenClaw gateway env
+- embedding provider: Gemini `gemini-embedding-001` via direct `GEMINI_API_KEY`
 - default memory roots:
   - `/opt/openclaw/workspace/MEMORY.md`
   - `/opt/openclaw/workspace/memory/**/*.md`
@@ -289,8 +289,8 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - routing tiers (priority order, auto-fallback if provider unavailable):
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
-  - `light` → Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b → Kiro/claude-3-5-haiku-20241022
-- LightRAG integration: **active** — OpenClaw can query LightRAG at `http://lightrag:9621`; LightRAG uses direct Gemini for extraction because OmniRoute `light` is too bursty for bulk indexing
+  - `light` → Kiro/claude-haiku-4.5 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b
+- LightRAG integration: **active** — OpenClaw can query LightRAG at `http://lightrag:9621`; current LightRAG config uses OmniRoute for LLM extraction/summarization and direct Gemini only for embeddings
 - OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json` with 3 virtual models (`smart`, `medium`, `light`); Codex/gpt-5.4 stays primary
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`

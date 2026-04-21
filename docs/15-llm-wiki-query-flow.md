@@ -348,7 +348,7 @@ Then OpenClaw should:
 4. if top results are index/tooling/navigation pages, follow one step deeper to the canonical content pages
 5. only then synthesize a final answer
 
-**Telegram entry point:** Only a short question-like message in the `Knowledge` channel should trigger this flow automatically (`lightrag_hybrid` + memory_search → respond with cited snippets). In this path, internet `web_search` is not the default fallback; it should run only when the user explicitly asks for internet/latest/online search or the question inherently depends on fresh external data. Forwarded posts, URLs, explicit save commands, and long-form multiline content in the same channel should be ingested as CURATED knowledge instead of being answered conversationally first.
+**Telegram entry point:** Only a short question-like message in the `Knowledge` channel should trigger this flow automatically (`lightrag_hybrid` + memory_search -> open top refs -> answer in grounded expanded form with citations/source links when provenance exists). In this path, internet `web_search` is not the default fallback; it should run only when the user explicitly asks for internet/latest/online search or the question inherently depends on fresh external data. Forwarded posts, URLs, explicit save commands, and long-form multiline content in the same channel should be ingested as CURATED knowledge instead of being answered conversationally first.
 
 ### 6.3 If It Is Mixed
 
@@ -421,6 +421,8 @@ The safe rule is:
 - trust the references more than the prose blob
 - in `Knowledgebase` search, inspect source pages before answering, not only when precision "might" matter
 - do not claim "nothing relevant was found" until the top retrieved pages were actually opened
+- extract 2–4 supportable facts or short evidence snippets from the opened pages before synthesis
+- if references already support part of the answer, do not fall back to generic "not enough information"
 
 This is why `workspace/TOOLS.md` explicitly says to check `references[].file_path` when the answer affects a decision.
 
@@ -439,6 +441,22 @@ It is:
 ```text
 LLM answer = user question + retrieved context + agent reasoning
 ```
+
+For `Knowledgebase`, the default answer shape should be `grounded expanded`:
+
+- 3–6 sentence conclusion anchored in opened refs
+- then 2–4 evidence bullets
+- then a short interpretation block such as "what this means" / "what may be useful"
+- each bullet tied to a concrete `references[].file_path`
+- only short snippets/quotes when they materially prove a claim
+- include original source links when provenance exists: canonical URL, Telegram deeplink, or best available provenance
+
+The degraded-answer guard is:
+
+- generic fallback is allowed only after top refs were opened and no supportable facts were found
+- partial support must be stated explicitly, e.g. "opened refs confirm X and Y, but do not directly confirm Z"
+- if refs exist and contain relevant material, the bot should answer with the supported subset rather than "I do not have enough information"
+- for thought/post/theme questions, the answer should not stop at a terse snippet list; it should synthesize a broader but still source-grounded interpretation
 
 ---
 

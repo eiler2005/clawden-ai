@@ -44,7 +44,7 @@ OmniRoute (`http://omniroute:20129/v1`) используется для деле
 3. Требует архитектурного решения или trade-off анализа → **smart**
 4. Обычный диалог, Q&A, суммаризация → **medium**
 5. Классификация, извлечение данных, форматирование → **light**
-6. Вспомогательные LightRAG lookups/классификация → **light**; сама индексация LightRAG работает через прямой Gemini
+6. Вспомогательные LightRAG lookups/классификация → **light**; индексация LightRAG сейчас идёт через OmniRoute `light` для LLM и прямой Gemini для embeddings
 
 Отдельно:
 - `Ideas` queue / promotion, `Knowledgebase` save, короткие Telegram workflow-команды → **medium**
@@ -201,6 +201,11 @@ POST http://lightrag:9621/query
 - после `lightrag_query` нужно открыть 2–5 top references и проверить сами страницы
 - если top results выглядят как `INDEX`, tool docs или navigation pages, пройти на один шаг глубже до содержательной wiki page
 - не говорить «релевантного контента нет», пока top-candidates не просмотрены
+- из открытых refs извлечь 2–4 supportable facts или короткие доказательные snippets
+- финальный ответ по умолчанию должен быть `grounded expanded`: тезис, evidence, затем короткая интерпретация/прикладной вывод
+- для мыслей, постов, идей и broad-theme запросов обязателен блок `Источники`: `file_path` плюс canonical URL / Telegram deeplink, если он извлекается из provenance
+- `raw/**` absolute paths не показывать как основной источник, если можно показать canonical URL, Telegram deeplink или хотя бы human-readable provenance
+- generic fallback вроде «недостаточно информации» запрещён, если открытые refs уже подтверждают хотя бы часть ответа
 
 ### Telegram tool failures
 
