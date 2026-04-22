@@ -67,6 +67,49 @@ def _as_int_set(values: list[int | str]) -> set[int]:
     return {int(v) for v in values}
 
 
+def _schedule_slots(config: dict) -> list[tuple[int, int]]:
+    raw_slots = list(config.get("schedule_slots", []) or [])
+    if raw_slots:
+        slots: list[tuple[int, int]] = []
+        for raw in raw_slots:
+            hour_text, minute_text = str(raw).strip().split(":", 1)
+            slots.append((int(hour_text), int(minute_text)))
+        return sorted(set(slots))
+    return sorted({(int(hour), 0) for hour in config.get("schedule_hours", [8, 11, 14, 17, 21])})
+
+
+def _scheduled_period_label(config: dict, *, now: datetime) -> str | None:
+    raw_hour = os.environ.get("DIGEST_SLOT_HOUR", "").strip()
+    if not raw_hour:
+        return None
+    slot_hour = int(raw_hour)
+    slot_minute = int(os.environ.get("DIGEST_SLOT_MINUTE", "0").strip() or "0")
+    tz = pytz.timezone(str(config.get("timezone", "Europe/Moscow") or "Europe/Moscow"))
+    local_now = now.astimezone(tz)
+    slots = _schedule_slots(config)
+    if (slot_hour, slot_minute) not in slots:
+        slots.append((slot_hour, slot_minute))
+        slots.sort()
+
+    points: list[datetime] = []
+    for day_offset in (-1, 0, 1):
+        day = local_now.date().fromordinal(local_now.date().toordinal() + day_offset)
+        for hour, minute in slots:
+            points.append(tz.localize(datetime(day.year, day.month, day.day, hour, minute)))
+    points.sort()
+
+    matching_points = [
+        point
+        for point in points
+        if point.hour == slot_hour and point.minute == slot_minute and point <= local_now
+    ]
+    if not matching_points:
+        return None
+    end_local = matching_points[-1]
+    start_local = points[points.index(end_local) - 1]
+    return f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+
+
 def apply_read_allowlist(config: dict) -> dict:
     """
     Enforce least-privilege reads before Telethon sees the channel list.
@@ -145,6 +188,7 @@ async def run_digest(config: dict | None = None):
         # First run: use lookahead_hours as window
         period_start_ts = time.time() - config.get("lookahead_hours", 4) * 3600
     period_start = datetime.fromtimestamp(period_start_ts, tz=timezone.utc)
+    period_label_override = _scheduled_period_label(config, now=period_end)
 
     logger.info(
         f"Digest cycle: {period_start.isoformat()} → {period_end.isoformat()}"
@@ -202,6 +246,7 @@ async def run_digest(config: dict | None = None):
         digest_type=digest_type,
         period_start=period_start,
         period_end=period_end,
+        period_label_override=period_label_override,
         stats=stats,
     )
 

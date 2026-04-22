@@ -828,7 +828,10 @@ Each job runs as an **isolated OpenClaw cron run** and sends one authenticated
 HTTP trigger from the gateway container to `telethon-digest-cron-bridge` inside
 `openclaw_default`. The bridge then runs `python digest_worker.py --now` with an
 explicit `DIGEST_TYPE_OVERRIDE`, which keeps the run type stable even if the
-gateway retries a job later than the scheduled hour.
+gateway retries a job later than the scheduled hour. The cron payload also passes
+the nominal slot (`08:00`, `11:00`, `14:00`, `17:00`, `21:00`) into the worker,
+so the digest header keeps the scheduled window label even if Telegram shows the
+message itself at `11:05` because rendering/posting finished a few minutes later.
 
 The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
@@ -884,7 +887,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 
 - `GET /health` — quick liveness + last run snapshot
 - `GET /status` — current or last run payload with timestamps, digest type, exit code, and tail
-- `POST /trigger` — synchronous run; returns `409 digest_already_running` if another digest is still in flight
+- `POST /trigger` — synchronous run; returns `409 digest_already_running` if another digest is already queued or still in flight
 
 ### One-time Telethon authorization
 

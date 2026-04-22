@@ -802,6 +802,7 @@ async def summarize(
     digest_type: str,
     period_start: datetime,
     period_end: datetime,
+    period_label_override: str | None,
     stats: DigestStats,
 ) -> DigestDocument:
     """
@@ -815,6 +816,9 @@ async def summarize(
         period_end,
         stats,
     )
+    if period_label_override:
+        context["period"]["label"] = period_label_override
+        period_label = period_label_override
     model = MODEL_EDITORIAL if digest_type == "editorial" else MODEL
     system = _system_prompt(digest_type)
     user = _user_prompt(context)

@@ -49,6 +49,8 @@ RAG_CONSUMER_NAME = "rag-worker"
 BLOCK_MS = 5000
 
 VALID_DIGEST_TYPES = {"morning", "interval", "editorial"}
+DIGEST_LOCK_KEY = "lock:telegram-digest:run"
+LOCK_TTL_SECONDS = int(os.environ.get("DIGEST_RUN_LOCK_TTL_SECONDS", "5400"))
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +83,29 @@ def _write_status(payload: dict) -> None:
 
 def _make_redis() -> redis_lib.Redis:
     return redis_lib.from_url(REDIS_URL, decode_responses=True)
+
+
+def _parse_slot_value(payload: dict, key: str, *, minimum: int, maximum: int) -> int | None:
+    raw = payload.get(key)
+    if raw in (None, ""):
+        return None
+    value = int(raw)
+    if value < minimum or value > maximum:
+        raise ValueError(f"{key}_out_of_range")
+    return value
+
+
+def _acquire_run_lock(r: redis_lib.Redis, *, run_id: str) -> bool:
+    return bool(r.set(DIGEST_LOCK_KEY, run_id, nx=True, ex=LOCK_TTL_SECONDS))
+
+
+def _release_run_lock(r: redis_lib.Redis, *, run_id: str) -> None:
+    try:
+        current = r.get(DIGEST_LOCK_KEY)
+        if current == run_id:
+            r.delete(DIGEST_LOCK_KEY)
+    except redis_lib.exceptions.RedisError as exc:
+        logger.error("Failed to release digest lock for run_id=%s: %s", run_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -146,19 +171,43 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        run_id = str(uuid.uuid4())
         try:
             r = _make_redis()
-            r.xadd(
-                STREAM_JOBS,
-                {
-                    "run_id": run_id,
-                    "digest_type": digest_type,
-                    "requested_at": _utc_now(),
-                    "requested_by": "cron",
-                },
-            )
+            slot_hour = _parse_slot_value(payload, "slot_hour", minimum=0, maximum=23)
+            slot_minute = _parse_slot_value(payload, "slot_minute", minimum=0, maximum=59)
+            if slot_hour is None and slot_minute is not None:
+                raise ValueError("slot_minute_without_hour")
+        except ValueError:
+            self._send(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "invalid_slot"})
+            return
         except redis_lib.exceptions.RedisError as exc:
+            logger.error("Failed to connect to Redis: %s", exc)
+            self._send(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                {"ok": False, "error": "bus_unavailable", "detail": str(exc)},
+            )
+            return
+
+        run_id = str(uuid.uuid4())
+        try:
+            if not _acquire_run_lock(r, run_id=run_id):
+                self._send(
+                    HTTPStatus.CONFLICT,
+                    {"ok": False, "error": "digest_already_running"},
+                )
+                return
+            job_payload = {
+                "run_id": run_id,
+                "digest_type": digest_type,
+                "requested_at": _utc_now(),
+                "requested_by": "cron",
+            }
+            if slot_hour is not None:
+                job_payload["slot_hour"] = slot_hour
+                job_payload["slot_minute"] = slot_minute or 0
+            r.xadd(STREAM_JOBS, job_payload)
+        except redis_lib.exceptions.RedisError as exc:
+            _release_run_lock(r, run_id=run_id)
             logger.error("Failed to enqueue job: %s", exc)
             self._send(
                 HTTPStatus.SERVICE_UNAVAILABLE,
@@ -174,6 +223,8 @@ class Handler(BaseHTTPRequestHandler):
                 "status": "enqueued",
                 "run_id": run_id,
                 "digest_type": digest_type,
+                "slot_hour": slot_hour,
+                "slot_minute": slot_minute,
             },
         )
 
@@ -193,10 +244,16 @@ class Handler(BaseHTTPRequestHandler):
 # Redis consumer loop (background thread)
 # ---------------------------------------------------------------------------
 
-def _run_pipeline(digest_type: str, run_id: str) -> tuple[int, list[str]]:
+def _run_pipeline(digest_type: str, run_id: str, *, slot_hour: int | None = None, slot_minute: int | None = None) -> tuple[int, list[str]]:
     """Run digest_worker.py subprocess; return (exit_code, tail_lines)."""
     env = os.environ.copy()
     env["DIGEST_TYPE_OVERRIDE"] = digest_type
+    if slot_hour is None:
+        env.pop("DIGEST_SLOT_HOUR", None)
+        env.pop("DIGEST_SLOT_MINUTE", None)
+    else:
+        env["DIGEST_SLOT_HOUR"] = str(slot_hour)
+        env["DIGEST_SLOT_MINUTE"] = str(slot_minute or 0)
     try:
         proc = subprocess.run(
             ["python", "digest_worker.py", "--now"],
@@ -246,6 +303,10 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
         msg_id, data = entries[0]
         digest_type = data.get("digest_type", "interval")
         run_id = data.get("run_id", msg_id)
+        raw_slot_hour = data.get("slot_hour")
+        raw_slot_minute = data.get("slot_minute")
+        slot_hour = int(raw_slot_hour) if str(raw_slot_hour or "").strip() else None
+        slot_minute = int(raw_slot_minute) if str(raw_slot_minute or "").strip() else None
         logger.info("Processing job run_id=%s digest_type=%s", run_id, digest_type)
 
         started_at = _utc_now()
@@ -254,13 +315,15 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
             "running": True,
             "digest_type": digest_type,
             "run_id": run_id,
+            "slot_hour": slot_hour,
+            "slot_minute": slot_minute,
             "started_at": started_at,
             "finished_at": None,
             "exit_code": None,
             "tail": [],
         })
 
-        exit_code, tail = _run_pipeline(digest_type, run_id)
+        exit_code, tail = _run_pipeline(digest_type, run_id, slot_hour=slot_hour, slot_minute=slot_minute)
         finished_at = _utc_now()
 
         _write_status({
@@ -268,6 +331,8 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
             "running": False,
             "digest_type": digest_type,
             "run_id": run_id,
+            "slot_hour": slot_hour,
+            "slot_minute": slot_minute,
             "started_at": started_at,
             "finished_at": finished_at,
             "exit_code": exit_code,
@@ -293,6 +358,8 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
             r.xack(STREAM_JOBS, CONSUMER_GROUP, msg_id)
         except redis_lib.exceptions.RedisError as exc:
             logger.error("Failed to XACK msg_id=%s: %s", msg_id, exc)
+        finally:
+            _release_run_lock(r, run_id=run_id)
 
 
 # ---------------------------------------------------------------------------

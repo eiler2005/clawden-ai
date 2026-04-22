@@ -108,7 +108,7 @@ def next_run_ms(hour: int) -> int:
     return int(candidate.timestamp() * 1000)
 
 
-def build_message(digest_type: str) -> str:
+def build_message(digest_type: str, hour: int, minute: int = 0) -> str:
     return f"""/compact Trigger the Telegram digest bridge and report the outcome in 3-5 plain lines.
 
 Rules:
@@ -125,7 +125,11 @@ import urllib.request
 
 url = {bridge_url!r}
 token = {bridge_token!r}
-payload = {{"digest_type": {digest_type!r}}}
+payload = {{
+    "digest_type": {digest_type!r},
+    "slot_hour": {hour},
+    "slot_minute": {minute},
+}}
 req = urllib.request.Request(
     url,
     data=json.dumps(payload).encode("utf-8"),
@@ -183,7 +187,7 @@ for name, description, hour, digest_type in specs:
             "wakeMode": "now",
             "payload": {
                 "kind": "agentTurn",
-                "message": build_message(digest_type),
+                "message": build_message(digest_type, hour),
                 "timeoutSeconds": timeout_seconds,
                 "lightContext": True,
                 "toolsAllow": ["exec", "read"],
