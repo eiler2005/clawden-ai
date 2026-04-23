@@ -435,6 +435,48 @@ class FooterRenderingTests(unittest.TestCase):
             info_section,
         )
 
+    def test_work_email_digest_prefers_meeting_coordination_over_stale_resource_subject(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 23, 7, 39, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 23, 9, 39, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m12",
+                    "thread_id": "t12",
+                    "timestamp": "2026-04-23T12:16:00+03:00",
+                    "subject": "Re: ресурсы для ПР-2952, аналитики на завтра",
+                    "sender_display": "Кузьмичев Илья Анатольевич",
+                    "preview": "Добрый день. Закиров сможет в 14, так что встреча в силе, просто начнем с 14. Коренькова может завтра после 11, или в понедельник с 9 до 11.",
+                    "has_attachments": True,
+                    "attachment_count": 2,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[],
+            topic_name="work-email",
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        expected_line = (
+            "• 12:16 — <b>Кузьмичев Илья Анатольевич</b> — "
+            "Закиров сможет в 14, так что встреча в силе, просто начнем с 14; "
+            "Коренькова может завтра после 11, или в понедельник с 9 до 11; "
+            "стоит зафиксировать финальный слот встречи. Вложения: 2."
+        )
+        expected_react_line = expected_line.replace(" Вложения: 2.", "")
+        self.assertIn(expected_line, html)
+        self.assertNotIn("Запрос по ресурсам для ПР-2952", html)
+        self.assertNotIn("кого можно выделить", html)
+        react_section = html.split("<b>Нужно реагировать</b>", 1)[1].split("<b>Для информации</b>", 1)[0]
+        self.assertIn(expected_react_line, react_section)
+
     def test_mailbox_digest_collapses_repeated_threads_into_one_story(self) -> None:
         html = render_mailbox_digest(
             digest_type="interval",

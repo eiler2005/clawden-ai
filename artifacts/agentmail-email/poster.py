@@ -38,6 +38,7 @@ _INLINE_META_RE = re.compile(
     r"(?is)\b(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:\s*.*?(?=(?:\b(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:|$))"
 )
 _SEPARATOR_RE = re.compile(r"[_-]{6,}")
+_TIME_SLOT_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\b")
 _MODEL_LABELS = {
     "agentmail-direct": "без LLM",
     "openclaw": "GPT-5.4",
@@ -347,11 +348,11 @@ def _is_work_email_topic(topic_name: str | None) -> bool:
 
 
 def _strip_greeting(text: str) -> str:
-    return re.sub(r"^(?:коллеги|добрый день|доброе утро|добрый вечер)[,!\s]+", "", text, flags=re.IGNORECASE).strip()
+    return re.sub(r"^(?:коллеги|добрый день|доброе утро|добрый вечер)[,.!\s]+", "", text, flags=re.IGNORECASE).strip()
 
 
 def _strip_addressee(text: str) -> str:
-    return re.sub(r"^(?:[А-ЯA-Z][а-яa-z-]+(?:\s+[А-ЯA-Z][а-яa-z-]+)?)[,:\s]+", "", text).strip()
+    return re.sub(r"^(?:[А-ЯA-Z][а-яa-z-]+(?:\s+[А-ЯA-Z][а-яa-z-]+)?)[,:]\s*", "", text).strip()
 
 
 def _strip_copy_block(text: str) -> str:
@@ -476,8 +477,87 @@ def _resource_request_summary(subject: str, preview: str) -> str:
     return ""
 
 
+def _has_time_or_day_signal(text: str) -> bool:
+    lowered = text.lower()
+    if _TIME_SLOT_RE.search(lowered):
+        return True
+    day_tokens = [
+        "сегодня",
+        "завтра",
+        "послезавтра",
+        "понедельник",
+        "вторник",
+        "сред",
+        "четверг",
+        "пятниц",
+        "суббот",
+        "воскресень",
+    ]
+    return any(token in lowered for token in day_tokens)
+
+
+def _preview_has_explicit_resource_need(preview: str) -> bool:
+    lowered = preview.lower()
+    need_tokens = ["требуется", "нужен", "нужна", "нужны", "ищем", "выделить", "подключить"]
+    role_tokens = ["ресурс", "ресурсы", "аналитик", "разработчик", "тестировщик", "qa", "devops", "архитектор", "дизайнер"]
+    return any(token in lowered for token in need_tokens) and any(token in lowered for token in role_tokens)
+
+
+def _looks_like_meeting_coordination(subject: str, preview: str) -> bool:
+    lowered = " ".join([subject, preview]).lower()
+    if any(token in lowered for token in ["updated invitation", "google calendar", "яндекс.календарь"]):
+        return False
+    if _preview_has_explicit_resource_need(preview):
+        return False
+
+    schedule_tokens = [
+        "встреч",
+        "встрет",
+        "созвон",
+        "слот",
+        "окно",
+        "перенес",
+        "перенос",
+        "начнем",
+        "начнём",
+        "в силе",
+        "удобно",
+        "подойдет",
+        "подойдёт",
+        "сможет",
+        "смогут",
+        "после",
+        "до",
+    ]
+    if not any(token in lowered for token in schedule_tokens):
+        return False
+    return _has_time_or_day_signal(preview)
+
+
+def _meeting_coordination_summary(subject: str, preview: str, *, limit: int) -> str:
+    if not _looks_like_meeting_coordination(subject, preview):
+        return ""
+    return _compact_clauses(preview, limit=limit)
+
+
+def _meeting_coordination_action_hint(subject: str, preview: str) -> str:
+    if not _looks_like_meeting_coordination(subject, preview):
+        return ""
+
+    lowered = " ".join([subject, preview]).lower()
+    if "?" in preview or any(token in lowered for token in ["удобно", "подтверд", "confirm", "можете", "сможете"]):
+        return "стоит подтвердить финальное время встречи"
+    if " или " in lowered and _has_time_or_day_signal(preview):
+        return "стоит зафиксировать финальный слот встречи"
+    return ""
+
+
 def _work_email_action_hint(subject: str, preview: str) -> str:
     lowered = " ".join([subject, preview]).lower()
+    meeting_hint = _meeting_coordination_action_hint(subject, preview)
+    if meeting_hint:
+        return meeting_hint
+
     resource_summary = _resource_request_summary(subject, preview)
     if resource_summary:
         if "срочно" in lowered:
@@ -510,6 +590,9 @@ def _work_email_base_summary(message: dict, *, limit: int) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
     preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
     lowered = " ".join([subject, preview]).lower()
+    meeting_summary = _meeting_coordination_summary(subject, preview, limit=limit)
+    if meeting_summary:
+        return meeting_summary
     if subject and any(token in lowered for token in ["что сломано", "неясно", "не понятно", "непонятно", "разрыв", "follow up", "follow-up", "followup"]):
         return _ensure_sentence(subject)
     return _important_summary(message, limit=limit)
@@ -536,6 +619,10 @@ def _work_email_story_bucket(message: dict) -> str:
     ]
     if any(token in lowered for token in info_tokens):
         return "info"
+
+    meeting_summary = _meeting_coordination_summary(subject, preview, limit=220)
+    if meeting_summary:
+        return "react" if _meeting_coordination_action_hint(subject, preview) else "info"
 
     if _resource_request_summary(subject, preview):
         return "react"
