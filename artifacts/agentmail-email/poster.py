@@ -477,6 +477,82 @@ def _resource_request_summary(subject: str, preview: str) -> str:
     return ""
 
 
+def _contains_any(text: str, tokens: list[str]) -> bool:
+    lowered = text.lower()
+    return any(token in lowered for token in tokens)
+
+
+def _issue_signal_tokens() -> list[str]:
+    return ["сломан", "сломано", "что сломано", "неясно", "не понятно", "непонятно", "разрыв", "issue", "problem", "bug"]
+
+
+def _approval_signal_tokens() -> list[str]:
+    return ["соглас", "утверд", "approve", "approval", "подтверд", "confirm"]
+
+
+def _followup_signal_tokens() -> list[str]:
+    return [
+        "follow up",
+        "follow-up",
+        "followup",
+        "reply before",
+        "please reply",
+        "нужен ответ",
+        "просим ответить",
+        "ждем",
+        "ждём",
+        "статус",
+        "status",
+        "напомин",
+        "повторно",
+    ]
+
+
+def _informational_signal_tokens() -> list[str]:
+    return [
+        "updated invitation",
+        "google calendar",
+        "яндекс.календарь",
+        "out of office",
+        "ooo",
+        "отпуск",
+        "в отпуске",
+        "vacation",
+        "fyi",
+        "для информации",
+        "получили премию",
+        "award",
+        "технические работы",
+        "плановые работы",
+        "информируем",
+        "уведомляем",
+    ]
+
+
+def _resolution_signal_tokens() -> list[str]:
+    return [
+        "можно двигаться дальше",
+        "можно продолжать",
+        "вопрос закрыт",
+        "закрыт",
+        "закрыли",
+        "решили",
+        "договорились",
+        "согласовали",
+        "готово",
+        "готов",
+        "отправил",
+        "отправили",
+        "направил",
+        "направили",
+        "подписан",
+        "подписали",
+        "принято",
+        "учли",
+        "в силе",
+    ]
+
+
 def _has_time_or_day_signal(text: str) -> bool:
     lowered = text.lower()
     if _TIME_SLOT_RE.search(lowered):
@@ -552,8 +628,74 @@ def _meeting_coordination_action_hint(subject: str, preview: str) -> str:
     return ""
 
 
+def _work_email_preview_intent(subject: str, preview: str) -> str:
+    if not preview:
+        return ""
+    if _preview_has_explicit_resource_need(preview):
+        return "resource"
+    if _looks_like_meeting_coordination(subject, preview):
+        return "schedule"
+    if _contains_any(preview, _issue_signal_tokens()):
+        return "issue"
+    if _contains_any(preview, _approval_signal_tokens()):
+        return "approval"
+    if _contains_any(preview, _followup_signal_tokens()):
+        return "followup"
+    if _contains_any(preview, _informational_signal_tokens()):
+        return "info"
+    if _contains_any(preview, _resolution_signal_tokens()):
+        return "resolution"
+    return ""
+
+
+def _work_email_preview_summary(subject: str, preview: str, *, limit: int) -> str:
+    intent = _work_email_preview_intent(subject, preview)
+    if not intent:
+        return ""
+    if intent == "resource":
+        return _resource_request_summary(subject, preview) or _compact_clauses(preview, limit=limit)
+    if intent == "schedule":
+        return _meeting_coordination_summary(subject, preview, limit=limit)
+    if intent == "issue":
+        if subject and _contains_any(subject, _issue_signal_tokens()):
+            return _ensure_sentence(subject)
+        return _compact_clauses(preview, limit=limit)
+    if intent == "info" and "отпуск" in " ".join([subject, preview]).lower():
+        return _vacation_summary(subject, preview)
+    return _compact_clauses(preview, limit=limit)
+
+
+def _work_email_preview_bucket(subject: str, preview: str) -> str:
+    intent = _work_email_preview_intent(subject, preview)
+    if not intent:
+        return ""
+    if intent in {"resource", "issue", "approval", "followup"}:
+        return "react"
+    if intent == "schedule":
+        return "react" if _meeting_coordination_action_hint(subject, preview) else "info"
+    return "info"
+
+
 def _work_email_action_hint(subject: str, preview: str) -> str:
     lowered = " ".join([subject, preview]).lower()
+    preview_intent = _work_email_preview_intent(subject, preview)
+    if preview_intent == "schedule":
+        return _meeting_coordination_action_hint(subject, preview)
+    if preview_intent == "resource":
+        if "срочно" in lowered:
+            return "нужно быстро ответить, кого можно выделить или как закрыть запрос"
+        return "нужно ответить, кого можно выделить или как закрыть запрос"
+    if preview_intent == "issue":
+        return "нужно уточнить, что именно сломано и где разрыв"
+    if preview_intent == "approval":
+        return "нужно дать согласование или подтверждение"
+    if preview_intent == "followup":
+        return "нужно вернуться с ответом или статусом"
+    if preview_intent == "info" and "отпуск" in lowered:
+        return "нужно учесть отсутствие в планировании и срочных коммуникациях"
+    if preview_intent in {"info", "resolution"}:
+        return ""
+
     meeting_hint = _meeting_coordination_action_hint(subject, preview)
     if meeting_hint:
         return meeting_hint
@@ -590,9 +732,9 @@ def _work_email_base_summary(message: dict, *, limit: int) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
     preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
     lowered = " ".join([subject, preview]).lower()
-    meeting_summary = _meeting_coordination_summary(subject, preview, limit=limit)
-    if meeting_summary:
-        return meeting_summary
+    preview_summary = _work_email_preview_summary(subject, preview, limit=limit)
+    if preview_summary:
+        return preview_summary
     if subject and any(token in lowered for token in ["что сломано", "неясно", "не понятно", "непонятно", "разрыв", "follow up", "follow-up", "followup"]):
         return _ensure_sentence(subject)
     return _important_summary(message, limit=limit)
@@ -620,9 +762,9 @@ def _work_email_story_bucket(message: dict) -> str:
     if any(token in lowered for token in info_tokens):
         return "info"
 
-    meeting_summary = _meeting_coordination_summary(subject, preview, limit=220)
-    if meeting_summary:
-        return "react" if _meeting_coordination_action_hint(subject, preview) else "info"
+    preview_bucket = _work_email_preview_bucket(subject, preview)
+    if preview_bucket:
+        return preview_bucket
 
     if _resource_request_summary(subject, preview):
         return "react"

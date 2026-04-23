@@ -477,6 +477,45 @@ class FooterRenderingTests(unittest.TestCase):
         react_section = html.split("<b>Нужно реагировать</b>", 1)[1].split("<b>Для информации</b>", 1)[0]
         self.assertIn(expected_react_line, react_section)
 
+    def test_work_email_digest_prefers_latest_resolution_update_over_stale_resource_subject(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 23, 9, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 23, 10, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m13",
+                    "thread_id": "t13",
+                    "timestamp": "2026-04-23T13:05:00+03:00",
+                    "subject": "Re: ресурсы для ПР-2952, аналитики на завтра",
+                    "sender_display": "Шевченко Галина",
+                    "preview": "Денис, акт юристы уже не смотрят, поэтому можно двигаться дальше.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[],
+            topic_name="work-email",
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        expected_line = (
+            "• 13:05 — <b>Шевченко Галина</b> — "
+            "Акт юристы уже не смотрят, поэтому можно двигаться дальше."
+        )
+        self.assertIn(expected_line, html)
+        self.assertNotIn("Запрос по ресурсам для ПР-2952", html)
+        self.assertNotIn("кого можно выделить", html)
+        info_section = html.split("<b>Для информации</b>", 1)[1]
+        self.assertIn(expected_line, info_section)
+
     def test_mailbox_digest_collapses_repeated_threads_into_one_story(self) -> None:
         html = render_mailbox_digest(
             digest_type="interval",
