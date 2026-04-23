@@ -922,6 +922,7 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
             window_end=window_end,
             messages=mailbox_messages,
             important_messages=important_messages,
+            topic_name=str(config.get("topic_name", "")).strip(),
             model_meta=ModelMeta(
                 model_id="agentmail-direct",
                 tier="primary",

@@ -128,6 +128,11 @@ class FooterRenderingTests(unittest.TestCase):
         )
 
         self.assertNotIn("<b>От кого</b>", html)
+        self.assertIn("• Сюжетов: <b>2</b>", html)
+        self.assertIn("<b>Сюжеты</b>", html)
+        self.assertIn("<b>Что важного</b>", html)
+        self.assertNotIn("<b>Нужно реагировать</b>", html)
+        self.assertNotIn("<b>Для информации</b>", html)
         self.assertIn("• 11:26 — <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект. Вложения: 1.", html)
         self.assertIn("• 11:26 — <b>portal@cinimex.ru</b> — Компания «Синимекс» и Росгосстрах получили премию Finnext за совместный проект.", html)
         self.assertNotIn("Отправлено:", html)
@@ -307,6 +312,189 @@ class FooterRenderingTests(unittest.TestCase):
             html,
         )
         self.assertNotIn("Копия:", html)
+
+    def test_work_email_digest_adds_next_step_to_actionable_stories(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 17, 10, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 17, 11, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m8",
+                    "thread_id": "t8",
+                    "timestamp": "2026-04-17T14:15:00+03:00",
+                    "subject": "ресурсы для ПР-2952",
+                    "sender_display": "Литус Татьяна Юрьевна",
+                    "preview": "Коллеги, добрый день. Денис, нам срочно требуется аналитик на ПР-2952. Во вложении детали.",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m9",
+                    "thread_id": "t9",
+                    "timestamp": "2026-04-17T14:05:00+03:00",
+                    "subject": "BI есть, ясности нет: что сломано между отчетом и решением",
+                    "sender_display": "Points Lab",
+                    "preview": "BI собрали, но неясно, где разрыв между отчетом и решением. Нужен разбор по проблеме.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[],
+            topic_name="work-email",
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn("<b>Нужно реагировать</b>", html)
+        self.assertIn("<b>Для информации</b>", html)
+        self.assertNotIn("<b>Что важного</b>", html)
+        self.assertIn(
+            "• 14:15 — <b>Литус Татьяна Юрьевна</b> — Запрос на усиление команды по ПР-2952: требуется аналитик; нужно быстро ответить, кого можно выделить или как закрыть запрос. Вложения: 1.",
+            html,
+        )
+        self.assertIn(
+            "• 14:15 — <b>Литус Татьяна Юрьевна</b> — Запрос на усиление команды по ПР-2952: требуется аналитик; нужно быстро ответить, кого можно выделить или как закрыть запрос.",
+            html,
+        )
+        self.assertIn(
+            "• 14:05 — <b>Points Lab</b> — BI есть, ясности нет: что сломано между отчетом и решением; нужно уточнить, что именно сломано и где разрыв.",
+            html,
+        )
+        self.assertIn(
+            "• Отдельных информационных писем без реакции в этом окне не вижу.",
+            html,
+        )
+
+    def test_work_email_digest_renders_informational_stories_in_separate_section(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 18, 7, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 18, 8, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m10",
+                    "thread_id": "t10",
+                    "timestamp": "2026-04-18T11:15:00+03:00",
+                    "subject": "ресурсы для ПР-3010",
+                    "sender_display": "Пышкин Алексей Александрович",
+                    "preview": "Коллеги, нужен разработчик на ПР-3010 до конца недели.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m11",
+                    "thread_id": "t11",
+                    "timestamp": "2026-04-18T10:52:00+03:00",
+                    "subject": "Отпуск Селищев 21-22 апреля",
+                    "sender_display": "Дмитрий Селищев",
+                    "from_email": "d.selishev@cinimex.ru",
+                    "preview": "Коллеги, с 21 апреля на два дня в отпуске, по срочным вопросам на телефоне.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[],
+            topic_name="work-email",
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn("<b>Нужно реагировать</b>", html)
+        self.assertIn("<b>Для информации</b>", html)
+        self.assertIn(
+            "• 11:15 — <b>Пышкин Алексей Александрович</b> — Запрос на усиление команды по ПР-3010: требуется разработчик; нужно ответить, кого можно выделить или как закрыть запрос.",
+            html,
+        )
+        self.assertIn(
+            "• 10:52 — <b>Дмитрий Селищев (d.selishev@cinimex.ru)</b> — Будет в отпуске 21–22 апреля; по срочным вопросам лучше звонить; нужно учесть отсутствие в планировании и срочных коммуникациях.",
+            html,
+        )
+        react_section = html.split("<b>Нужно реагировать</b>", 1)[1].split("<b>Для информации</b>", 1)[0]
+        info_section = html.split("<b>Для информации</b>", 1)[1]
+        self.assertIn(
+            "• 11:15 — <b>Пышкин Алексей Александрович</b> — Запрос на усиление команды по ПР-3010: требуется разработчик; нужно ответить, кого можно выделить или как закрыть запрос.",
+            react_section,
+        )
+        self.assertIn(
+            "• 10:52 — <b>Дмитрий Селищев (d.selishev@cinimex.ru)</b> — Будет в отпуске 21–22 апреля; по срочным вопросам лучше звонить; нужно учесть отсутствие в планировании и срочных коммуникациях.",
+            info_section,
+        )
+
+    def test_mailbox_digest_collapses_repeated_threads_into_one_story(self) -> None:
+        html = render_mailbox_digest(
+            digest_type="interval",
+            window_start=datetime(2026, 4, 22, 13, 0, tzinfo=timezone.utc),
+            window_end=datetime(2026, 4, 22, 14, 30, tzinfo=timezone.utc),
+            messages=[
+                {
+                    "message_id": "m5",
+                    "thread_id": "t5",
+                    "timestamp": "2026-04-22T17:17:00+03:00",
+                    "subject": "ВТБ - СМХ. Заявка консультации.",
+                    "sender_display": "Шевченко Галина",
+                    "preview": "Денис, акт юристы уже не смотрят, поэтому можно двигаться дальше.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m6",
+                    "thread_id": "t6",
+                    "timestamp": "2026-04-22T16:48:00+03:00",
+                    "subject": "Re: ВТБ - СМХ. Заявка консультации.",
+                    "sender_display": "Шевченко Галина",
+                    "preview": "Кому: Концесвитная Мария Александровна. Денис, акт юристы уже не смотрят, поэтому можно двигаться дальше.",
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                    "is_low_signal": False,
+                },
+                {
+                    "message_id": "m7",
+                    "thread_id": "t7",
+                    "timestamp": "2026-04-22T16:26:00+03:00",
+                    "subject": "ВТБ - СМХ. Заявка консультации.",
+                    "sender_display": "Концесвитная Мария Александровна",
+                    "preview": "От: Концесвитная Мария Александровна. Тема: ВТБ - СМХ. Заявка консультации.",
+                    "has_attachments": True,
+                    "attachment_count": 1,
+                    "is_low_signal": False,
+                },
+            ],
+            important_messages=[],
+            model_meta=ModelMeta(
+                model_id="agentmail-direct",
+                tier="primary",
+                model_label="без LLM",
+                complexity="template",
+                memory_mode="mailbox-window",
+            ),
+        )
+
+        self.assertIn("• Сюжетов: <b>1</b>", html)
+        self.assertEqual(html.count("ВТБ - СМХ. Заявка консультации"), 1)
+        self.assertIn(
+            "• 17:17 — <b>Шевченко Галина</b> — ВТБ - СМХ. Заявка консультации: акт юристы уже не смотрят, поэтому можно двигаться дальше. Вложения: 1. В окне: ещё 2 похожих письма.",
+            html,
+        )
+        self.assertIn(
+            "• 17:17 — <b>Шевченко Галина</b> — Акт юристы уже не смотрят, поэтому можно двигаться дальше. В окне: ещё 2 похожих письма.",
+            html,
+        )
 
 
 if __name__ == "__main__":

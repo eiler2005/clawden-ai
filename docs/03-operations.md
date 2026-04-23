@@ -1050,6 +1050,15 @@ forwarded-message headers inside the email body. This is enabled only for `work-
 forwarded by Denis still renders under the underlying author such as `Elena Zabrodina` when the
 message body contains a forwarded header block (`От:` / `From:`).
 
+Scheduled `work-email` digests use a stable three-part layout:
+
+- `Сюжеты` — all visible storylines in the current mailbox window
+- `Нужно реагировать` — threads that likely need a reply, status, decision, approval, or problem follow-up
+- `Для информации` — FYI/absence/update threads that are useful to keep in mind but do not obviously demand immediate action
+
+Low-signal handling stays unchanged: the digest still counts low-signal mail separately and can add
+short background/noise recap lines under the informational part of the message.
+
 Isolation guarantees:
 
 - separate Redis jobs stream: `ingest:jobs:email:work`

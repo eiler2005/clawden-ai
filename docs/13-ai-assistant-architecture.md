@@ -586,7 +586,9 @@ agentmail-email-bridge internal scheduler (every 5m)
 The work-email runtime mirrors the same standalone-bridge architecture, but targets
 `workmail.denny@agentmail.to`, listens on `127.0.0.1:8094`, and publishes into Telegram topic
 `work-email`. It keeps the same mailbox-window rendering path, but additionally resolves the
-original sender from forwarded-message headers for work mail only.
+original sender from forwarded-message headers for work mail only. The rendered digest now keeps
+the top-level storyline recap and then splits the same window into explicit `Нужно реагировать`
+versus `Для информации` sections.
 
 ### Work runtime specifics
 

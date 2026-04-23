@@ -25,7 +25,7 @@ Four **bridge services** run on cron-like schedules and handle the event-driven 
 - **signals-bridge** watches email and Telegram for market signals, runs deterministic rule matching, and enriches matches with a lightweight LLM call before posting to the `signals` topic.
 - **signals-bridge / Last30Days** now supports two presets: `personal-feed` for our focused daily radar and `platform-pulse` for platform-by-platform storylines. The current scheduled run posts the personal feed to the `last30daysTrend` topic.
 - **telethon-digest** reads 150–200 Telegram channels through a user session, clusters and summarizes with a medium-tier model, and posts a daily digest.
-- **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic; the work inbox digest resolves the original sender inside forwarded emails.
+- **agentmail-email / work-email** poll two inboxes on a schedule and route notable messages to the right topic; the work inbox digest resolves the original sender inside forwarded emails and renders explicit actionable vs informational triage.
 
 Everything is observable through a Telegram supergroup with 11 dedicated topics — effectively a personal feed that aggregates across all pipelines.
 
@@ -48,7 +48,7 @@ Everything is observable through a Telegram supergroup with 11 dedicated topics 
 - Clusters and summarizes with a medium-tier model, posts 5× daily
 
 **Email digests**
-- Polls two inboxes (personal + work) on a schedule, threads notable messages, posts summaries to dedicated Telegram topics
+- Polls two inboxes (personal + work) on a schedule, threads notable messages, and posts structured recaps to dedicated Telegram topics; `work-email` additionally splits the window into actionable vs informational triage
 
 **Knowledge graph memory**
 - LightRAG indexes curated wiki pages plus raw signal digests using graph + vector hybrid retrieval
@@ -280,7 +280,7 @@ graph LR
 | **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OmniRoute `light` |
 | **telethon-digest** | Telegram channel digest (150–200 channels) | `127.0.0.1:8091` | OmniRoute `medium` |
 | **agentmail-email** | Personal inbox polling + scheduled digests | `127.0.0.1:8092` | OmniRoute `medium` |
-| **agentmail-work-email** | Work inbox polling + scheduled digests with forwarded-sender resolution | `127.0.0.1:8094` | OmniRoute `medium` |
+| **agentmail-work-email** | Work inbox polling + scheduled digests with forwarded-sender resolution and actionable/info triage | `127.0.0.1:8094` | OmniRoute `medium` |
 
 ---
 
@@ -433,7 +433,7 @@ flowchart LR
 | `rag-log` | OpenClaw | on demand | memory/RAG observability |
 | `telegram-digest` | telethon-digest | 5× daily | curated channel digest |
 | `inbox-email` | agentmail-email | 4× daily | personal inbox recap |
-| `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution for forwarded mail |
+| `work-email` | agentmail-work-email | 8× daily | work inbox recap with original sender resolution plus actionable/info triage |
 | `last30daysTrend` | signals-bridge | daily 07:00 MSK | Personal Feed — top 10 themes |
 | `signals` | signals-bridge | 5-min | actionable alerts from email + Telegram |
 | `knowledgebase` | OpenClaw | on demand | question → LightRAG hybrid search + grounded expanded answer with citations/source links; content → bot auto-structures + wiki ingest |

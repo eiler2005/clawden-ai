@@ -34,6 +34,9 @@ _TAG_RE = re.compile(r"<(/?)(\w+)([^>]*)>", re.IGNORECASE)
 _URL_RE = re.compile(r"https?://\S+")
 _REPLY_PREFIX_RE = re.compile(r"^\s*(?:(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
 _FORWARDED_META_RE = re.compile(r"(?im)^\s*(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:\s*.*$")
+_INLINE_META_RE = re.compile(
+    r"(?is)\b(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:\s*.*?(?=(?:\b(?:from|sent|to|subject|от|отправлено|кому|тема)\s*:|$))"
+)
 _SEPARATOR_RE = re.compile(r"[_-]{6,}")
 _MODEL_LABELS = {
     "agentmail-direct": "без LLM",
@@ -268,13 +271,16 @@ def _compact_text(value: str | None, *, limit: int) -> str:
 def _clean_subject(subject: str | None) -> str:
     value = _compact_text(subject, limit=180)
     value = _REPLY_PREFIX_RE.sub("", value).strip()
+    value = re.sub(r"^(?:\[[^\]]+\]\s*)+", "", value)
     value = re.sub(r"^[^\wА-Яа-я0-9]+", "", value)
+    value = re.sub(r"[\s:;,.]+$", "", value)
     return value.strip()
 
 
 def _clean_preview_text(value: str | None, *, limit: int) -> str:
     text = str(value or "")
     text = _FORWARDED_META_RE.sub(" ", text)
+    text = _INLINE_META_RE.sub(" ", text)
     text = _SEPARATOR_RE.sub(" ", text)
     return _compact_text(text, limit=limit)
 
@@ -297,6 +303,13 @@ def _capitalize_first(value: str) -> str:
     if not text:
         return ""
     return text[:1].upper() + text[1:]
+
+
+def _lowercase_first(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    return text[:1].lower() + text[1:]
 
 
 def _normalize_sender_text(value: str | None) -> str:
@@ -325,8 +338,20 @@ def _sender_label(message: dict, *, include_email: bool) -> str:
     return f"{sender} ({email})"
 
 
+def _is_work_email_topic(topic_name: str | None) -> bool:
+    topic = str(topic_name or "").strip().lower()
+    if topic:
+        return topic == "work-email"
+    display = DISPLAY_NAME.strip().lower()
+    return display in {"work email", "work-email"}
+
+
 def _strip_greeting(text: str) -> str:
     return re.sub(r"^(?:коллеги|добрый день|доброе утро|добрый вечер)[,!\s]+", "", text, flags=re.IGNORECASE).strip()
+
+
+def _strip_addressee(text: str) -> str:
+    return re.sub(r"^(?:[А-ЯA-Z][а-яa-z-]+(?:\s+[А-ЯA-Z][а-яa-z-]+)?)[,:\s]+", "", text).strip()
 
 
 def _strip_copy_block(text: str) -> str:
@@ -345,7 +370,7 @@ def _strip_copy_block(text: str) -> str:
 
 
 def _compact_clauses(text: str, *, limit: int = 170) -> str:
-    cleaned = _strip_greeting(_strip_copy_block(text))
+    cleaned = _strip_addressee(_strip_greeting(_strip_copy_block(text)))
     parts = [part.strip(" ,;") for part in re.split(r"[.!?]+", cleaned) if part.strip(" ,;")]
     if not parts:
         return _compact_text(cleaned, limit=limit)
@@ -451,6 +476,132 @@ def _resource_request_summary(subject: str, preview: str) -> str:
     return ""
 
 
+def _work_email_action_hint(subject: str, preview: str) -> str:
+    lowered = " ".join([subject, preview]).lower()
+    resource_summary = _resource_request_summary(subject, preview)
+    if resource_summary:
+        if "срочно" in lowered:
+            return "нужно быстро ответить, кого можно выделить или как закрыть запрос"
+        return "нужно ответить, кого можно выделить или как закрыть запрос"
+
+    if "updated invitation" in lowered:
+        return "стоит сверить время, участников и актуальность встречи"
+
+    if "отпуск" in lowered:
+        return "нужно учесть отсутствие в планировании и срочных коммуникациях"
+
+    if any(token in lowered for token in ["follow up", "follow-up", "followup", "напомин", "повторно"]):
+        return "нужно вернуться с ответом или статусом"
+
+    issue_tokens = ["сломан", "сломано", "что сломано", "неясно", "не понятно", "непонятно", "разрыв", "issue", "problem", "bug"]
+    if any(token in lowered for token in issue_tokens):
+        return "нужно уточнить, что именно сломано и где разрыв"
+
+    if any(token in lowered for token in ["соглас", "утверд", "approve", "approval", "подтверд", "confirm"]):
+        return "нужно дать согласование или подтверждение"
+
+    if any(token in lowered for token in ["срочно", "deadline", "дедлайн", "reply before", "please reply", "ждем", "ждём", "просим ответить", "нужен ответ"]):
+        return "нужен быстрый ответ или статус"
+
+    return ""
+
+
+def _work_email_base_summary(message: dict, *, limit: int) -> str:
+    subject = _clean_subject(str(message.get("subject") or ""))
+    preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
+    lowered = " ".join([subject, preview]).lower()
+    if subject and any(token in lowered for token in ["что сломано", "неясно", "не понятно", "непонятно", "разрыв", "follow up", "follow-up", "followup"]):
+        return _ensure_sentence(subject)
+    return _important_summary(message, limit=limit)
+
+
+def _work_email_story_bucket(message: dict) -> str:
+    subject = _clean_subject(str(message.get("subject") or ""))
+    preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
+    lowered = " ".join([subject, preview]).lower()
+
+    info_tokens = [
+        "updated invitation",
+        "google calendar",
+        "яндекс.календарь",
+        "out of office",
+        "ooo",
+        "отпуск",
+        "в отпуске",
+        "vacation",
+        "fyi",
+        "для информации",
+        "получили премию",
+        "award",
+    ]
+    if any(token in lowered for token in info_tokens):
+        return "info"
+
+    if _resource_request_summary(subject, preview):
+        return "react"
+
+    react_tokens = [
+        "follow up",
+        "follow-up",
+        "followup",
+        "reply before",
+        "please reply",
+        "нужен ответ",
+        "просим ответить",
+        "ждем",
+        "ждём",
+        "срочно",
+        "deadline",
+        "дедлайн",
+        "что сломано",
+        "сломано",
+        "неясно",
+        "не понятно",
+        "непонятно",
+        "разрыв",
+        "issue",
+        "problem",
+        "bug",
+        "ошибка",
+        "проблем",
+        "инцидент",
+        "соглас",
+        "утверд",
+        "approve",
+        "approval",
+        "подтверд",
+        "confirm",
+        "статус",
+        "status",
+    ]
+    if any(token in lowered for token in react_tokens):
+        return "react"
+
+    return "info"
+
+
+def _append_next_step(summary: str, next_step: str, *, limit: int) -> str:
+    base_summary = summary.strip()
+    step = next_step.strip().rstrip(".!?…")
+    if not base_summary or not step:
+        return base_summary
+
+    normalized_summary = _normalized_compare(base_summary)
+    normalized_step = _normalized_compare(step)
+    if normalized_summary and normalized_step and normalized_step in normalized_summary:
+        return base_summary
+
+    combined = _ensure_sentence(f"{base_summary.rstrip('.!?…')}; {_lowercase_first(step)}")
+    if len(combined) <= limit:
+        return combined
+
+    fallback = _ensure_sentence(f"{base_summary.rstrip('.!?…')}. {_capitalize_first(step)}")
+    if len(fallback) <= limit:
+        return fallback
+
+    return base_summary
+
+
 def _message_summary(message: dict, *, limit: int = 170) -> str:
     subject = _clean_subject(str(message.get("subject") or ""))
     snippet = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=limit)
@@ -467,15 +618,36 @@ def _message_summary(message: dict, *, limit: int = 170) -> str:
     if not snippet:
         return _ensure_sentence(subject)
 
+    clause_summary = _compact_clauses(snippet, limit=limit)
     normalized_subject = _normalized_compare(subject)
     normalized_snippet = _normalized_compare(snippet)
+    normalized_clause = _normalized_compare(clause_summary)
     if not normalized_snippet:
         return _ensure_sentence(subject)
     if normalized_subject and (normalized_snippet in normalized_subject or normalized_subject in normalized_snippet):
         return _ensure_sentence(subject)
+    if clause_summary:
+        if normalized_subject and (normalized_clause in normalized_subject or normalized_subject in normalized_clause):
+            return clause_summary
+        if len(subject) <= 90:
+            combined = _ensure_sentence(f"{subject}: {_lowercase_first(clause_summary)}")
+            if len(combined) <= limit:
+                return combined
+        return clause_summary
     if len(normalized_subject) < 14:
         return _ensure_sentence(snippet)
     return _ensure_sentence(f"{subject}. {snippet}")
+
+
+def _story_summary(message: dict, *, topic_name: str = "", limit: int = 170) -> str:
+    if not _is_work_email_topic(topic_name):
+        return _message_summary(message, limit=limit)
+
+    subject = _clean_subject(str(message.get("subject") or ""))
+    preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
+    summary = _work_email_base_summary(message, limit=limit)
+    action_hint = _work_email_action_hint(subject, preview)
+    return _append_next_step(summary, action_hint, limit=limit)
 
 
 def _important_summary(message: dict, *, limit: int = 170) -> str:
@@ -504,11 +676,21 @@ def _message_snippet(message: dict, *, limit: int = 120) -> str:
     return _compact_text(preview, limit=limit)
 
 
-def _important_line(message: dict) -> str:
+def _important_line(message: dict, *, topic_name: str = "") -> str:
     sender = _sender_label(message, include_email=True)
     timestamp = _fmt_clock(str(message.get("timestamp") or ""))
-    summary = _important_summary(message, limit=170)
-    return f"• {timestamp} — <b>{escape(sender)}</b> — {escape(summary)}"
+    if _is_work_email_topic(topic_name):
+        subject = _clean_subject(str(message.get("subject") or ""))
+        preview = _clean_preview_text(_strip_copy_block(message.get("preview")), limit=260)
+        summary = _append_next_step(
+            _work_email_base_summary(message, limit=230),
+            _work_email_action_hint(subject, preview),
+            limit=230,
+        )
+    else:
+        summary = _important_summary(message, limit=170)
+    repeat_suffix = _story_repeat_suffix(message)
+    return f"• {timestamp} — <b>{escape(sender)}</b> — {escape(summary)}{escape(repeat_suffix)}"
 
 
 def _supporting_insights(messages: list[dict], *, limit: int = 2) -> list[str]:
@@ -650,7 +832,103 @@ def _remaining_messages_line(messages: list[dict]) -> str:
             parts.append(tail_summary)
 
     total = len(messages)
-    return f"• Ещё {total} {_ru_plural(total, 'письмо', 'письма', 'писем')}: " + "; ".join(parts)
+    return f"• Ещё {total} {_ru_plural(total, 'сюжет', 'сюжета', 'сюжетов')}: " + "; ".join(parts)
+
+
+def _message_story_key(message: dict) -> str:
+    subject = _clean_subject(str(message.get("subject") or ""))
+    normalized_subject = _normalized_compare(subject)
+    if len(normalized_subject) >= 10:
+        return normalized_subject
+    summary = _message_summary(message, limit=120)
+    normalized_summary = _normalized_compare(summary)
+    if normalized_summary:
+        return normalized_summary
+    sender = _normalize_sender_text(message.get("sender_display"))
+    return f"{_normalized_compare(sender)}:{_fmt_clock(str(message.get('timestamp') or ''))}"
+
+
+def _story_repeat_suffix(message: dict) -> str:
+    count = int(message.get("_story_count") or 1)
+    if count <= 1:
+        return ""
+    return f" В окне: ещё {count - 1} похожих {_ru_plural(count - 1, 'письмо', 'письма', 'писем')}."
+
+
+def _storyline_messages(messages: list[dict]) -> list[dict]:
+    grouped: dict[str, dict] = {}
+    ordered: list[dict] = []
+    for message in messages:
+        key = _message_story_key(message)
+        sender = _normalize_sender_text(message.get("sender_display"))
+        if key not in grouped:
+            item = dict(message)
+            item["_story_key"] = key
+            item["_story_count"] = 1
+            item["_story_senders"] = {sender}
+            grouped[key] = item
+            ordered.append(item)
+            continue
+        entry = grouped[key]
+        entry["_story_count"] = int(entry.get("_story_count") or 1) + 1
+        story_senders = entry.get("_story_senders")
+        if isinstance(story_senders, set):
+            story_senders.add(sender)
+        if message.get("has_attachments"):
+            entry["has_attachments"] = True
+            entry["attachment_count"] = max(
+                int(entry.get("attachment_count") or 0),
+                int(message.get("attachment_count") or 0),
+            )
+    for entry in ordered:
+        story_senders = entry.get("_story_senders")
+        if isinstance(story_senders, set):
+            entry["_story_sender_count"] = len(story_senders)
+    return ordered
+
+
+def _story_line(message: dict, *, topic_name: str = "") -> list[str]:
+    sender = _normalize_sender_text(message.get("sender_display"))
+    timestamp = _fmt_clock(str(message.get("timestamp") or ""))
+    summary_limit = 230 if _is_work_email_topic(topic_name) else 170
+    summary = _story_summary(message, topic_name=topic_name, limit=summary_limit)
+    attachment = ""
+    if message.get("has_attachments"):
+        attachment = f" Вложения: {int(message.get('attachment_count') or 0)}."
+    repeat_suffix = _story_repeat_suffix(message)
+    return [f"• {timestamp} — <b>{escape(sender)}</b> — {escape(summary)}{escape(attachment)}{escape(repeat_suffix)}"]
+
+
+def _work_email_section_fallback(section: str) -> str:
+    if section == "react":
+        return "• Явных писем, где нужен ответ или действие, в этом окне не вижу."
+    return "• Отдельных информационных писем без реакции в этом окне не вижу."
+
+
+def _work_email_remaining_story_line(count: int) -> str:
+    return f"• Ещё {count} {_ru_plural(count, 'сюжет', 'сюжета', 'сюжетов')} этого типа в текущем окне."
+
+
+def _render_work_email_story_section(
+    *,
+    title: str,
+    messages: list[dict],
+    topic_name: str,
+    empty_kind: str,
+    limit: int = 4,
+) -> list[str]:
+    lines = ["", f"<b>{title}</b>"]
+    if not messages:
+        lines.append(_work_email_section_fallback(empty_kind))
+        return lines
+
+    visible_messages = messages[:limit]
+    remaining_count = len(messages) - len(visible_messages)
+    for message in visible_messages:
+        lines.append(_important_line(message, topic_name=topic_name))
+    if remaining_count > 0:
+        lines.append(_work_email_remaining_story_line(remaining_count))
+    return lines
 
 
 def render_mailbox_digest(
@@ -661,8 +939,11 @@ def render_mailbox_digest(
     messages: list[dict],
     important_messages: list[dict],
     model_meta: ModelMeta,
+    topic_name: str = "",
 ) -> str:
     total_threads = len({str(message.get("thread_id") or "") for message in messages if str(message.get("thread_id") or "").strip()})
+    storyline_messages = _storyline_messages(messages)
+    important_story_messages = _storyline_messages([message for message in messages if not bool(message.get("is_low_signal"))])
     total_senders = len(_sender_counts(messages))
     low_signal_count = sum(1 for message in messages if bool(message.get("is_low_signal")))
 
@@ -671,8 +952,9 @@ def render_mailbox_digest(
         f"• Окно: {_fmt_window(window_start, window_end)}",
         f"• Всего писем: <b>{len(messages)}</b>",
         f"• Всего тредов: <b>{total_threads}</b>",
+        f"• Сюжетов: <b>{len(storyline_messages)}</b>",
         f"• Отправителей: <b>{total_senders}</b>",
-        f"• Важных: <b>{len(important_messages)}</b> · low-signal: <b>{low_signal_count}</b>",
+        f"• Важных сюжетов: <b>{len(important_story_messages)}</b> · low-signal: <b>{low_signal_count}</b>",
     ]
 
     if not messages:
@@ -684,28 +966,54 @@ def render_mailbox_digest(
         return _sanitize_html("\n".join(lines).strip())
 
     lines.append("")
-    lines.append("<b>Письма</b>")
-    visible_messages = messages[:12]
-    remaining_messages = messages[12:]
+    lines.append("<b>Сюжеты</b>")
+    visible_messages = storyline_messages[:10]
+    remaining_messages = storyline_messages[10:]
     for message in visible_messages:
-        lines.extend(_message_line(message, include_preview=False))
+        lines.extend(_story_line(message, topic_name=topic_name))
     if remaining_messages:
         remaining_line = _remaining_messages_line(remaining_messages)
         if remaining_line:
             lines.append(remaining_line)
 
-    lines.append("")
-    lines.append("<b>Что важного</b>")
-    if important_messages:
-        for line in [_important_line(message) for message in important_messages[:4]]:
-            lines.append(line)
+    if _is_work_email_topic(topic_name):
+        reacting_story_messages = [
+            message for message in important_story_messages if _work_email_story_bucket(message) == "react"
+        ]
+        informational_story_messages = [
+            message for message in important_story_messages if _work_email_story_bucket(message) == "info"
+        ]
+        lines.extend(
+            _render_work_email_story_section(
+                title="Нужно реагировать",
+                messages=reacting_story_messages,
+                topic_name=topic_name,
+                empty_kind="react",
+            )
+        )
+        lines.extend(
+            _render_work_email_story_section(
+                title="Для информации",
+                messages=informational_story_messages,
+                topic_name=topic_name,
+                empty_kind="info",
+            )
+        )
         for line in _supporting_insights(messages):
             lines.append(line)
     else:
-        for line in _supporting_insights(messages, limit=3):
-            lines.append(line)
-        if lines[-1] == "<b>Что важного</b>":
-            lines.append("• Явно важных писем в этом окне не вижу.")
+        lines.append("")
+        lines.append("<b>Что важного</b>")
+        if important_story_messages:
+            for line in [_important_line(message, topic_name=topic_name) for message in important_story_messages[:4]]:
+                lines.append(line)
+            for line in _supporting_insights(messages):
+                lines.append(line)
+        else:
+            for line in _supporting_insights(messages, limit=3):
+                lines.append(line)
+            if lines[-1] == "<b>Что важного</b>":
+                lines.append("• Явно важных писем в этом окне не вижу.")
 
     lines.append("")
     lines.append(_model_line(model_meta))
