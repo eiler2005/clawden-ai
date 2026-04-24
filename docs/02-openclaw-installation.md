@@ -112,8 +112,8 @@ Upgrade history:
 ### Token handling
 
 - WebSocket auth remains token-based inside OpenClaw
-- the tokenized browser URL is stored locally under `secrets/`
-- that URL must never be committed to Git
+- routine graphical browser access uses an SSH tunnel to `http://127.0.0.1:18789/`
+- old tokenized/public browser URLs are not the current operational entrypoint and must never be committed to Git
 
 ## Server-side files of interest
 

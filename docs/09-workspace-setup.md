@@ -48,15 +48,14 @@ Connect to the bot via the web UI and instruct it to write or update files direc
 ### Prerequisites
 
 - OpenClaw is running — verify: `ssh "$OPENCLAW_HOST" 'cd /opt/openclaw && docker compose ps'`
-- Client certificate imported in your browser (see `docs/03-operations.md` → Connecting to the OpenClaw web UI)
-- Tokenised URL at hand: `cat secrets/openclaw-tokenized-url.txt`
+- OpenClaw UI tunnel is available (see `docs/03-operations.md` → Connecting to the OpenClaw web UI)
 
 ### Connection steps
 
-1. **Import the client certificate** (once per device — see `docs/03-operations.md` for platform-specific steps).
-2. **Open the tokenised URL** from `secrets/openclaw-tokenized-url.txt` in your browser.
-3. When the browser prompts for a certificate, select `openclaw-denis-client`.
-4. The OpenClaw Control UI loads. You are now connected.
+1. Start the tunnel: `./scripts/openclaw-ui-tunnel.sh`.
+2. Keep that terminal open.
+3. Open `http://127.0.0.1:18789/` in your browser.
+4. If local port `18789` is busy, run `LOCAL_PORT=18790 ./scripts/openclaw-ui-tunnel.sh` and open `http://127.0.0.1:18790/`.
 
 ### Writing workspace files via the bot
 

@@ -137,56 +137,54 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 ## Connecting to the OpenClaw web UI
 
-### Local-only access materials
+The graphical OpenClaw UI is opened through an SSH tunnel. Do not use the old
+public sslip.io URL for normal browser access.
 
-These files live under `secrets/` (gitignored) and must never be committed:
+### Step 1 - Open the UI tunnel
 
-| File | Purpose |
-|------|---------|
-| `secrets/openclaw-denis-client.p12` | Client certificate (mTLS) |
-| `secrets/openclaw-denis-client-password.txt` | Password for the `.p12` file |
-| `secrets/openclaw-tokenized-url.txt` | Full browser URL with session token |
-
-### Step 1 — Import the client certificate
-
-The server requires a client certificate (mTLS). Install it once per device.
-
-**macOS (system keychain — works for Chrome and Safari):**
+Keep this command running in a terminal:
 
 ```bash
-# Double-click the .p12 file in Finder, or:
-security import secrets/openclaw-denis-client.p12 \
-  -k ~/Library/Keychains/login.keychain-db \
-  -P "$(cat secrets/openclaw-denis-client-password.txt)"
+ssh -N -L 18789:127.0.0.1:18789 \
+  -o ProxyCommand='ssh admin@192.168.50.1 nc -w 120 %h %p' \
+  deploy@204.168.239.217
 ```
 
-Then in **Keychain Access**: find the imported certificate → right-click → Get Info → Trust → set "When using this certificate" to **Always Trust**.
-
-**Firefox (uses its own certificate store):**
-
-1. Open Firefox → Settings → Privacy & Security → View Certificates → Your Certificates
-2. Click Import, select `secrets/openclaw-denis-client.p12`, enter the password
-
-**iOS / iPadOS:**
-
-1. AirDrop or email the `.p12` to the device
-2. Open Settings → Profile Downloaded → Install
-3. Enter the certificate password when prompted
-
-### Step 2 — Open the tokenized URL
+Or use the helper script:
 
 ```bash
-# View the full URL (contains the session token — keep private)
-cat secrets/openclaw-tokenized-url.txt
+./scripts/openclaw-ui-tunnel.sh
 ```
 
-Open that URL in your browser. On first load:
+### Step 2 - Open the local browser URL
 
-- the browser prompts to select a client certificate — select the one imported in Step 1
-- if the certificate is accepted, the OpenClaw Control UI loads
-- if no certificate is offered or the wrong one is selected, the server returns no response or a TLS error
+Open:
 
-### Step 3 — Start a session
+```text
+http://127.0.0.1:18789/
+```
+
+If local port `18789` is busy, use another local port:
+
+```bash
+ssh -N -L 18790:127.0.0.1:18789 \
+  -o ProxyCommand='ssh admin@192.168.50.1 nc -w 120 %h %p' \
+  deploy@204.168.239.217
+```
+
+Then open:
+
+```text
+http://127.0.0.1:18790/
+```
+
+The helper script supports the same fallback:
+
+```bash
+LOCAL_PORT=18790 ./scripts/openclaw-ui-tunnel.sh
+```
+
+### Step 3 - Start a session
 
 The Control UI opens in a ready state. To begin a conversation:
 
@@ -205,30 +203,11 @@ Use `/new` after deploying updated workspace files, or when switching context to
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Browser shows no response / connection reset | No client certificate presented | Import `.p12` and retry |
-| Browser prompts for certificate but access fails | Wrong certificate selected | Open browser certificate manager, check which cert is installed |
-| `502 Bad Gateway` | Gateway restarting | Wait ~90s after a restart, then reload |
-| Page loads but bot doesn't respond | Token in URL may be stale | Check `secrets/openclaw-tokenized-url.txt` — may need re-issuance |
+| `bind: Address already in use` | Local port `18789` is occupied | Use `18790` locally: `LOCAL_PORT=18790 ./scripts/openclaw-ui-tunnel.sh` |
+| Browser cannot connect to `127.0.0.1:18789` | Tunnel is not running or exited | Restart the tunnel and keep the terminal open |
+| SSH fails at the bastion hop | ProxyCommand path failed | Verify `ssh admin@192.168.50.1` works from the current network |
+| Page loads but bot does not respond | Gateway may be restarting | Wait ~90s after a restart, then reload |
 | SSH times out before banner | Hetzner Firewall may have narrowed | Open Hetzner Console, verify `22/tcp` is allowed from your IP |
-
-### Public access verification (curl)
-
-With client certificate:
-
-```bash
-curl -skI \
-  --cert-type P12 \
-  --cert secrets/openclaw-denis-client.p12:"$(cat secrets/openclaw-denis-client-password.txt)" \
-  https://<public-host>/
-# Expected: HTTP/1.1 200 OK
-```
-
-Without client certificate (should be blocked):
-
-```bash
-curl -skI https://<public-host>/ || true
-# Expected: connection reset or no response
-```
 
 ## Workspace management
 

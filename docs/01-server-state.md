@@ -264,9 +264,8 @@ The stack now uses a custom Compose healthcheck against `http://127.0.0.1:18789/
 
 Operationally relevant truth sources are:
 
-- successful `Caddy` responses over `mTLS`
-- successful `mTLS` gate behavior
-- successful browser access using the local tokenized URL kept in `secrets/`
+- successful browser access through the SSH UI tunnel to `http://127.0.0.1:18789/`
+- successful gateway health response from `http://127.0.0.1:18789/healthz` on the server
 
 During gateway cold starts or config-triggered restarts, `docker compose ps` can temporarily show `starting` or `unhealthy` before converging to `healthy`.
 

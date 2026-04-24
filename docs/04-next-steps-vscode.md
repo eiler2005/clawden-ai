@@ -22,7 +22,13 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'docker ps --format "table {{.Names}}\t{{.
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'sudo systemctl status caddy --no-pager'
 ```
 
-Then validate browser access using the local client certificate and tokenized URL.
+Then validate browser access through the OpenClaw UI tunnel:
+
+```bash
+./scripts/openclaw-ui-tunnel.sh
+```
+
+Open `http://127.0.0.1:18789/` while the tunnel is running.
 
 ## 3. Decide whether to keep the derived image local or publish it
 

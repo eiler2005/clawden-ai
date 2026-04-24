@@ -669,6 +669,10 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -sf http://127.0.0.1:8020/health | p
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8093/health'
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8094/health | python3 -m json.tool'
 
+# OpenClaw graphical UI (SSH tunnel)
+./scripts/openclaw-ui-tunnel.sh
+# open http://127.0.0.1:18789/
+
 # OmniRoute dashboard (SSH tunnel)
 ssh -i ~/.ssh/id_rsa -L 20128:127.0.0.1:20128 "$OPENCLAW_HOST" -N &
 # open http://localhost:20128
