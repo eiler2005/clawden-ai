@@ -117,6 +117,94 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
+## OpenAI Codex auth recovery
+
+Symptom in Telegram:
+
+```text
+Model login failed on the gateway for openai-codex
+```
+
+Confirm the cause in gateway logs:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  docker compose logs --tail=250 openclaw-gateway |
+    grep -E "Token refresh failed|refresh_token_reused|model fallback|omniroute"
+'
+```
+
+If logs show `refresh_token_reused`, re-auth from the gateway container and paste the local browser
+redirect URL back into the prompt:
+
+```bash
+ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec openclaw-gateway \
+    openclaw models auth login --provider openai-codex
+'
+```
+
+Then restart the gateway so the running service drops the old token state:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose restart openclaw-gateway
+'
+```
+
+Verify routing:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec -T openclaw-gateway openclaw models list
+'
+```
+
+Expected essentials:
+
+```text
+openai-codex/gpt-5.4  ... Auth yes  default,configured
+omniroute/medium      ... Auth yes  fallback#1
+omniroute/smart       ... Auth yes  fallback#2
+omniroute/light       ... Auth yes  fallback#3
+```
+
+Important: the OmniRoute fallback chain is configured in OpenClaw, but it only works if OmniRoute's
+own upstream accounts have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly
+spend caps, or OpenRouter credit errors if fallback still returns `ALL_ACCOUNTS_INACTIVE`.
+
+If Telegram shows the same "Model login failed" text but the session JSONL contains an error such
+as `You have hit your ChatGPT usage limit (...) Try again in ~N min.`, the OAuth profile is not the
+root cause. That is a primary-model usage-limit failure. The live gateway was patched on
+2026-04-26 so embedded-agent `stopReason=error` results are rethrown into `runWithModelFallback`
+and can attempt `omniroute/medium -> omniroute/smart -> omniroute/light`. The same live patch also
+adds a user-facing usage-limit message before OAuth/login classification, so Telegram should say
+that OpenAI Codex hit a temporary ChatGPT usage limit instead of recommending OAuth re-auth.
+
+Validate the reserve independently before relying on it:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec -T openclaw-gateway sh -lc '"'"'
+    KEY=$(node -e "const fs=require(\"fs\"); const c=JSON.parse(fs.readFileSync(\"/home/node/.openclaw/openclaw.json\",\"utf8\")); process.stdout.write(c.models?.providers?.omniroute?.apiKey || \"\")")
+    curl -sS -m 60 -o /tmp/omni-smoke.json -w "http=%{http_code}\n" \
+      -H "Authorization: Bearer $KEY" \
+      -H "Content-Type: application/json" \
+      -d "{\"model\":\"light\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply exactly OK\"}],\"max_tokens\":8}" \
+      http://omniroute:20129/v1/chat/completions
+  '"'"'
+'
+```
+
+`http=503` with `all upstream accounts are inactive` means OpenClaw will try the reserve, but
+OmniRoute cannot currently answer until its upstream provider quotas/credits/spending caps are
+restored.
+
 Recreate OpenClaw:
 
 ```bash
