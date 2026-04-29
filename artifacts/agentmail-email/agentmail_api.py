@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,6 +86,8 @@ class AgentMailApiClient:
             raise AgentMailApiError(f"AgentMail API {method} {path} failed: {exc.code} {body[:400]}") from exc
         except urllib.error.URLError as exc:
             raise AgentMailApiError(f"AgentMail API {method} {path} failed: {exc}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise AgentMailApiError(f"AgentMail API {method} {path} timed out after {self.timeout_seconds}s") from exc
 
     def list_inboxes(self, *, limit: int = 100) -> list[dict[str, Any]]:
         data = self._request("GET", "/v0/inboxes", query={"limit": limit})

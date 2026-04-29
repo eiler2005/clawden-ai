@@ -57,6 +57,10 @@ MAX_MESSAGE_PAGES = int(os.environ.get("AGENTMAIL_MAX_MESSAGE_PAGES", "5") or 5)
 MAX_MESSAGE_PAGE_SIZE = int(os.environ.get("AGENTMAIL_MESSAGE_PAGE_SIZE", "100") or 100)
 TEXT_EXCERPT_LIMIT = int(os.environ.get("AGENTMAIL_TEXT_EXCERPT_LIMIT", "2400") or 2400)
 PREVIEW_LIMIT = int(os.environ.get("AGENTMAIL_PREVIEW_LIMIT", "420") or 420)
+MAX_LLM_CANDIDATE_THREADS = int(os.environ.get("AGENTMAIL_MAX_LLM_CANDIDATE_THREADS", "10") or 10)
+MAX_LLM_MESSAGES_PER_THREAD = int(os.environ.get("AGENTMAIL_MAX_LLM_MESSAGES_PER_THREAD", "3") or 3)
+MAX_LLM_TEXT_EXCERPT_CHARS = int(os.environ.get("AGENTMAIL_MAX_LLM_TEXT_EXCERPT_CHARS", "700") or 700)
+MAX_LLM_PROMPT_CHARS = int(os.environ.get("AGENTMAIL_MAX_LLM_PROMPT_CHARS", "60000") or 60000)
 SENDER_RE = re.compile(r"^\s*(?:(?P<name>.*?)\s*)?<(?P<email>[^>]+)>\s*$")
 REPLY_SUBJECT_RE = re.compile(r"^\s*(?:re|fw|fwd)\s*:", re.IGNORECASE)
 FORWARDED_SENDER_LINE_RE = re.compile(r"(?im)^(?:from|от)\s*:\s*(?P<value>.+?)\s*$")
@@ -179,6 +183,105 @@ def _tail_union(*tails: list[str]) -> list[str]:
     for tail in tails:
         lines.extend(tail)
     return lines[-16:]
+
+
+def _fallback_poll_result(
+    *,
+    run_id: str,
+    inbox_ref: str,
+    topic_name: str,
+    scanned_count: int,
+    thread_count: int,
+    prefilter_actions: dict[str, list[str]],
+    prefilter_low_signal_count: int,
+    prefilter_stats: dict[str, int],
+) -> PollPrepResult:
+    result = _empty_poll_result(run_id=run_id, inbox_ref=inbox_ref, topic_name=topic_name)
+    result.messages_scanned = scanned_count
+    result.threads_considered = thread_count
+    result.low_signal_count = prefilter_low_signal_count
+    result.label_actions = prefilter_actions
+    result.prefilter_scanned_threads = prefilter_stats.get("scanned_threads", 0)
+    result.prefilter_skipped_handled = prefilter_stats.get("skipped_handled", 0)
+    result.prefilter_skipped_low_signal = prefilter_stats.get("skipped_low_signal", 0)
+    result.prefilter_candidate_threads = prefilter_stats.get("candidate_threads", 0)
+    result.llm_skipped = True
+    return result
+
+
+def _compact_candidate_threads_for_llm(candidate_threads: list[dict]) -> tuple[list[dict], list[str]]:
+    limited_threads = max(1, MAX_LLM_CANDIDATE_THREADS)
+    limited_messages = max(1, MAX_LLM_MESSAGES_PER_THREAD)
+    limited_excerpt = max(120, MAX_LLM_TEXT_EXCERPT_CHARS)
+    compacted: list[dict] = []
+    total_messages_before = 0
+    total_messages_after = 0
+
+    for thread in candidate_threads[:limited_threads]:
+        current = dict(thread)
+        messages = list(current.get("messages", []) or [])
+        total_messages_before += len(messages)
+        current["messages"] = [
+            {
+                **dict(message),
+                "preview": _truncate(str(message.get("preview") or ""), min(PREVIEW_LIMIT, 240)),
+                "text_excerpt": _truncate(str(message.get("text_excerpt") or ""), limited_excerpt),
+            }
+            for message in messages[:limited_messages]
+        ]
+        current["thread_preview"] = _truncate(str(current.get("thread_preview") or ""), 240)
+        current["window_message_ids"] = [
+            str(value)
+            for value in (current.get("window_message_ids") or [])
+            if str(value).strip()
+        ][:limited_messages]
+        total_messages_after += len(current["messages"])
+        compacted.append(current)
+
+    omitted_threads = max(0, len(candidate_threads) - len(compacted))
+    omitted_messages = max(0, total_messages_before - total_messages_after)
+    notes = [
+        (
+            "llm input compacted: "
+            f"threads={len(compacted)}/{len(candidate_threads)}, "
+            f"messages={total_messages_after}/{total_messages_before}, "
+            f"excerpt_limit={limited_excerpt}"
+        )
+    ]
+    if omitted_threads or omitted_messages:
+        notes.append(f"llm input omitted: threads={omitted_threads}, messages={omitted_messages}")
+    return compacted, notes
+
+
+def _build_bounded_poll_prompt(
+    *,
+    inbox_ref: str,
+    topic_name: str,
+    since_dt: datetime,
+    until_dt: datetime,
+    labels: dict[str, str],
+    low_signal_hints: list[str],
+    candidate_threads: list[dict],
+    mode: str,
+) -> tuple[str, list[str]]:
+    current_threads, notes = _compact_candidate_threads_for_llm(candidate_threads)
+    while True:
+        prompt = build_prepare_poll_analysis_prompt(
+            inbox_ref=inbox_ref,
+            topic_name=topic_name,
+            since_iso=since_dt.isoformat(),
+            until_iso=until_dt.isoformat(),
+            labels=labels,
+            low_signal_hints=low_signal_hints,
+            thread_snapshots=current_threads,
+            mode=mode,
+        )
+        if len(prompt) <= MAX_LLM_PROMPT_CHARS or len(current_threads) <= 1:
+            break
+        current_threads = current_threads[: max(1, len(current_threads) // 2)]
+        notes.append(f"llm prompt trimmed to {len(current_threads)} thread(s) to fit {MAX_LLM_PROMPT_CHARS} chars")
+    notes.append(f"llm prompt size: {len(prompt)} chars")
+    return prompt, notes
 
 
 def _event_retention_days(config: dict) -> int:
@@ -419,7 +522,11 @@ def _collect_thread_snapshots(
 
     snapshots: list[dict] = []
     for thread_id in thread_ids:
-        thread = api.get_thread(inbox_ref, thread_id)
+        try:
+            thread = api.get_thread(inbox_ref, thread_id)
+        except AgentMailApiError as exc:
+            logger.warning("Skipping AgentMail thread after API error thread_id=%s: %s", thread_id, exc)
+            continue
         all_messages = list(thread.get("messages", []) or [])
         window_messages = [msg for msg in all_messages if _in_window(msg.get("timestamp"), since_dt, until_dt)]
         if not window_messages:
@@ -718,39 +825,50 @@ def _prepare_poll_result(
     )
     prefilter_line = _prefilter_tail_line(prefilter_stats, llm_skipped=not candidate_threads)
     if not candidate_threads:
-        empty = _empty_poll_result(
+        empty = _fallback_poll_result(
             run_id=run_id,
             inbox_ref=inbox_ref,
             topic_name=str(config.get("topic_name", "inbox-email")),
+            scanned_count=scanned_count,
+            thread_count=len(thread_snapshots),
+            prefilter_actions=prefilter_actions,
+            prefilter_low_signal_count=prefilter_low_signal_count,
+            prefilter_stats=prefilter_stats,
         )
-        empty.messages_scanned = scanned_count
-        empty.threads_considered = len(thread_snapshots)
-        empty.low_signal_count = prefilter_low_signal_count
-        empty.label_actions = prefilter_actions
-        empty.prefilter_scanned_threads = prefilter_stats.get("scanned_threads", 0)
-        empty.prefilter_skipped_handled = prefilter_stats.get("skipped_handled", 0)
-        empty.prefilter_skipped_low_signal = prefilter_stats.get("skipped_low_signal", 0)
-        empty.prefilter_candidate_threads = prefilter_stats.get("candidate_threads", 0)
-        empty.llm_skipped = True
         return empty, _tail_union(prelude, [prefilter_line])
 
-    result = run_agent_json(
-        build_prepare_poll_analysis_prompt(
-            inbox_ref=inbox_ref,
-            topic_name=str(config.get("topic_name", "inbox-email")),
-            since_iso=since_dt.isoformat(),
-            until_iso=until_dt.isoformat(),
-            labels=_labels(config),
-            low_signal_hints=[str(v) for v in config.get("low_signal_hints", [])],
-            thread_snapshots=candidate_threads,
-            mode=mode,
-        )
+    topic_name = str(config.get("topic_name", "inbox-email"))
+    prompt, prompt_tail = _build_bounded_poll_prompt(
+        inbox_ref=inbox_ref,
+        topic_name=topic_name,
+        since_dt=since_dt,
+        until_dt=until_dt,
+        labels=_labels(config),
+        low_signal_hints=[str(v) for v in config.get("low_signal_hints", [])],
+        candidate_threads=candidate_threads,
+        mode=mode,
     )
+    try:
+        result = run_agent_json(prompt)
+    except AgentRunError as exc:
+        logger.warning("Poll LLM fallback for run_id=%s: %s", run_id, exc)
+        fallback = _fallback_poll_result(
+            run_id=run_id,
+            inbox_ref=inbox_ref,
+            topic_name=topic_name,
+            scanned_count=scanned_count,
+            thread_count=len(thread_snapshots),
+            prefilter_actions=prefilter_actions,
+            prefilter_low_signal_count=prefilter_low_signal_count,
+            prefilter_stats=prefilter_stats,
+        )
+        return fallback, _tail_union(prelude, [prefilter_line], prompt_tail, exc.tail, [f"llm fallback: {exc}"])
+
     parsed = PollPrepResult.from_payload(
         result.payload,
         run_id=run_id,
         inbox_ref=inbox_ref,
-        telegram_topic=str(config.get("topic_name", "inbox-email")),
+        telegram_topic=topic_name,
     )
     parsed.messages_scanned = scanned_count
     parsed.threads_considered = len(thread_snapshots)
@@ -761,7 +879,7 @@ def _prepare_poll_result(
     parsed.prefilter_skipped_low_signal = prefilter_stats.get("skipped_low_signal", 0)
     parsed.prefilter_candidate_threads = prefilter_stats.get("candidate_threads", 0)
     parsed.llm_skipped = False
-    return parsed, _tail_union(prelude, [prefilter_line], result.output_tail)
+    return parsed, _tail_union(prelude, [prefilter_line], prompt_tail, result.output_tail)
 
 
 def _persist_catchup_if_needed(
@@ -899,14 +1017,18 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
             catchup_since = window_start if lookback_minutes is not None else (
                 state_store.get_dt(r, state_store.last_poll_key(inbox_ref)) or window_start
             )
-            catchup_tail = _persist_catchup_if_needed(
-                r,
-                config=config,
-                run_id=run_id,
-                inbox_ref=inbox_ref,
-                since_dt=catchup_since,
-                until_dt=window_end,
-            )
+            try:
+                catchup_tail = _persist_catchup_if_needed(
+                    r,
+                    config=config,
+                    run_id=run_id,
+                    inbox_ref=inbox_ref,
+                    since_dt=catchup_since,
+                    until_dt=window_end,
+                )
+            except AgentRunError as exc:
+                logger.warning("Digest catch-up LLM skipped for run_id=%s: %s", run_id, exc)
+                catchup_tail = _tail_union(exc.tail, [f"catchup skipped: {exc}"])
 
         scanned_count, thread_snapshots = _collect_thread_snapshots(
             inbox_ref=inbox_ref,

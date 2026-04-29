@@ -24,6 +24,12 @@ sys.modules.setdefault(
     types.SimpleNamespace(from_env=lambda: None, errors=docker_errors),
 )
 sys.modules.setdefault("docker.errors", docker_errors)
+redis_errors = types.SimpleNamespace(ConnectionError=Exception, RedisError=Exception, ResponseError=Exception)
+sys.modules.setdefault(
+    "redis",
+    types.SimpleNamespace(from_url=lambda *args, **kwargs: None, exceptions=redis_errors),
+)
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda *args, **kwargs: None))
 
 import cron_bridge
 
@@ -243,6 +249,97 @@ class PollPrefilterTests(unittest.TestCase):
         self.assertEqual(result.label_actions["benka/low-signal"], ["msg-low-1"])
         self.assertTrue(any("candidate_threads=1" in line for line in tail))
         self.assertTrue(any("llm_skipped=false" in line for line in tail))
+
+    def test_prepare_poll_result_compacts_large_llm_prompt(self) -> None:
+        config = sample_config()
+        candidate_threads = [
+            make_thread(
+                f"thread-action-{idx}",
+                {
+                    "message_id": f"msg-action-{idx}",
+                    "labels": [],
+                    "subject": "Project update",
+                    "preview": "please reply before tomorrow",
+                    "text_excerpt": "x" * 5000,
+                    "has_attachments": False,
+                    "attachment_count": 0,
+                },
+            )
+            for idx in range(20)
+        ]
+        captured_prompt: dict[str, str] = {}
+
+        def fake_run_agent_json(prompt: str):
+            captured_prompt["prompt"] = prompt
+            return types.SimpleNamespace(
+                payload={
+                    "ok": True,
+                    "messages_scanned": 20,
+                    "threads_considered": 20,
+                    "threads_selected": 0,
+                    "low_signal_count": 0,
+                    "batch_lead": [],
+                    "publish_events": [],
+                    "label_actions": {},
+                    "model_meta": {"model_id": "openclaw", "tier": "primary"},
+                },
+                output_tail=["llm-called"],
+                agent_id="main",
+            )
+
+        with patch.object(cron_bridge, "_collect_thread_snapshots", return_value=(20, candidate_threads)), patch.object(
+            cron_bridge,
+            "run_agent_json",
+            side_effect=fake_run_agent_json,
+        ):
+            result, tail = cron_bridge._prepare_poll_result(
+                config=config,
+                run_id="run-large",
+                inbox_ref="my-inbox@agentmail.to",
+                since_dt=cron_bridge.datetime(2026, 4, 13, 8, 0, tzinfo=cron_bridge.timezone.utc),
+                until_dt=cron_bridge.datetime(2026, 4, 13, 8, 5, tzinfo=cron_bridge.timezone.utc),
+                mode="poll",
+            )
+
+        self.assertLessEqual(len(captured_prompt["prompt"]), cron_bridge.MAX_LLM_PROMPT_CHARS)
+        self.assertIn("thread-action-0", captured_prompt["prompt"])
+        self.assertNotIn("thread-action-19", captured_prompt["prompt"])
+        self.assertEqual(result.threads_considered, 20)
+        self.assertTrue(any("llm input compacted" in line for line in tail))
+
+    def test_prepare_poll_result_falls_back_when_llm_fails(self) -> None:
+        config = sample_config()
+        candidate_thread = make_thread(
+            "thread-action",
+            {
+                "message_id": "msg-action-1",
+                "labels": [],
+                "subject": "Project update",
+                "preview": "please reply before tomorrow",
+                "text_excerpt": "please reply before tomorrow",
+                "has_attachments": False,
+                "attachment_count": 0,
+            },
+        )
+
+        with patch.object(cron_bridge, "_collect_thread_snapshots", return_value=(1, [candidate_thread])), patch.object(
+            cron_bridge,
+            "run_agent_json",
+            side_effect=cron_bridge.AgentRunError("openclaw agent failed", tail=["argument list too long"]),
+        ):
+            result, tail = cron_bridge._prepare_poll_result(
+                config=config,
+                run_id="run-fallback",
+                inbox_ref="my-inbox@agentmail.to",
+                since_dt=cron_bridge.datetime(2026, 4, 13, 8, 0, tzinfo=cron_bridge.timezone.utc),
+                until_dt=cron_bridge.datetime(2026, 4, 13, 8, 5, tzinfo=cron_bridge.timezone.utc),
+                mode="poll",
+            )
+
+        self.assertTrue(result.llm_skipped)
+        self.assertEqual(result.messages_scanned, 1)
+        self.assertEqual(result.threads_considered, 1)
+        self.assertTrue(any("llm fallback" in line for line in tail))
 
 
 if __name__ == "__main__":

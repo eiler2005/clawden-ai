@@ -39,10 +39,14 @@ ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" '
   sudo mkdir -p /opt/agentmail-email
 '
 
-rsync -avz --delete --exclude config.json --exclude email.env \
+rsync -avz --delete --exclude config.json --exclude email.env --exclude '__pycache__/' --exclude '*.pyc' \
   -e "$RSYNC_SSH" --rsync-path="sudo rsync" \
   "$ROOT_DIR/artifacts/agentmail-email/" \
   "$OPENCLAW_HOST":/opt/agentmail-email/
+
+ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" '
+  sudo find /opt/agentmail-email -type d -name __pycache__ -prune -exec rm -rf {} +
+'
 
 rsync -avz -e "$RSYNC_SSH" --rsync-path="sudo rsync" \
   "$LOCAL_ENV" \
