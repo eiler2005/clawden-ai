@@ -81,6 +81,7 @@ ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" \
   "python3 - <<'PY'
 import json
 import re
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -163,6 +164,8 @@ query_specs = [
     {
         'query': 'life principles',
         'kind': 'thematic',
+        'hl_keywords': ['life principles', 'personal philosophy', 'guiding values'],
+        'll_keywords': ['life principles', 'honesty', 'integrity', 'values'],
         'expected_ref_substrings': [
             'denis-interesting-2024-08-13-102',
             'denis-toolsforlife-2025-05-09-160',
@@ -171,6 +174,8 @@ query_specs = [
     {
         'query': 'Claude code best practices',
         'kind': 'factual',
+        'hl_keywords': ['Claude Code', 'AI coding', 'best practices'],
+        'll_keywords': ['Claude code best practices', 'Claude Code', 'coding agent'],
         'expected_ref_substrings': [
             'denis-ai-2025-05-15-claude-code-best-practices',
             '2026-04-21-claude-code-guide',
@@ -180,6 +185,8 @@ query_specs = [
     {
         'query': 'NOCONCEPT',
         'kind': 'entity_topic',
+        'hl_keywords': ['NOCONCEPT'],
+        'll_keywords': ['NOCONCEPT'],
         'expected_ref_substrings': [
             'noconcept',
             'denis-interesting',
@@ -190,15 +197,41 @@ query_specs = [
 results = []
 for spec in query_specs:
     query = spec['query']
+    request_payload = {
+        'query': query,
+        'mode': 'hybrid',
+        'hl_keywords': spec['hl_keywords'],
+        'll_keywords': spec['ll_keywords'],
+        'top_k': 20,
+        'chunk_top_k': 10,
+        'max_entity_tokens': 3000,
+        'max_relation_tokens': 3000,
+        'max_total_tokens': 10000,
+        'enable_rerank': False,
+    }
     req = urllib.request.Request(
-        'http://127.0.0.1:8020/query',
-        data=json.dumps({'query': query, 'mode': 'hybrid'}).encode('utf-8'),
+        'http://127.0.0.1:8020/query/data',
+        data=json.dumps(request_payload).encode('utf-8'),
         headers={'Content-Type': 'application/json'},
         method='POST',
     )
-    with urllib.request.urlopen(req, timeout=60) as response:
-        payload = json.loads(response.read().decode('utf-8'))
-    refs = payload.get('references') or payload.get('refs') or []
+    query_error = None
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            payload = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode('utf-8', errors='ignore')
+        try:
+            parsed_error = json.loads(body)
+        except json.JSONDecodeError:
+            parsed_error = {'raw': body[:500]}
+        payload = {}
+        query_error = {
+            'http_status': exc.code,
+            'error': parsed_error,
+        }
+    data = payload.get('data') or {}
+    refs = data.get('references') or []
     ref_paths = [
         str(item.get('file_path') or item.get('path') or '')
         for item in refs
@@ -214,11 +247,12 @@ for spec in query_specs:
             'query': query,
             'kind': spec['kind'],
             'references': len(refs),
-            'response_preview': str(payload.get('response') or payload.get('answer') or '')[:240],
+            'response_preview': str(payload.get('message') or '')[:240],
             'reference_preview': refs[:3],
             'all_reference_paths': ref_paths[:10],
             'source_link_preview': source_meta[:3],
             'expected_ref_substrings': spec['expected_ref_substrings'],
+            'query_error': query_error,
         }
     )
 print(json.dumps(results, ensure_ascii=False))
@@ -267,6 +301,7 @@ for item in queries:
     )
     item["quality_flags"] = {
         "has_refs": refs > 0,
+        "query_ok": item.get("query_error") is None,
         "degraded_answer": any(marker in preview for marker in degraded_markers),
         "expected_ref_hit": expected_ref_hit,
         "has_source_links": len(source_links) > 0,
@@ -293,6 +328,11 @@ quality_summary = {
     "degraded_queries": [
         item["query"] for item in queries if item["quality_flags"]["degraded_answer"]
     ],
+    "query_errors": [
+        {"query": item["query"], "error": item.get("query_error")}
+        for item in queries
+        if item.get("query_error") is not None
+    ],
 }
 
 summary = {
@@ -317,4 +357,6 @@ summary = {
 }
 
 print(json.dumps(summary, ensure_ascii=False, indent=2))
+if quality_summary["query_errors"] or not quality_summary["targeted_factual_pass"]:
+    sys.exit(1)
 PY

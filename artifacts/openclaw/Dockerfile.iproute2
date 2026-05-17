@@ -1,0 +1,11 @@
+ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:2026.5.12-slim
+FROM ${OPENCLAW_BASE_IMAGE}
+
+ARG DEBIAN_MIRROR=https://mirror.yandex.ru
+
+USER root
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+USER node

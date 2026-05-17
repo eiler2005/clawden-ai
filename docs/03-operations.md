@@ -27,7 +27,7 @@ Use the container runtime for:
 - runtime dependency verification
 - tool execution that agents depend on
 
-If a new OpenClaw feature requires a binary or Python package, update `/opt/openclaw/Dockerfile.iproute2`, rebuild the image, and recreate `openclaw-gateway` instead of installing the package directly on Ubuntu.
+If a new OpenClaw feature requires a binary or Python package, update `/opt/openclaw/Dockerfile.iproute2`, rebuild the image, and recreate `openclaw-gateway` instead of installing the package directly on Ubuntu. Keep the sanitized template in `artifacts/openclaw/Dockerfile.iproute2` aligned with the server copy.
 
 ## Move to the OpenClaw project
 
@@ -119,6 +119,13 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 ## OpenAI Codex auth recovery
 
+Current live policy: OpenAI is not the normal route. The Gateway primary route is
+`omniroute/light`, and `openai/gpt-5.5` is used only after OmniRoute/OpenRouter is unavailable.
+As of the 2026-05-16 live validation, the server has a short-lived `openai-codex` token profile
+for that fallback path because the older OAuth refresh profiles return `invalid_request_error`.
+Refresh or re-auth this fallback before its token expiry; do not promote it to primary unless
+explicitly requested.
+
 Symptom in Telegram:
 
 ```text
@@ -176,6 +183,24 @@ omniroute/light       ... Auth yes  fallback#3
 Important: the OmniRoute fallback chain is configured in OpenClaw, but it only works if OmniRoute's
 own upstream accounts have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly
 spend caps, or OpenRouter credit errors if fallback still returns `ALL_ACCOUNTS_INACTIVE`.
+
+## LightRAG embedding-provider recovery
+
+Current live status after the 2026-05-16 OpenClaw upgrade:
+
+- LightRAG health and document status endpoints are live.
+- `scripts/smoke-check-knowledge.sh` can fail at `/query/data` with an embedding-provider 500 while
+  external limits are exhausted.
+- Direct Gemini embeddings return the monthly spending-cap error.
+- OmniRoute/OpenRouter embeddings return no usable OpenRouter embedding credentials/quota.
+- The Codex/OpenAI subscription fallback works for Gateway chat responses, but it does not provide a
+  usable OpenAI API embeddings route on this server.
+
+Recovery choices:
+
+1. restore a healthy 3072-dimensional Gemini/OpenRouter embedding route, then restart LightRAG
+2. provision an OpenAI API key with embedding quota and switch LightRAG to a compatible 3072-dimensional embedding model
+3. rebuild/reindex LightRAG intentionally if changing to a different embedding dimension
 
 If Telegram shows the same "Model login failed" text but the session JSONL contains an error such
 as `You have hit your ChatGPT usage limit (...) Try again in ~N min.`, the OAuth profile is not the

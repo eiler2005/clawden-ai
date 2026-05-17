@@ -82,7 +82,8 @@ Upgrade history:
 - `openclaw-with-iproute2:20260406/07` (`OpenClaw 2026.4.5`) — startup instability; blocked
 - `openclaw-with-iproute2:20260408` (`OpenClaw 2026.4.8`) — stable Whisper-enabled image used during earlier experiments
 - `openclaw-with-iproute2:20260412-slim` (`OpenClaw 2026.4.8`) — intermediate slim image with Whisper removed
-- `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) — current production; slim image retained, base OpenClaw updated
+- `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) — previous production; slim image retained, base OpenClaw updated
+- `openclaw-with-iproute2:20260516-slim-2026.5.12` (`OpenClaw 2026.5.12`) — current production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
 
 ## Final deployed shape
 
@@ -91,7 +92,8 @@ Upgrade history:
 - gateway bind mode: `lan`
 - gateway auth mode: `token`
 - trusted proxies: localhost and Docker bridge
-- builtin memorySearch: enabled on curated sources only (`MEMORY.md`, `memory/*.md`, `/opt/obsidian-vault/wiki`)
+- builtin memorySearch: disabled while external embedding limits are unstable; retrieval should use LightRAG once its embedding provider is healthy
+- model routing: `omniroute/light` primary, `openai/gpt-5.5` fallback only after OmniRoute/OpenRouter failure
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`
@@ -134,7 +136,7 @@ Current policy:
 - Whisper is **not** installed on the host OS
 - Whisper is **not** installed in the current OpenClaw gateway image
 - the current derived image keeps only `iproute2`, which is operationally required for `bind=lan`
-- the current production image tag is `openclaw-with-iproute2:20260412-slim-2026.4.11`
+- the current live image tag is `openclaw-with-iproute2:20260516-slim-2026.5.12`
 
 ### Verify current absence
 

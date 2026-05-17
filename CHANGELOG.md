@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw runtime target**: updated the redacted OpenClaw image template from `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) to `openclaw-with-iproute2:20260516-slim-2026.5.12`, based on the GitHub latest stable release and GHCR `latest` image reporting `OpenClaw 2026.5.12`. Added a tracked `artifacts/openclaw/Dockerfile.iproute2` template for rebuilding the minimal derived image with only `iproute2`; the live `/opt/openclaw` gateway now runs this image.
+- **OpenClaw model reserve policy**: live Gateway keeps `omniroute/light` as the primary route and uses `openai/gpt-5.5` only as fallback after OmniRoute/OpenRouter failure. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
+- **LightRAG smoke script**: `scripts/smoke-check-knowledge.sh` now uses `/query/data` with explicit keyword hints and no reranker so retrieval checks can validate references and source links without waiting on answer synthesis.
 - **LLM-Wiki lifecycle metadata**: wiki pages now distinguish workflow origin (`capture_mode`), curation depth (`curation_level`), and lifecycle stage (`capture_state`). `wiki-import` adds review metadata, lifecycle-aware lint diagnostics, and a new `/maintain` endpoint for safe archive/report refreshes.
 - **Research archive policy**: low-signal research pages can now move into `wiki/archive/research/**` while staying inside `wiki/**` for LightRAG recall. `OVERVIEW.md` and `TOPICS.md` now treat archived research as lower-prominence material instead of deleting it from the knowledge graph.
 - **wiki-import deployment flow**: `scripts/deploy-wiki-import.sh` now syncs dedicated OpenClaw cron jobs for daily lifecycle dry-run reports and weekly safe archive refreshes.
@@ -26,6 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Claude/Gemini research prompt for memory lifecycle**: added `docs/18-claude-llm-wiki-memory-lifecycle-prompt.md` so the current LLM-Wiki lifecycle problem can be handed to another model with consistent context, constraints, and evaluation criteria.
 
 ### Fixed
+- **Live OpenAI fallback token profile**: repaired the OpenAI fallback path by replacing the expired server OAuth refresh path with a short-lived Codex token auth profile. Direct fallback smoke and default model fallback both return `OK` through `openai/gpt-5.5` after OmniRoute reports exhausted upstream accounts.
+- **Live Telegram delivery smoke**: validated the deployed `Knowledgebase` topic with the existing Telethon owner session and a strict bot-reply filter; the bot returned an explicit source-style answer after the OmniRoute failure path fell through to OpenAI fallback.
 - **OpenClaw usage-limit fallback path**: patched the live gateway runtime so embedded-agent
   `stopReason=error` results from `openai-codex` are rethrown into the model fallback layer instead
   of being surfaced to Telegram as a misleading login failure. This lets temporary ChatGPT usage

@@ -9,6 +9,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+os.environ.setdefault("TELEGRAM_API_ID", "1")
+os.environ.setdefault("TELEGRAM_API_HASH", "test-api-hash")
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-bot-token")
+os.environ.setdefault("DIGEST_SUPERGROUP_ID", "1")
+os.environ.setdefault("DIGEST_TOPIC_ID", "1")
+
 import digest_worker
 
 

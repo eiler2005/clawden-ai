@@ -194,6 +194,12 @@ Last confirmed healthy image:
 
 - `openclaw-with-iproute2:20260412-slim-2026.4.11`
 
+Repository target image for the next OpenClaw runtime upgrade:
+
+- `openclaw-with-iproute2:20260516-slim-2026.5.12`
+
+This target is prepared in git and locally validated against upstream `OpenClaw 2026.5.12`; it is not recorded here as a live server deployment until `/opt/openclaw` is rebuilt and checked on the server.
+
 Reason:
 
 - the upstream image did not include `iproute2`
@@ -203,6 +209,7 @@ Reason:
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
 - current OpenClaw CLI version in that image: `2026.4.11`
+- target OpenClaw CLI version in the prepared image: `2026.5.12`
 
 Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.4.11`.
 
@@ -285,12 +292,12 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - **Kiro** (Claude Sonnet 4.5 / Haiku) — AWS Builder ID OAuth, free unlimited
   - **OpenRouter** — API key hub (routes to Claude 3.5, Kimi K2, Qwen3 and others)
   - **Gemini** — direct API key (`gemini-2.0-flash`), free tier 1500 req/day
-- routing tiers (priority order, auto-fallback if provider unavailable):
+- routing tiers (priority order inside OmniRoute; Gateway-level fallback is documented below):
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
-  - `light` → Kiro/claude-haiku-4.5 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b
-- LightRAG integration: **active** — OpenClaw can query LightRAG at `http://lightrag:9621`; current LightRAG config uses OmniRoute for LLM extraction/summarization and direct Gemini only for embeddings
-- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json` with 3 virtual models (`smart`, `medium`, `light`); Codex/gpt-5.4 stays primary
+  - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B
+- LightRAG integration: **degraded** — service health is live, but query embeddings are currently blocked by upstream limits: direct Gemini returns the monthly spending-cap error, and OmniRoute/OpenRouter embeddings have no usable OpenRouter quota. Keep `memorySearch` disabled until an embeddings route is healthy again.
+- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `omniroute/light` as primary and `openai/gpt-5.5` as fallback only after OmniRoute/OpenRouter failure
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
 

@@ -854,3 +854,104 @@ Observed result:
 - retrieval quality and provenance were good enough to surface original web links for factual queries
 - remaining weakness shifted from missing data to synthesis quality and link ranking: raw vault paths
   can still appear as fallback when cleaner provenance links are not extracted first
+
+---
+
+## 26. OpenClaw 2026.5.12 runtime target preparation
+
+Date: `2026-05-16`
+
+Goal: prepare the repository for upgrading the derived OpenClaw runtime image from `OpenClaw 2026.4.11` to the latest stable upstream release.
+
+External version check:
+
+- GitHub releases mark `openclaw 2026.5.12` as `Latest`; newer `2026.5.16-beta.*` entries are pre-releases.
+- `docker run --rm ghcr.io/openclaw/openclaw:latest openclaw --version` returned `OpenClaw 2026.5.12`.
+- `docker buildx imagetools inspect ghcr.io/openclaw/openclaw:2026.5.12-slim` resolved to digest `sha256:e2482a66682de6f540dcfd9921e410c23fd060dcd441382ff952247ee911a672`.
+
+Repository changes:
+
+- added `artifacts/openclaw/Dockerfile.iproute2` as the sanitized derived-image template
+- the template uses configurable `DEBIAN_MIRROR` package sources before `apt-get update`; the default `https://mirror.yandex.ru` was reachable from the local network while `deb.debian.org` timed out
+- updated `artifacts/openclaw/env.redacted.example` to `OPENCLAW_IMAGE=openclaw-with-iproute2:20260516-slim-2026.5.12`
+
+Local validation:
+
+```bash
+docker build \
+  -f artifacts/openclaw/Dockerfile.iproute2 \
+  -t openclaw-with-iproute2:20260516-slim-2026.5.12 \
+  artifacts/openclaw
+
+docker run --rm openclaw-with-iproute2:20260516-slim-2026.5.12 \
+  sh -lc 'openclaw --version; command -v ip'
+```
+
+Validation result:
+
+- local image built successfully on Docker Desktop `linux/arm64`
+- `openclaw --version` returned `OpenClaw 2026.5.12`
+- `command -v ip` returned `/usr/bin/ip`
+- `whisper`, `ffmpeg`, and `ffprobe` stayed absent
+
+Deployment status:
+
+- deployed to `/opt/openclaw` on 2026-05-16
+- live Gateway health confirmed after rebuild/recreate
+
+---
+
+## 27. OpenClaw 2026.5.12 live deploy and validation
+
+Date: `2026-05-16`
+
+Goal: switch the live OpenClaw Gateway to the prepared `OpenClaw 2026.5.12` runtime target and
+validate server behavior before commit/push.
+
+Representative deployment shape:
+
+```bash
+scp artifacts/openclaw/Dockerfile.iproute2 deploy@<server-host>:/tmp/Dockerfile.iproute2
+
+ssh deploy@<server-host> '
+  cd /opt/openclaw
+  sudo install -m 0644 /tmp/Dockerfile.iproute2 Dockerfile.iproute2
+  sudo docker build --pull \
+    --build-arg DEBIAN_MIRROR=https://mirror.yandex.ru \
+    -t openclaw-with-iproute2:20260516-slim-2026.5.12 \
+    -f Dockerfile.iproute2 .
+  sudo cp .env ".env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+  sudo sed -i "s/^OPENCLAW_IMAGE=.*/OPENCLAW_IMAGE=openclaw-with-iproute2:20260516-slim-2026.5.12/" .env
+  sudo docker compose up -d --force-recreate openclaw-gateway
+'
+```
+
+Live core validation:
+
+- `/healthz` returned live status
+- `openclaw --version` returned `OpenClaw 2026.5.12`
+- `command -v ip` returned `/usr/bin/ip`
+- `whisper`, `ffmpeg`, and `ffprobe` remained absent
+- `openclaw doctor` exited 0 with warnings only
+
+Routing result:
+
+- Gateway primary remains `omniroute/light`
+- `openai/gpt-5.5` is configured only as fallback after OmniRoute/OpenRouter failure
+- a default fallback smoke first hit OmniRoute 503, then returned `OK` through `openai/gpt-5.5`
+- the Knowledgebase Telegram delivery smoke returned a source-style reply from the bot in the live topic
+
+Known blocker:
+
+- `scripts/smoke-check-knowledge.sh` currently fails at LightRAG `/query/data` because no live
+  3072-dimensional embedding provider has quota: Gemini is blocked by the monthly spending cap,
+  OmniRoute/OpenRouter embeddings have no usable OpenRouter quota, and the Codex/OpenAI subscription
+  fallback does not provide a usable API embeddings route on this server.
+
+Local validation:
+
+- `artifacts/telethon-digest` tests: 2 OK
+- `artifacts/wiki-import` tests: 23 OK
+- `artifacts/signals-bridge` tests: 84 OK
+- `artifacts/agentmail-email` tests: 18 OK
+- total: 127 tests OK
