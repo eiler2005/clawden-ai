@@ -41,8 +41,8 @@ _SEPARATOR_RE = re.compile(r"[_-]{6,}")
 _TIME_SLOT_RE = re.compile(r"\b\d{1,2}(?::\d{2})?\b")
 _MODEL_LABELS = {
     "agentmail-direct": "без LLM",
-    "openclaw": "GPT-5.4",
-    "gpt-5.4": "GPT-5.4",
+    "openclaw": "GPT-5.5",
+    "gpt-5.5": "GPT-5.5",
     "claude-sonnet-4-5": "Claude Sonnet 4.5",
     "claude-haiku-4.5": "Claude Haiku 4.5",
     "gemini-2.0-flash": "Gemini 2.0 Flash",
@@ -117,7 +117,7 @@ def _model_line(meta: ModelMeta) -> str:
     if meta.model_id == "agentmail-direct":
         route = "прямой рендер"
     if label == "OpenClaw Agent":
-        label = "GPT-5.4"
+        label = "GPT-5.5"
     parts = [f"маршрут: {route}", f"модель: {label or 'неизвестно'}"]
     if meta.provider_fallback:
         parts.append("резервная модель")

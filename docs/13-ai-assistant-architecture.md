@@ -51,17 +51,14 @@ Expansion of permissions or memory scope requires explicit instruction.
 User message
   -> OpenClaw gateway
      -> Agent runner
-        -> Primary model: openai-codex/gpt-5.4
-           on rate_limit / error:
-           -> Fallback 1: omniroute/medium
-           -> Fallback 2: omniroute/smart
-           -> Fallback 3: omniroute/light
+        -> Primary route: omniroute/light
+            on rate_limit / error:
+            -> Fallback 1: openai/gpt-5.5
 ```
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
 This is channel-agnostic — applies to all surfaces (Telegram, web UI, API).
-`medium` is tried before `smart` because most Telegram workflows are short-form operational tasks,
-and a fast stable fallback is more useful there than jumping first to the heaviest tier.
+OpenAI `openai/gpt-5.5` is kept as the reserve route and should be used only after OmniRoute/OpenRouter routes fail.
 
 ### OmniRoute tiers
 
@@ -91,22 +88,21 @@ For Telegram save/promote actions, the preferred write path is:
 - `wiki_ingest(url)` when a stable source URL already exists
 - `wiki_ingest(text)` only when there is no reliable URL or the source is a plain note
 
-The main user response is never proxied through OmniRoute when Codex is available.
-OmniRoute is for subtasks and fallback only.
+The main user response uses OmniRoute first. Codex/OpenAI is the reserve route, not the default.
 
 ### Response footer
 
 Every response in Telegram ends with a one-line footer:
 
 ```
-_gpt-5.4 · primary · 8% · standard · memory_
+_light · primary · 8% · standard · memory_
 ```
 
 Fields (separated by ` · `):
 
 | Field | Values | Meaning |
 |-------|--------|---------|
-| Model | `gpt-5.4` / `smart` / `medium` / `light` | Which model generated the response |
+| Model | `light` / `gpt-5.5` / `smart` / `medium` | Which model generated the response |
 | Source | `primary` / `fallback` / `delegated` | How the model was selected |
 | Context % | `5%` … `95%` | Rough fill of the context window this session |
 | Complexity | `complex` / `standard` / `simple` | Task tier that drove model selection |
@@ -114,7 +110,8 @@ Fields (separated by ` · `):
 
 Examples:
 ```
-_gpt-5.4 · primary · 8% · standard · memory_
+_light · primary · 8% · standard · memory_
+_gpt-5.5 · fallback · 8% · standard · memory_
 _smart · fallback · 31% · complex_
 _medium · fallback · 12% · standard · memory_
 _light · delegated · 5% · simple_
@@ -479,7 +476,7 @@ recap selection.
 ## Signals Bridge
 
 `signals-bridge` is a separate Python service for narrow, time-sensitive signals such as trading
-alerts. It is intentionally optimized for low token cost and does **not** use GPT-5.4 in the
+alerts. It is intentionally optimized for low token cost and does **not** use GPT-5.5 in the
 signals pipeline.
 
 ### Architecture
@@ -514,7 +511,7 @@ signals-bridge (every 5 minutes, internal scheduler)
   - short JSON-only prompt
   - low `max_tokens`
   - local rule-based fallback if OmniRoute is unavailable
-- GPT-5.4 remains outside the signals path; it is not used for signal ingestion, filtering, or rendering.
+- GPT-5.5 remains outside the signals path; it is not used for signal ingestion, filtering, or rendering.
 - `ingest:events:signals` stores only derived summaries + metadata for 14 days; no raw email bodies
   or full Telegram dumps are persisted.
 

@@ -10,6 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 - **OpenClaw runtime target**: updated the redacted OpenClaw image template from `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) to `openclaw-with-iproute2:20260516-slim-2026.5.12`, based on the GitHub latest stable release and GHCR `latest` image reporting `OpenClaw 2026.5.12`. Added a tracked `artifacts/openclaw/Dockerfile.iproute2` template for rebuilding the minimal derived image with only `iproute2`; the live `/opt/openclaw` gateway now runs this image.
 - **OpenClaw model reserve policy**: live Gateway keeps `omniroute/light` as the primary route and uses `openai/gpt-5.5` only as fallback after OmniRoute/OpenRouter failure. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
+- **OpenClaw GPT model ref**: replaced active legacy GPT/OpenAI Codex references with canonical OpenClaw `openai/gpt-5.5` fallback docs and footer labels, matching the current live model catalog and OpenClaw provider docs.
 - **LightRAG smoke script**: `scripts/smoke-check-knowledge.sh` now uses `/query/data` with explicit keyword hints and no reranker so retrieval checks can validate references and source links without waiting on answer synthesis.
 - **LLM-Wiki lifecycle metadata**: wiki pages now distinguish workflow origin (`capture_mode`), curation depth (`curation_level`), and lifecycle stage (`capture_state`). `wiki-import` adds review metadata, lifecycle-aware lint diagnostics, and a new `/maintain` endpoint for safe archive/report refreshes.
 - **Research archive policy**: low-signal research pages can now move into `wiki/archive/research/**` while staying inside `wiki/**` for LightRAG recall. `OVERVIEW.md` and `TOPICS.md` now treat archived research as lower-prominence material instead of deleting it from the knowledge graph.
@@ -38,15 +39,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   quota/credits to answer. The Telegram-facing failure text now reports ChatGPT usage limits
   directly instead of suggesting `openclaw models auth login`.
 - **OpenClaw Codex OAuth recovery**: re-authenticated the live `openai-codex` profile after
-  `refresh_token_reused` broke GPT-5.4 in Telegram, restarted `openclaw-gateway`, and verified a
-  gateway smoke run returns `OK` via `openai-codex/gpt-5.4`. Confirmed OmniRoute remains configured
-  as the model fallback chain (`medium` -> `smart` -> `light`); current OmniRoute upstream accounts
-  need fresh quota/credits before that reserve can answer independently.
+  `refresh_token_reused` broke GPT-5.5 in Telegram, restarted `openclaw-gateway`, and verified a
+  gateway smoke run returns `OK` via `openai/gpt-5.5`. Current policy keeps OmniRoute as the
+  default route and reserves OpenAI for OmniRoute/OpenRouter failure.
 - **Telethon Digest schedule clarity + duplicate trigger guard**: `telethon-digest-cron-bridge` now rejects repeated triggers with `409 digest_already_running` while a digest is queued/running, instead of allowing tiny follow-up digests like `11:05–11:05`. Scheduled cron slots also pass their nominal hour into `digest_worker`, so the rendered digest window keeps the intended schedule label even when Telegram shows the post a few minutes later because processing finished at `11:05`.
 - **Signals trading slang matching**: `signals-bridge` keyword matching now expands a narrow alias set for recurring trading shorthand, so canonical rules like `си` / `юань` / `cny` also match forms such as `сиху` and `юашку`. This fixes dropped Telegram alerts from the allowlisted Евгений Гуков rule without broadening the feed into generic FX noise.
 - **Knowledgebase search routing**: clarified that `📚 Knowledgebase` search is local-first (`LightRAG` + builtin memory) and must not auto-fallback to internet `web_search`. Internet lookup is now opt-in only for this topic unless Denis explicitly asks for web/latest/online information or the request inherently depends on fresh external data. This fixes the misleading case where a temporary `web_search fetch failed` looked like a knowledge-base miss instead of a tool failure on an unnecessary route.
 - **Knowledgebase pin text**: updated the canonical pinned message so it now states the same rule explicitly for users: short questions use local knowledge search by default, and internet search runs only on an explicit request such as `поищи в интернете`.
-- **Telegram fallback order for knowledge workflows**: reordered OpenClaw model fallbacks in `artifacts/openclaw/openclaw.json` to `omniroute/medium` → `omniroute/smart` → `omniroute/light`. This makes Telegram-side capture, save, and promotion flows recover faster when `openai-codex/gpt-5.4` is temporarily unavailable instead of waiting on the heavier `smart` tier first.
+- **Telegram fallback order for knowledge workflows**: superseded the earlier OpenAI-primary fallback chain with the current `omniroute/light` primary route and `openai/gpt-5.5` reserve fallback, so Telegram-side capture, save, and promotion flows do not spend OpenAI subscription quota unless OmniRoute/OpenRouter routes fail.
 - **Ideas/Knowledgebase direct ingest guidance**: tightened agent instructions so `Ideas` promotion and `Knowledgebase` save prefer direct `wiki_ingest(url)` when a stable source URL already exists, and use `wiki_ingest(text)` only when no reliable URL is available. This reduces unnecessary summarization hops before the canonical wiki write path.
 - **Knowledgebase save routing precedence**: narrowed `Knowledgebase` search triggering to short question-like queries only, and made explicit save commands, forwarded posts, URLs, and long multiline notes prefer ingest first. This prevents long-form saved content from being handled as a conversational reply instead of `wiki_ingest`.
 - **Telegram pin templates for knowledge UX**: added canonical pinned-message text under `artifacts/openclaw/telegram-pins.redacted.md`. `Knowledgebase` now documents the default “long content = save” behavior and the escape hatch `обсуди:` for discussion without ingest; `Ideas` pin now points users to `Knowledgebase` for direct durable saves.
@@ -187,7 +187,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   updated repository structure/test counts.
 - **Signals architecture**: `signals-bridge` now uses its own internal **5-minute** scheduler
   instead of any 30-second loop or OpenClaw cron job, and the enrichment path is explicitly limited
-  to cheap `OmniRoute light` calls with low token settings plus a local fallback; GPT-5.4 is not
+  to cheap `OmniRoute light` calls with low token settings plus a local fallback; GPT-5.5 is not
   used in the signals ingestion path.
 - **Signals batch rendering**: signal mini-batches now retain a compact email excerpt and include a
   direct Telegram source link for Telegram-derived items, making manual review faster inside the
@@ -445,7 +445,7 @@ Digest triggered → `persistence.py` pushed `interval-*.md` to `ingest:rag:queu
     - `medium`: Kiro/claude-3-5-haiku → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b
     - `light`: Gemini/gemini-2.0-flash → OpenRouter/qwen3-8b → Kiro/claude-3-5-haiku
 - **LightRAG LLM** switched from direct Gemini to OmniRoute `light` tier (`LLM_BINDING=openai`, `LLM_BINDING_HOST=http://omniroute:20129/v1`)
-- **OpenClaw**: OmniRoute registered as additional provider in `openclaw.json` (3 virtual models: `smart`, `medium`, `light`); Codex/gpt-5.4 remains primary
+- **OpenClaw**: OmniRoute registered as provider in `openclaw.json` (3 virtual models: `smart`, `medium`, `light`); current Gateway policy uses OmniRoute first and keeps Codex/OpenAI as reserve
 - **Бенька model selection rules** added to `workspace/AGENTS.md` — rule-based heuristics for choosing routing tier by task complexity (code → smart, chat → medium, LightRAG → light)
 - **SSH TCP forwarding** enabled for `deploy` user via `/etc/ssh/sshd_config.d/50-deploy-forwarding.conf` (was blocked by hardening config)
 - `artifacts/omniroute/` — redacted compose override and env example added to repo

@@ -128,7 +128,7 @@ _MODEL_NAMES: dict[str, str] = {
     "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gpt-4o-mini": "GPT-4o Mini",
     "gpt-4o": "GPT-4o",
-    "gpt-5.4": "GPT-5.4",
+    "gpt-5.5": "GPT-5.5",
     "local": "Local fallback",
 }
 

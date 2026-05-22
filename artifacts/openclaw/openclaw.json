@@ -71,15 +71,13 @@
     "defaults": {
       "workspace": "/home/node/.openclaw/workspace",
       "model": {
-        "primary": "openai-codex/gpt-5.4",
+        "primary": "omniroute/light",
         "fallbacks": [
-          "omniroute/medium",
-          "omniroute/smart",
-          "omniroute/light"
+          "openai/gpt-5.5"
         ]
       },
       "memorySearch": {
-        "enabled": true,
+        "enabled": false,
         "provider": "gemini",
         "model": "gemini-embedding-001",
         "extraPaths": ["/opt/obsidian-vault/wiki"],

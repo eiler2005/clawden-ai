@@ -78,8 +78,8 @@ Everything runs inside Docker containers on a single Hetzner CX23 (3 vCPU / 4 GB
 │                     │ 127.0.0.1:18789                                  │
 │  ┌──────────────────▼───────────────────────────┐                      │
 │  │  openclaw-gateway  (Docker)                  │                      │
-│  │                                              │──→ OpenAI gpt-5.4    │
-│  │  tools: shell · fs · web · browser           │    (primary, OAuth)  │
+│  │                                              │──→ OpenAI gpt-5.5    │
+│  │  tools: shell · fs · web · browser           │    (fallback, OAuth) │
 │  │         subagents · sessions · cron          │                      │
 │  │  volume: /opt/openclaw/config/  → state      │──→ omniroute:20129   │
 │  │          /opt/openclaw/workspace/ → bot      │    (smart/med/light) │
@@ -210,7 +210,7 @@ graph LR
     end
 
     subgraph Core["Core"]
-        OC["OpenClaw Gateway\n127.0.0.1:18789\ngpt-5.4 primary"]
+        OC["OpenClaw Gateway\n127.0.0.1:18789\nOmniRoute light primary"]
         OR["OmniRoute\n:20129\nsmart / medium / light"]
         RAG["LightRAG\n127.0.0.1:8020\nKnowledge Graph"]
         Redis[("Redis Streams\nasync bus")]
@@ -272,7 +272,7 @@ graph LR
 
 | Service | Role | Network binding | LLM tier |
 |---------|------|----------------|----------|
-| **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | gpt-5.4 (OAuth Plus) |
+| **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | OmniRoute `light`, OpenAI gpt-5.5 fallback |
 | **OmniRoute** | Smart model dispatcher, 3-tier routing with failover | `127.0.0.1:20128` (UI), `:20129` (API) | — |
 | **LightRAG** | Knowledge graph, hybrid vector+graph retrieval | `127.0.0.1:8020` | OmniRoute `light` + Gemini embeddings |
 | **wiki-import** | Curated import bridge for `url` / `text` / `server_path` into LLM-Wiki | `127.0.0.1:8095` | deterministic v1 |
@@ -451,7 +451,7 @@ OmniRoute dispatches tasks across three tiers with automatic provider failover.
 | **medium** | Summarization, Q&A, digests | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-30B |
 | **light** | Classification, signals enrichment, tagging | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-8B |
 
-**Primary model:** OpenAI gpt-5.4 via OAuth Plus — main OpenClaw conversation, not routed through OmniRoute.
+**Primary route:** OmniRoute `light` for the main OpenClaw conversation; OpenAI `openai/gpt-5.5` via OAuth Plus is the fallback when OmniRoute/OpenRouter routes fail.
 **LightRAG:** OmniRoute `light` for LLM extraction/summarization, direct Gemini `gemini-embedding-001` for embeddings.
 **Last30Days reasoning:** OpenRouter `google/gemini-2.5-flash-lite` via `OPENROUTER_API_KEY` in `signals.env`.
 

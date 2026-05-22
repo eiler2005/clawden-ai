@@ -174,15 +174,14 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 Expected essentials:
 
 ```text
-openai-codex/gpt-5.4  ... Auth yes  default,configured
-omniroute/medium      ... Auth yes  fallback#1
-omniroute/smart       ... Auth yes  fallback#2
-omniroute/light       ... Auth yes  fallback#3
+omniroute/light       ... Auth yes  default,configured
+openai/gpt-5.5        ... Auth yes  fallback#1
 ```
 
-Important: the OmniRoute fallback chain is configured in OpenClaw, but it only works if OmniRoute's
-own upstream accounts have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly
-spend caps, or OpenRouter credit errors if fallback still returns `ALL_ACCOUNTS_INACTIVE`.
+Important: OmniRoute is the default OpenClaw route, but it only works if its own upstream accounts
+have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly spend caps, or OpenRouter
+credit errors if the default route returns `ALL_ACCOUNTS_INACTIVE`; OpenAI `openai/gpt-5.5` is the
+configured reserve after that failure.
 
 ## LightRAG embedding-provider recovery
 
@@ -1307,7 +1306,7 @@ Use this after migrating away from the old embedded-runtime design or after repe
 
 Signals Bridge polls allowlisted email + Telegram sources every 5 minutes through its own internal
 Python scheduler and publishes compact mini-batches into the `signals` topic. This service does not
-use OpenClaw Cron Jobs and does not use GPT-5.4 in the ingestion path; enrichment is limited to
+use OpenClaw Cron Jobs and does not use GPT-5.5 in the ingestion path; enrichment is limited to
 cheap `OmniRoute light` calls with low token budgets and a local fallback.
 
 Delivery format:
@@ -1486,7 +1485,7 @@ Dashboard → Combos → Create New:
 
 | Combo name | Strategy | Chain |
 |---|---|---|
-| `smart` | priority | Codex/gpt-5.4 → Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2 |
+| `smart` | priority | Kiro/claude-sonnet → OpenRouter/claude-3.5-sonnet → Qoder/kimi-k2 |
 | `medium` | priority | Codex/gpt-4o-mini → Kiro/claude-haiku → Qoder/kimi → Qoder/qwen3 |
 | `light` | priority | Gemini CLI/gemini-2.0-flash → Qoder/qwen3-coder → Kiro/claude-haiku |
 
