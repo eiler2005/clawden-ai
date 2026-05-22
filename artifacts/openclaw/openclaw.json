@@ -18,6 +18,17 @@
       "keepLines": 2000
     }
   },
+  "plugins": {
+    "entries": {
+      "codex": {
+        "config": {
+          "discovery": {
+            "enabled": false
+          }
+        }
+      }
+    }
+  },
   "tools": {
     "profile": "coding",
     "exec": {

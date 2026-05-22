@@ -8,4 +8,5 @@ RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/
     && apt-get update \
     && apt-get install -y --no-install-recommends iproute2 \
     && rm -rf /var/lib/apt/lists/*
+RUN node -e 'const fs=require("fs"); const old="gpt-5."+4; const mini=old+"-mini"; const miniName="GPT-5."+4+"-Mini"; const catalog="/app/extensions/codex/provider-catalog.ts"; let txt=fs.readFileSync(catalog,"utf8"); const block=new RegExp(`\\n  \\{\\n    id: "${mini}",\\n    model: "${mini}",\\n    displayName: "${miniName}",\\n    description: "Smaller frontier agentic coding model\\\\.",\\n    inputModalities: \\\\["text", "image"\\\\],\\n    supportedReasoningEfforts: \\\\["low", "medium", "high", "xhigh"\\\\],\\n  \\},`,"g"); txt=txt.replace(block,""); fs.writeFileSync(catalog,txt); const provider="/app/extensions/codex/provider.ts"; txt=fs.readFileSync(provider,"utf8"); const modern=new RegExp(`lower === "gpt-5\\\\.5" \\\\|\\\\| lower === "${old}" \\\\|\\\\| lower === "${mini}" \\\\|\\\\| lower === "gpt-5\\\\.2"`,"g"); txt=txt.replace(modern,"lower === \"gpt-5.5\" || lower === \"gpt-5.2\""); fs.writeFileSync(provider,txt);'
 USER node
