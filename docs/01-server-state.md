@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-04-15`
+Snapshot date: `2026-05-28`
 
 This file is for live inventory and host state.
 For the actual memory model, use `docs/10-memory-architecture.md`.
@@ -192,13 +192,14 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
+- `openclaw-with-iproute2:20260528-slim-2026.5.26`
+
+Previous confirmed healthy images:
+
 - `openclaw-with-iproute2:20260412-slim-2026.4.11`
-
-Repository target image for the next OpenClaw runtime upgrade:
-
 - `openclaw-with-iproute2:20260516-slim-2026.5.12`
 
-This target is prepared in git and locally validated against upstream `OpenClaw 2026.5.12`; it is not recorded here as a live server deployment until `/opt/openclaw` is rebuilt and checked on the server.
+The current image is live-confirmed on `/opt/openclaw` and reports `OpenClaw 2026.5.26`.
 
 Reason:
 
@@ -208,10 +209,10 @@ Reason:
 - Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.4.11`
-- target OpenClaw CLI version in the prepared image: `2026.5.12`
+- current OpenClaw CLI version in that image: `2026.5.26`
+- bundled Codex plugin registry version: `2026.5.26`; stale managed npm `codex@2026.5.12` was removed after the upgrade
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.4.11`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.5.26`.
 
 ## Workspace state
 
@@ -258,12 +259,12 @@ See `docs/09-workspace-setup.md` for full onboarding guide.
 
 ## Validation status note
 
-Upgrade to `2026.4.11` confirmed successful (2026-04-12):
+Upgrade to `2026.5.26` confirmed successful (2026-05-28):
 
 - gateway container is `healthy`
 - `/healthz` returns `{"ok":true,"status":"live"}`
-- `openclaw --version` reports `OpenClaw 2026.4.11`
-- `openclaw doctor` reports no errors (startup optimization hints applied)
+- `openclaw --version` reports `OpenClaw 2026.5.26`
+- `openclaw doctor` reports warnings only; no gateway startup error is present
 
 ## Important caveat
 
@@ -296,10 +297,11 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
   - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B
-- LightRAG integration: **degraded** — service health is live, but query embeddings are currently blocked by upstream limits: direct Gemini returns the monthly spending-cap error, and OmniRoute/OpenRouter embeddings have no usable OpenRouter quota. Keep `memorySearch` disabled until an embeddings route is healthy again.
+- LightRAG integration: **deprecated for retrieval** — service health is live, but query embeddings are blocked by external paid-provider limits: direct Gemini returns the monthly spending-cap error, OmniRoute/OpenRouter embeddings have no usable OpenRouter quota/credentials, and the Codex/OpenAI subscription fallback is not a usable API embeddings route. Keep `memorySearch` disabled until a funded embeddings route is healthy again; user-facing errors should say retrieval is deprecated/unavailable because paid embeddings are missing.
 - OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `omniroute/light` as primary and `openai/gpt-5.5` as fallback only after OmniRoute/OpenRouter failure
+- OpenClaw compaction reserve: `agents.defaults.compaction.reserveTokensFloor=20000` in the live Gateway config, added after the 2026-05-28 upgrade to keep long tool-heavy sessions recoverable.
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
-- auth: `REQUIRE_API_KEY=true` on API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
+- auth: `REQUIRE_API_KEY` is redacted on the API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
 
 ### Telethon Digest (Telegram channel digest)
 

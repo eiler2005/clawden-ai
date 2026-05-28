@@ -83,7 +83,8 @@ Upgrade history:
 - `openclaw-with-iproute2:20260408` (`OpenClaw 2026.4.8`) — stable Whisper-enabled image used during earlier experiments
 - `openclaw-with-iproute2:20260412-slim` (`OpenClaw 2026.4.8`) — intermediate slim image with Whisper removed
 - `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) — previous production; slim image retained, base OpenClaw updated
-- `openclaw-with-iproute2:20260516-slim-2026.5.12` (`OpenClaw 2026.5.12`) — current production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
+- `openclaw-with-iproute2:20260516-slim-2026.5.12` (`OpenClaw 2026.5.12`) — previous production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
+- `openclaw-with-iproute2:20260528-slim-2026.5.26` (`OpenClaw 2026.5.26`) — current production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
 
 ## Final deployed shape
 
@@ -136,7 +137,7 @@ Current policy:
 - Whisper is **not** installed on the host OS
 - Whisper is **not** installed in the current OpenClaw gateway image
 - the current derived image keeps only `iproute2`, which is operationally required for `bind=lan`
-- the current live image tag is `openclaw-with-iproute2:20260516-slim-2026.5.12`
+- the current live image tag is `openclaw-with-iproute2:20260528-slim-2026.5.26`
 
 ### Verify current absence
 

@@ -117,11 +117,29 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
+## Host clock guard for Telegram bridges
+
+Telethon is sensitive to host clock drift. If logs show `Server sent a very new message` or
+`Too many messages had to be ignored consecutively`, check server time against an HTTPS `Date`
+header before debugging Telegram credentials.
+
+On 2026-05-28, UDP NTP replies were timing out from the host, so a small systemd timer was installed
+as a guard:
+
+```bash
+systemctl status openclaw-https-time-sync.timer
+journalctl -t openclaw-https-time-sync -n 20 --no-pager
+```
+
+The guard reads HTTPS `Date` headers from public endpoints, corrects only small clock drift, writes
+RTC, and logs the correction. It is a fallback for this VPS; normal NTP should still be preferred
+when UDP/123 is available again.
+
 ## OpenAI Codex auth recovery
 
 Current live policy: OpenAI is not the normal route. The Gateway primary route is
 `omniroute/light`, and `openai/gpt-5.5` is used only after OmniRoute/OpenRouter is unavailable.
-As of the 2026-05-16 live validation, the server has a short-lived `openai-codex` token profile
+As of the 2026-05-28 live validation, the server has a short-lived `openai-codex` token profile
 for that fallback path because the older OAuth refresh profiles return `invalid_request_error`.
 Refresh or re-auth this fallback before its token expiry; do not promote it to primary unless
 explicitly requested.
@@ -130,6 +148,8 @@ Symptom in Telegram:
 
 ```text
 Model login failed on the gateway for openai-codex
+Missing API key for provider "openai-codex"
+No credentials found for profile "openai-codex:codex-cli-current"
 ```
 
 Confirm the cause in gateway logs:
@@ -152,6 +172,11 @@ ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
     openclaw models auth login --provider openai-codex
 '
 ```
+
+If logs instead point at the agent-scoped auth store
+`/home/node/.openclaw/agents/main/agent/auth-profiles.json`, refresh the portable token profile
+from a current local Codex auth bootstrap, then delete the temporary server copy immediately. Do not
+print token values in logs or committed docs.
 
 Then restart the gateway so the running service drops the old token state:
 
@@ -183,17 +208,50 @@ have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly spend c
 credit errors if the default route returns `ALL_ACCOUNTS_INACTIVE`; OpenAI `openai/gpt-5.5` is the
 configured reserve after that failure.
 
+## OpenClaw auto-compaction reserve
+
+If Telegram or Gateway sessions show:
+
+```text
+Auto-compaction could not recover this turn
+increase your compaction buffer by setting agents.defaults.compaction.reserveTokensFloor
+```
+
+confirm the live value:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec -T openclaw-gateway \
+    openclaw config get agents.defaults.compaction.reserveTokensFloor
+'
+```
+
+As of 2026-05-28, the live Gateway is set to `20000`. The value was applied with
+`openclaw config set agents.defaults.compaction.reserveTokensFloor 20000 --strict-json`, followed
+by a Gateway restart. A default agent smoke then fell through from exhausted OmniRoute to
+`openai-codex/gpt-5.5` and returned `OK_COMPACTION_FALLBACK`.
+
 ## LightRAG embedding-provider recovery
 
-Current live status after the 2026-05-16 OpenClaw upgrade:
+Current live status after the 2026-05-28 OpenClaw upgrade:
 
 - LightRAG health and document status endpoints are live.
-- `scripts/smoke-check-knowledge.sh` can fail at `/query/data` with an embedding-provider 500 while
-  external limits are exhausted.
+- LightRAG retrieval is temporarily **deprecated** until a funded embeddings route is restored.
+- `scripts/smoke-check-knowledge.sh` reports `retrieval_status=deprecated_external_embeddings_unavailable`
+  when `/query/data` fails only because embeddings credentials/quota are missing.
 - Direct Gemini embeddings return the monthly spending-cap error.
 - OmniRoute/OpenRouter embeddings return no usable OpenRouter embedding credentials/quota.
 - The Codex/OpenAI subscription fallback works for Gateway chat responses, but it does not provide a
   usable OpenAI API embeddings route on this server.
+
+User-facing wording for this condition:
+
+```text
+LightRAG retrieval is temporarily deprecated/unavailable: the external embeddings route lacks paid
+quota or credentials. Wiki save still works, but search requires a funded Gemini/OpenRouter/OpenAI
+API embeddings route.
+```
 
 Recovery choices:
 

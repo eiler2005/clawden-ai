@@ -955,3 +955,73 @@ Local validation:
 - `artifacts/signals-bridge` tests: 84 OK
 - `artifacts/agentmail-email` tests: 18 OK
 - total: 127 tests OK
+
+## 28. OpenClaw 2026.5.26 live upgrade and Telegram bridge recovery
+
+Date: `2026-05-28`
+
+Goal: upgrade the live derived OpenClaw Gateway image to the latest stable upstream release and
+repair Telegram bridge delivery after the Sunday outage.
+
+Version source:
+
+- GitHub Releases marked `openclaw 2026.5.26` as the latest stable release.
+- `2026.5.27-beta.1` was present as a pre-release and was intentionally not selected.
+
+Representative OpenClaw deployment shape:
+
+```bash
+scp artifacts/openclaw/Dockerfile.iproute2 deploy@<server-host>:/tmp/Dockerfile.iproute2.openclaw-20260528
+
+ssh deploy@<server-host> '
+  sudo install -m 0644 /tmp/Dockerfile.iproute2.openclaw-20260528 /opt/openclaw/Dockerfile.iproute2
+  cd /opt/openclaw
+  sudo docker build --pull \
+    --build-arg OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:2026.5.26-slim \
+    --build-arg DEBIAN_MIRROR=https://mirror.yandex.ru \
+    -t openclaw-with-iproute2:20260528-slim-2026.5.26 \
+    -f Dockerfile.iproute2 .
+  sudo cp .env ".env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+  sudo sed -i "s/^OPENCLAW_IMAGE=.*/OPENCLAW_IMAGE=openclaw-with-iproute2:20260528-slim-2026.5.26/" .env
+  sudo docker compose up -d --force-recreate openclaw-gateway
+'
+```
+
+Live core validation:
+
+- `/healthz` returned live status.
+- `openclaw --version` returned `OpenClaw 2026.5.26`.
+- `command -v ip` returned `/usr/bin/ip`.
+- `whisper`, `ffmpeg`, and `ffprobe` remained absent.
+- stale managed npm `codex@2026.5.12` was uninstalled; plugin registry now uses bundled `codex` from `2026.5.26`.
+- model catalog contains `omniroute/light`, `openai/gpt-5.5`, `omniroute/smart`, and `omniroute/medium`; no `gpt-5.4` refs were present.
+
+OpenAI fallback recovery:
+
+- The live `openai-codex` fallback token profile had expired after the upgrade path.
+- A fresh local Codex auth bootstrap was copied to a server temp file, used to update only the agent-scoped `openai-codex:codex-cli-current` token profile, then removed from `/tmp`.
+- Direct `openai/gpt-5.5` smoke returned `OK_OPENAI_FALLBACK`.
+- Default route smoke first hit OmniRoute `503 all upstream accounts are inactive`, then returned `OK_DEFAULT_FALLBACK` through `openai-codex/gpt-5.5`.
+- Post-registry-refresh default smoke returned `OK_POST_PLUGIN` through the same fallback chain.
+
+Auto-compaction reserve recovery:
+
+- `agents.defaults.compaction.reserveTokensFloor` was absent in the live config.
+- The OpenClaw 2026.5.26 config schema validates `agents.defaults.compaction.reserveTokensFloor`, so the live config was backed up and set to `20000`.
+- Gateway was restarted and `/healthz` returned live status.
+- A default agent smoke first hit OmniRoute `503 all upstream accounts are inactive`, then returned `OK_COMPACTION_FALLBACK` through `openai-codex/gpt-5.5`.
+- Recent Gateway logs did not show `Missing API key for provider "openai-codex"`, `No credentials found for profile`, or `Auto-compaction could not recover`.
+
+Telegram bridge recovery:
+
+- Host clock was about 39 seconds behind Telegram HTTPS time, while `systemd-timesyncd` was timing out on UDP NTP. Telethon logs showed repeated `Server sent a very new message` and `Too many messages had to be ignored consecutively`.
+- Host time and RTC were corrected from HTTPS `Date`, and a small `openclaw-https-time-sync.timer` guard was installed on the server because UDP NTP remained unavailable.
+- `signals-bridge` and `telethon-digest-cron-bridge` were restarted.
+- Stale `signals` Redis jobs from the stuck Sunday run were fast-forwarded, the stale `lock:signals:ruleset:trading-si` lock was cleared, and one fresh `trading-si` run completed with `ok=true`, `pending=0`, `lag=0`.
+- A fresh `telethon-digest` interval run completed with exit code `0`, posted four chunks, persisted the digest note, and enqueued/uploaded the derived note to LightRAG.
+
+Deprecated retrieval gate:
+
+- `scripts/smoke-check-knowledge.sh` no longer uses a remote temp JSON file + `scp`; the first server probe now streams JSON over SSH stdout.
+- LightRAG `/query/data` still cannot run hybrid retrieval because the live embedding path returns `No credentials for embedding provider: openrouter`, while direct Gemini embeddings return a monthly spending-cap error and the Codex/OpenAI subscription fallback does not provide an API embeddings route.
+- This was accepted as a temporary **deprecated retrieval** state rather than a code regression. The smoke script now exits successfully for this specific paywall/credential condition and reports `retrieval_status=deprecated_external_embeddings_unavailable` plus the underlying query errors.

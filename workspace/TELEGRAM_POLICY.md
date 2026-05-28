@@ -17,6 +17,13 @@ Runtime policy for Benka / Бенька when handling Telegram surfaces.
 | `Ideas` | Idea capture | Capture любой контент: ссылки, пересланные посты из Telegram, мысли, фрагменты. Бот классифицирует, тегирует и вызывает `wiki_ingest(capture_mode=ideas)`, так что materialized `wiki/research/**` страница появляется сразу, но с light curation. Promotion в Knowledgebase углубляет уже существующий artifact chain и требует явное подтверждение. |
 | `Sandbox / Lab` | Sandbox | Test-only. Never write production memory from sandbox unless explicitly promoted. |
 
+LightRAG degraded/deprecated mode: if `Knowledge` Search fails with embedding-provider errors such as
+`No credentials for embedding provider`, `monthly spending cap`, `RESOURCE_EXHAUSTED`,
+`insufficient_quota`, or `credits_exhausted`, do not retry indefinitely and do not auto-fallback to
+internet search. Tell Denis plainly that LightRAG retrieval is temporarily deprecated because the
+external embeddings route lacks paid quota/credentials; wiki save still works, but search requires a
+funded Gemini/OpenRouter/OpenAI API embeddings route.
+
 ## Permission Assumptions
 
 - Default groups require mention/reply unless explicitly configured otherwise.

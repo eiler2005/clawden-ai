@@ -23,19 +23,15 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-REMOTE_JSON_PATH="/tmp/knowledge-smoke-check.$$.json"
-
 ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" \
-  "REMOTE_JSON_PATH='${REMOTE_JSON_PATH}' python3 -" > "${TMP_DIR}/remote-python.log" <<'PY'
+  "python3 -" > "${TMP_DIR}/remote.json" <<'PY'
 import json
-import os
 from pathlib import Path
 
 vault_root = Path("/opt/obsidian-vault")
 research_root = vault_root / "wiki" / "research"
 log_path = vault_root / "wiki" / "LOG.md"
 queue_path = vault_root / "wiki" / "IMPORT-QUEUE.md"
-output_path = Path(os.environ["REMOTE_JSON_PATH"])
 
 
 def count_prefix(prefix: str) -> int:
@@ -61,12 +57,8 @@ result = {
     "import_queue_tail": read_preview(queue_path),
 }
 
-output_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-print(output_path)
+print(json.dumps(result, ensure_ascii=False))
 PY
-
-scp "${SSH_OPTS[@]}" "${OPENCLAW_HOST}:${REMOTE_JSON_PATH}" "${TMP_DIR}/remote.json" >/dev/null
-ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" "rm -f '${REMOTE_JSON_PATH}'" >/dev/null
 
 EXCLUDE_SOURCE_TITLES="${EXCLUDE_SOURCE_TITLES}" \
 OPENCLAW_HOST="${OPENCLAW_HOST}" \
@@ -335,6 +327,31 @@ quality_summary = {
     ],
 }
 
+embedding_unavailable_markers = (
+    "no credentials for embedding provider",
+    "monthly spending cap",
+    "resource_exhausted",
+    "insufficient_quota",
+    "credits_exhausted",
+)
+embedding_paywall_errors = [
+    err
+    for err in quality_summary["query_errors"]
+    if any(marker in json.dumps(err, ensure_ascii=False).lower() for marker in embedding_unavailable_markers)
+]
+deprecated_retrieval = (
+    bool(quality_summary["query_errors"])
+    and len(embedding_paywall_errors) == len(quality_summary["query_errors"])
+)
+
+quality_summary["retrieval_status"] = "deprecated_external_embeddings_unavailable" if deprecated_retrieval else "active"
+quality_summary["deprecated_reason"] = (
+    "LightRAG retrieval requires a funded Gemini/OpenRouter/OpenAI API embeddings route. "
+    "Current external embedding providers are missing credentials, out of quota, or blocked by spending caps."
+    if deprecated_retrieval
+    else None
+)
+
 summary = {
     "wiki": {
         "research_page_total": remote["research_page_total"],
@@ -357,6 +374,12 @@ summary = {
 }
 
 print(json.dumps(summary, ensure_ascii=False, indent=2))
+if deprecated_retrieval:
+    print(
+        "LightRAG retrieval is deprecated for this deployment until a funded embeddings route is restored.",
+        file=sys.stderr,
+    )
+    sys.exit(0)
 if quality_summary["query_errors"] or not quality_summary["targeted_factual_pass"]:
     sys.exit(1)
 PY

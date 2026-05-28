@@ -141,6 +141,12 @@ This means LightRAG currently needs:
 - one OmniRoute API key for `LLM_BINDING=openai`
 - one Gemini API key for `EMBEDDING_BINDING=gemini`
 
+As of 2026-05-28, retrieval is temporarily **deprecated** on the live server because every available
+external embeddings route is blocked by paid-provider limits or missing credentials: direct Gemini
+returns the monthly spending-cap error, OmniRoute/OpenRouter has no usable embedding credentials/quota,
+and the Codex/OpenAI subscription fallback used by Gateway text inference is not an OpenAI API
+embeddings route. Treat this as an operational billing/credential state, not a LightRAG code bug.
+
 **Gemini free tier limits (still important for embeddings during bulk ingestion):**
 - 15 requests per minute (RPM)
 - 1,500 requests per day (RPD) — resets at UTC midnight (03:00 МСК)

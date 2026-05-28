@@ -195,6 +195,12 @@ LIVE > RAW > DERIVED
 Ответ ~2KB vs сканирование MB истории.
 Результаты — Derived-уровень, не canonical current-state.
 
+Текущий degraded/deprecated режим: если `lightrag_query` падает из-за embeddings provider
+credentials/quota (`No credentials for embedding provider`, `monthly spending cap`,
+`RESOURCE_EXHAUSTED`, `insufficient_quota`, `credits_exhausted`), не ретраить бесконечно и не
+называть это отсутствием знания. Сказать прямо: retrieval временно deprecated, потому что внешний
+embeddings-маршрут требует оплаченной квоты/credentials. Wiki-save остаётся рабочим.
+
 ```
 POST http://lightrag:9621/query
 {"query": "...", "mode": "hybrid"}

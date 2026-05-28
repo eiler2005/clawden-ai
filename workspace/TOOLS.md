@@ -12,6 +12,14 @@
 Использовать вместо прямого чтения архивных дневников и raw/.
 Один вызов ~2KB ответа vs загрузка MB истории.
 
+Текущий статус (2026-05-28): retrieval через LightRAG временно **deprecated**, если endpoint
+возвращает ошибки embeddings вида `No credentials for embedding provider`, `monthly spending cap`,
+`RESOURCE_EXHAUSTED`, `insufficient_quota` или `credits_exhausted`. Это внешний paid/quota-блокер,
+а не ошибка кода. В таком случае не ретраить по кругу и не уходить автоматически в интернет; ответить
+человечески: «LightRAG-поиск временно отключён/deprecated: внешнему embeddings-маршруту не хватает
+оплаченной квоты или credentials. Сохранение в wiki работает, но поиск по базе вернётся после
+восстановления Gemini/OpenRouter/OpenAI API embeddings route.»
+
 Что там лежит:
 - workspace markdown: identity, tools, memory, daily notes, raw decision records
 - Obsidian vault: `wiki/**/*.md` и `raw/signals/**/*.md`
@@ -64,6 +72,10 @@ Content-Type: application/json
 10. Generic fallback уровня «недостаточно информации» допустим лишь если после открытия кандидатов реально не нашлось supportable facts; если refs есть и подтверждают хотя бы часть запроса, нужно честно ответить хотя бы в формате «нашёл вот что / прямого подтверждения Z нет»
 11. Для broad/generative вопросов вроде `дай идеи постов`, `что полезно мне`, `какие мысли тут важны` после evidence-блоков обязательно добавить 2–5 прикладных рекомендаций, но каждая рекомендация должна быть привязана к найденным refs, а не придумана из воздуха
 12. Ответить в канал:
+
+Если шаг 1 падает из-за embeddings quota/credentials, остановить Search-ветку и вернуть
+deprecated-сообщение из раздела `lightrag_query`. Не маскировать это как «не нашёл контент»:
+контент может быть в wiki, но retrieval сейчас недоступен из-за внешней оплаты/квоты.
 
 ```
 🔍 Запрос: «{query}»

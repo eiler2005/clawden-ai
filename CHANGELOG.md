@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw runtime live upgrade**: upgraded the deployed derived gateway image to `openclaw-with-iproute2:20260528-slim-2026.5.26`, based on the latest stable upstream `OpenClaw 2026.5.26` release. Removed the stale managed npm `codex@2026.5.12` plugin install so the live registry now uses the bundled `codex` plugin from `2026.5.26`.
+- **OpenAI fallback auth refresh**: refreshed the live `openai-codex` token profile used by `openai/gpt-5.5` fallback. OmniRoute/OpenRouter remain primary; OpenAI is still used only after OmniRoute/OpenRouter failure.
+- **OpenClaw compaction reserve**: set the live Gateway `agents.defaults.compaction.reserveTokensFloor` to `20000` to avoid over-aggressive auto-compaction recovery after long tool-heavy turns.
+- **LightRAG retrieval deprecation**: classified live LightRAG search as temporarily deprecated while all external embeddings routes are blocked by missing paid quota/credentials. The knowledge smoke now reports `retrieval_status=deprecated_external_embeddings_unavailable` instead of treating this as a code regression.
 - **OpenClaw runtime target**: updated the redacted OpenClaw image template from `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) to `openclaw-with-iproute2:20260516-slim-2026.5.12`, based on the GitHub latest stable release and GHCR `latest` image reporting `OpenClaw 2026.5.12`. Added a tracked `artifacts/openclaw/Dockerfile.iproute2` template for rebuilding the minimal derived image with only `iproute2`; the live `/opt/openclaw` gateway now runs this image.
 - **OpenClaw model reserve policy**: live Gateway keeps `omniroute/light` as the primary route and uses `openai/gpt-5.5` only as fallback after OmniRoute/OpenRouter failure. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
 - **OpenClaw GPT model ref**: replaced active legacy GPT/OpenAI Codex references with canonical OpenClaw `openai/gpt-5.5` fallback docs and footer labels, matching the current live model catalog and OpenClaw provider docs.
@@ -31,7 +35,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Claude/Gemini research prompt for memory lifecycle**: added `docs/18-claude-llm-wiki-memory-lifecycle-prompt.md` so the current LLM-Wiki lifecycle problem can be handed to another model with consistent context, constraints, and evaluation criteria.
 
 ### Fixed
+- **Telegram bridge recovery after host clock drift**: repaired the live Telegram delivery outage that started after the Sunday runs by correcting host time, adding a small HTTPS Date systemd timer guard, restarting `signals-bridge` and `telethon-digest`, fast-forwarding stale `signals` Redis jobs, and validating fresh bridge runs. `signals` now has zero Redis lag/pending jobs, and `telegram-digest` completed a fresh interval digest with four posted chunks.
 - **Live OpenAI fallback token profile**: repaired the OpenAI fallback path by replacing the expired server OAuth refresh path with a short-lived Codex token auth profile. Direct fallback smoke and default model fallback both return `OK` through `openai/gpt-5.5` after OmniRoute reports exhausted upstream accounts.
+- **OpenClaw auto-compaction recovery**: applied the live compaction reserve floor and validated a post-restart default agent smoke returning `OK_COMPACTION_FALLBACK` through `openai-codex/gpt-5.5`; recent gateway logs no longer show `Missing API key for provider "openai-codex"` or `Auto-compaction could not recover`.
+- **Knowledge smoke transport and error semantics**: removed the remote temp-file/`scp` hop from `scripts/smoke-check-knowledge.sh` and made embedding paywall/credential failures produce an explicit deprecated retrieval status.
 - **Live Telegram delivery smoke**: validated the deployed `Knowledgebase` topic with the existing Telethon owner session and a strict bot-reply filter; the bot returned an explicit source-style answer after the OmniRoute failure path fell through to OpenAI fallback.
 - **OpenClaw usage-limit fallback path**: patched the live gateway runtime so embedded-agent
   `stopReason=error` results from `openai-codex` are rethrown into the model fallback layer instead
