@@ -410,14 +410,14 @@ Container `telethon-digest-cron-bridge` shares the `openclaw_default` network, m
 socket so it can exec OpenClaw/OpenAI requests inside the live gateway, and has direct access to
 `http://omniroute:20129/v1` plus `http://integration-bus-redis:6379`.
 
-The scheduler of record is `/etc/cron.d/telethon-digest`. It calls
-`/opt/telethon-digest/trigger-digest.sh` for the five slots:
+The scheduler of record is `/etc/cron.d/telethon-digest`. Host cron evaluates
+the schedule in UTC and passes the intended Moscow slot as script arguments:
 
-- `08:00` morning
-- `11:00` interval
-- `14:00` interval
-- `17:00` interval
-- `21:00` editorial
+- `05:00 UTC` → `08:00 MSK` morning
+- `08:00 UTC` → `11:00 MSK` interval
+- `11:00 UTC` → `14:00 MSK` interval
+- `14:00 UTC` → `17:00 MSK` interval
+- `18:00 UTC` → `21:00 MSK` editorial
 
 The old OpenClaw Telethon agent-turn cron jobs are disabled on the live server.
 After the 2026.5.x upgrade they could report a successful cron run while the

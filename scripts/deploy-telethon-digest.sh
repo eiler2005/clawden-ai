@@ -116,13 +116,13 @@ PY
   sudo tee /etc/cron.d/telethon-digest >/dev/null <<'CRON'
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-TZ=Europe/Moscow
+# Host cron evaluates this file in UTC. The final arguments keep Moscow slot labels.
 
-0 8 * * * root /opt/telethon-digest/trigger-digest.sh morning 8 0 >> /var/log/telethon-digest-cron.log 2>&1
-0 11 * * * root /opt/telethon-digest/trigger-digest.sh interval 11 0 >> /var/log/telethon-digest-cron.log 2>&1
-0 14 * * * root /opt/telethon-digest/trigger-digest.sh interval 14 0 >> /var/log/telethon-digest-cron.log 2>&1
-0 17 * * * root /opt/telethon-digest/trigger-digest.sh interval 17 0 >> /var/log/telethon-digest-cron.log 2>&1
-0 21 * * * root /opt/telethon-digest/trigger-digest.sh editorial 21 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 5 * * * root /opt/telethon-digest/trigger-digest.sh morning 8 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 8 * * * root /opt/telethon-digest/trigger-digest.sh interval 11 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 11 * * * root /opt/telethon-digest/trigger-digest.sh interval 14 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 14 * * * root /opt/telethon-digest/trigger-digest.sh interval 17 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 18 * * * root /opt/telethon-digest/trigger-digest.sh editorial 21 0 >> /var/log/telethon-digest-cron.log 2>&1
 CRON
   sudo chmod 0644 /etc/cron.d/telethon-digest
 
@@ -147,7 +147,7 @@ CRON
   fi
 
   sudo test -x /opt/telethon-digest/trigger-digest.sh
-  sudo grep -q "/opt/telethon-digest/trigger-digest.sh morning 8 0" /etc/cron.d/telethon-digest
+  sudo grep -q "0 5 \\* \\* \\* root /opt/telethon-digest/trigger-digest.sh morning 8 0" /etc/cron.d/telethon-digest
 '
 
 cat <<'EOF'

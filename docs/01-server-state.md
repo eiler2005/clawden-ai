@@ -319,7 +319,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `telethon-state` — per-channel watermarks, last run timestamp, and `pulse-profile.json` for learned interest buckets
 - runtime config: `/opt/telethon-digest/config.json`, generated from Telegram folders by `sync_channels.py`
 - output target: `telegram-digest` topic in `Benka_Clawbot_SuperGroup`
-- schedule: host cron file `/etc/cron.d/telethon-digest` at 08:00, 11:00, 14:00, 17:00, 21:00 Moscow time; OpenClaw Telethon agent-turn cron jobs are disabled because the lightweight cron context no longer exposes shell tools reliably
+- schedule: host cron file `/etc/cron.d/telethon-digest` uses UTC cron times `05:00`, `08:00`, `11:00`, `14:00`, `18:00` to produce Moscow slots `08:00`, `11:00`, `14:00`, `17:00`, `21:00`; OpenClaw Telethon agent-turn cron jobs are disabled because the lightweight cron context no longer exposes shell tools reliably
 - read scope: application-enforced allowlist, `read_only=true`, `read_broadcast_channels_only=true`
 - current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `work`, `eb1`, `гребенюк`, `personal`, `faang`
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist

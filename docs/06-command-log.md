@@ -1131,3 +1131,12 @@ Validation:
 - Telethon readback from the `telegram-digest` topic found the bot-posted message
   `Дайджест | 08:00–08:45` at `2026-05-29T05:50:16Z`.
 - Local Telethon Digest tests: `6` OK, including coverage for missing LLM `post_url` repair.
+
+Follow-up correction:
+
+- The first host cron file used local Moscow hours with `TZ=Europe/Moscow`. On this server the cron
+  daemon evaluated schedule fields in UTC, while `TZ` only affected the command environment. As a
+  result, the `11:00` slot fired at `14:00 MSK` and posted an old `09:00-11:00` window.
+- The live `/etc/cron.d/telethon-digest` was corrected to explicit UTC times:
+  `05:00 -> 08:00 MSK`, `08:00 -> 11:00 MSK`, `11:00 -> 14:00 MSK`,
+  `14:00 -> 17:00 MSK`, `18:00 -> 21:00 MSK`.

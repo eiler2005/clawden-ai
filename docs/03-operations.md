@@ -972,11 +972,11 @@ legacy Telethon Digest OpenClaw cron jobs if they are still present.
 
 **Managed host cron slots:**
 
-- `0 8 * * *` → `trigger-digest.sh morning 8 0`
-- `0 11 * * *` → `trigger-digest.sh interval 11 0`
-- `0 14 * * *` → `trigger-digest.sh interval 14 0`
-- `0 17 * * *` → `trigger-digest.sh interval 17 0`
-- `0 21 * * *` → `trigger-digest.sh editorial 21 0`
+- `0 5 * * *` UTC → `trigger-digest.sh morning 8 0`
+- `0 8 * * *` UTC → `trigger-digest.sh interval 11 0`
+- `0 11 * * *` UTC → `trigger-digest.sh interval 14 0`
+- `0 14 * * *` UTC → `trigger-digest.sh interval 17 0`
+- `0 18 * * *` UTC → `trigger-digest.sh editorial 21 0`
 
 Each cron slot sends one authenticated HTTP trigger to `telethon-digest-cron-bridge`
 from inside the bridge container. The bridge then runs `python digest_worker.py --now`
@@ -985,6 +985,10 @@ job is retried later than the scheduled hour. The trigger also passes the nomina
 slot (`08:00`, `11:00`, `14:00`, `17:00`, `21:00`) into the worker, so the digest
 header keeps the scheduled window label even if Telegram shows the message itself
 at `11:05` because rendering/posting finished a few minutes later.
+Do not replace these lines with `TZ=Europe/Moscow` plus local-hour cron expressions:
+the deployed host cron evaluates schedule times in UTC, while `TZ` only changes the
+command environment. Using local-hour expressions there causes delayed, stale
+window labels such as an `11:00` slot firing at `14:00 MSK`.
 
 The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
