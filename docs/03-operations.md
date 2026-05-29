@@ -1157,8 +1157,9 @@ The deploy script:
 - materializes the real `AGENTMAIL_INBOX_REF` into `/opt/agentmail-email/config.json`
 - removes stale `/opt/agentmail-email/openclaw-config` leftovers from the old embedded-runtime design
 - prunes dangling Docker image/build artifacts after a successful rebuild
-- syncs the four digest OpenClaw Cron Jobs
-- validates that no 5-minute poll cron job remains and that each digest cron job still has a next scheduled run
+- installs `/etc/cron.d/agentmail-email` so host cron triggers digest delivery directly
+- disables legacy `AgentMail Inbox · ...` OpenClaw Cron digest jobs after backing up the cron store
+- validates that no 5-minute poll cron job remains
 
 Architecture note:
 
@@ -1169,6 +1170,9 @@ Architecture note:
 - The shared `openclaw-openclaw-gateway-1` container is used only for LLM steps over prepared
   thread snapshots or derived events.
 - The 5-minute poll no longer relies on OpenClaw Cron Jobs; it is scheduled internally by the bridge.
+- The scheduled Telegram digests no longer rely on OpenClaw agent-turn Cron Jobs either; host cron
+  calls `/opt/agentmail-email/trigger-email-digest.sh` directly to avoid false-positive cron runs
+  when the lightweight OpenClaw cron context has no shell tool available.
 
 Current validation snapshot:
 
@@ -1187,12 +1191,17 @@ Current validation snapshot:
 - on `2026-04-13`, server-side image tests passed: `python -m unittest discover -s /app/tests`
   → `Ran 5 tests ... OK`
 
-### Managed OpenClaw jobs
+### Host cron jobs
 
-- `AgentMail Inbox · 08:00 Morning brief`
-- `AgentMail Inbox · 13:00 Regular digest`
-- `AgentMail Inbox · 16:00 Regular digest`
-- `AgentMail Inbox · 20:00 Evening editorial`
+Host cron runs in UTC. `/etc/cron.d/agentmail-email` maps to the Moscow digest slots:
+
+- `05:00 UTC` → `08:00 MSK` morning brief
+- `10:00 UTC` → `13:00 MSK` regular digest
+- `13:00 UTC` → `16:00 MSK` regular digest
+- `17:00 UTC` → `20:00 MSK` evening editorial
+
+Legacy `AgentMail Inbox · ...` OpenClaw Cron jobs are disabled in the cron store to prevent duplicate
+delivery.
 
 ## AgentMail Work Email
 
@@ -1261,17 +1270,25 @@ Current validation snapshot:
   eight managed cron jobs remained present with `enabled=true`
 - on `2026-04-14`, a live mailbox-window check inside the running bridge showed forwarded CNews
   invitations under `Elena Zabrodina` while calendar forwards still rendered as `Яндекс.Календарь`
+- on `2026-05-29`, email polling was verified healthy while Telegram digest delivery had stalled
+  behind false-positive OpenClaw Cron runs without an exec/shell tool; digest delivery moved to
+  `/etc/cron.d/agentmail-work-email`, and the legacy OpenClaw Cron jobs were disabled.
 
-### Managed OpenClaw jobs
+### Host cron jobs
 
-- `AgentMail Work Email · 08:30 Morning triage`
-- `AgentMail Work Email · 10:00 Regular digest`
-- `AgentMail Work Email · 11:30 Regular digest`
-- `AgentMail Work Email · 13:00 Regular digest`
-- `AgentMail Work Email · 14:30 Regular digest`
-- `AgentMail Work Email · 16:00 Regular digest`
-- `AgentMail Work Email · 17:30 Regular digest`
-- `AgentMail Work Email · 19:00 End-of-day wrap-up`
+Host cron runs in UTC. `/etc/cron.d/agentmail-work-email` maps to the Moscow digest slots:
+
+- `05:30 UTC` → `08:30 MSK` morning triage
+- `07:00 UTC` → `10:00 MSK` regular digest
+- `08:30 UTC` → `11:30 MSK` regular digest
+- `10:00 UTC` → `13:00 MSK` regular digest
+- `11:30 UTC` → `14:30 MSK` regular digest
+- `13:00 UTC` → `16:00 MSK` regular digest
+- `14:30 UTC` → `17:30 MSK` regular digest
+- `16:00 UTC` → `19:00 MSK` end-of-day wrap-up
+
+Legacy `AgentMail Work Email · ...` OpenClaw Cron jobs are disabled in the cron store to prevent
+duplicate delivery.
 
 ### Bridge diagnostics
 

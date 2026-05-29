@@ -544,8 +544,8 @@ container, and secret env.
 ### Architecture
 
 ```text
-OpenClaw Cron Jobs (08:00/13:00/16:00/20:00 МСК)
-  └── isolated OpenClaw agent run
+Host cron (08:00/13:00/16:00/20:00 МСК)
+  └── /opt/agentmail-email/trigger-email-digest.sh
         └── HTTP POST /trigger → agentmail-email-bridge
               └── XADD ingest:jobs:email → HTTP 202 (immediate)
 
@@ -577,11 +577,13 @@ agentmail-email-bridge internal scheduler (every 5m)
   bodies and attachments are excluded, and scheduled digests no longer depend on Telegram history.
 - The 5-minute poll is now internal to the bridge, which removes the OpenClaw cron-enqueue token cost
   and lets obvious low-signal / empty windows skip the LLM entirely.
+- Scheduled digest delivery is host-cron driven rather than OpenClaw agent-turn Cron driven; this
+  avoids false-positive OpenClaw cron runs when the cron context has no shell/exec tool.
 - Manual recovery/backfill uses `lookback_minutes` on `/trigger`, which widens the poll or digest
   window without changing the standalone bridge architecture.
 - Live validation on `2026-04-13`: the bridge self-enqueued a poll via the internal scheduler,
   the poll finished with `exit_code=0`, and `/status` exposed prefilter counters directly in the
-  final `poll summary`. The four OpenClaw cron jobs remained digest-only (`08:00/13:00/16:00/20:00`).
+  final `poll summary`.
 
 ## AgentMail Work Email
 
@@ -596,7 +598,7 @@ versus `Для информации` sections.
 
 - internal poll scheduler every 5 minutes
 - scheduled digest slots: `08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, `19:00`
-  Europe/Moscow
+  Europe/Moscow, triggered by `/etc/cron.d/agentmail-work-email`
 - Redis jobs stream: `ingest:jobs:email:work`
 - Redis events stream: `ingest:events:email:work`
 - consumer group: `email-workers-work`
@@ -612,10 +614,13 @@ versus `Для информации` sections.
   derived events into `ingest:events:email:work`
 - manual `digest interval lookback=240` finished with `exit_code=0` on `127.0.0.1:8094`
 - on `2026-04-14`, the bridge was redeployed with work-only forwarded-sender resolution; post-deploy
-  `GET /health` / `GET /status` returned `last_exit_code=0` and the eight managed cron jobs stayed enabled
+  `GET /health` / `GET /status` returned `last_exit_code=0`
 - on `2026-04-14`, a live mailbox-window probe inside the bridge resolved forwarded CNews mail to
   `Elena Zabrodina`, confirming that work-email grouping now uses the underlying author when the
   inline forwarded headers are present
+- on `2026-05-29`, the pollers were healthy but OpenClaw Cron digest runs were false-positive `ok`
+  without bridge execution; both AgentMail digest schedules moved to host cron direct trigger, with
+  legacy OpenClaw Cron AgentMail jobs disabled.
 
 ### Scoring
 

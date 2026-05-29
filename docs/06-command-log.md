@@ -1140,3 +1140,31 @@ Follow-up correction:
 - The live `/etc/cron.d/telethon-digest` was corrected to explicit UTC times:
   `05:00 -> 08:00 MSK`, `08:00 -> 11:00 MSK`, `11:00 -> 14:00 MSK`,
   `14:00 -> 17:00 MSK`, `18:00 -> 21:00 MSK`.
+
+## 31. AgentMail digest delivery repair
+
+Date: `2026-05-29`
+
+Problem:
+
+- `inbox-email` and `work-email` topics looked stale, but both AgentMail bridge pollers were healthy:
+  `/status` showed recent 5-minute polls with `exit_code=0`, and Redis streams contained fresh
+  `ingest:jobs:email*` plus derived `ingest:events:email*` entries.
+- OpenClaw Cron digest runs for AgentMail reported `ok` while their summaries said the bridge HTTP
+  trigger was not executed because no exec/shell tool was available in the lightweight cron context.
+
+Fix:
+
+- Added `/opt/agentmail-email/trigger-email-digest.sh`, reused by the personal and work email
+  deployments, to call the running bridge `/trigger` endpoint from inside the bridge container.
+- Replaced AgentMail digest delivery with host cron:
+  `/etc/cron.d/agentmail-email` for `08:00/13:00/16:00/20:00 MSK`, and
+  `/etc/cron.d/agentmail-work-email` for `08:30/10:00/11:30/13:00/14:30/16:00/17:30/19:00 MSK`.
+- Disabled legacy `AgentMail Inbox · ...` and `AgentMail Work Email · ...` OpenClaw Cron digest jobs
+  after backing up the cron store, preventing duplicate sends while preserving the old records.
+
+Validation:
+
+- Polling remained internal to the bridge and continued every 5 minutes.
+- Fresh work-email derived events were present before the repair, including contract/payment threads,
+  confirming the outage was Telegram delivery only rather than AgentMail ingestion.

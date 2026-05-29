@@ -108,7 +108,13 @@ def load_config() -> dict:
 
 
 def _make_redis() -> redis_lib.Redis:
-    return redis_lib.from_url(REDIS_URL, decode_responses=True)
+    return redis_lib.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_timeout=(BLOCK_MS / 1000) + 10,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+    )
 
 
 def _json_bytes(payload: dict) -> bytes:
@@ -1013,7 +1019,7 @@ def _process_digest(r: redis_lib.Redis, *, data: dict[str, str], config: dict) -
         last_poll_success = state_store.get_dt(r, state_store.last_poll_success_key(inbox_ref))
         lag_grace = timedelta(minutes=int(config.get("poll_lag_grace_minutes", 15) or 15))
         catchup_tail: list[str] = []
-        if last_poll_success is None or (now - last_poll_success) > lag_grace:
+        if lookback_minutes is None and (last_poll_success is None or (now - last_poll_success) > lag_grace):
             catchup_since = window_start if lookback_minutes is not None else (
                 state_store.get_dt(r, state_store.last_poll_key(inbox_ref)) or window_start
             )
@@ -1249,17 +1255,30 @@ def _consumer_loop_inner(r: redis_lib.Redis) -> None:
 
     logger.info("Email consumer loop ready — listening on '%s'", STREAM_JOBS)
     while True:
-        messages = r.xreadgroup(
-            CONSUMER_GROUP,
-            CONSUMER_NAME,
-            {STREAM_JOBS: ">"},
-            block=BLOCK_MS,
-            count=1,
-        )
+        try:
+            messages = r.xreadgroup(
+                CONSUMER_GROUP,
+                CONSUMER_NAME,
+                {STREAM_JOBS: "0"},
+                count=1,
+            )
+            entries = messages[0][1] if messages else []
+            if not entries:
+                messages = r.xreadgroup(
+                    CONSUMER_GROUP,
+                    CONSUMER_NAME,
+                    {STREAM_JOBS: ">"},
+                    block=BLOCK_MS,
+                    count=1,
+                )
+        except redis_lib.exceptions.TimeoutError:
+            continue
         if not messages:
             continue
 
         _, entries = messages[0]
+        if not entries:
+            continue
         msg_id, data = entries[0]
         job_type = data.get("job_type", "poll")
         digest_type = data.get("digest_type", "")

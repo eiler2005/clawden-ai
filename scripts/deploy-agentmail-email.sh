@@ -145,6 +145,7 @@ PY
 
   sudo chmod 600 email.env
   sudo chmod +x /opt/agentmail-email/entrypoint.sh
+  sudo chmod +x /opt/agentmail-email/trigger-email-digest.sh
   sudo chmod +x /opt/agentmail-email/sync-openclaw-cron-jobs.sh
   sudo test -f config.json || sudo cp config.example.json config.json
   sudo python3 - <<'PY'
@@ -196,27 +197,22 @@ PY
   sudo docker compose --env-file email.env up -d agentmail-email-bridge
   sudo docker image prune -f >/dev/null 2>&1 || true
   sudo docker builder prune -f >/dev/null 2>&1 || true
-  sudo env \
-    EMAIL_ENV_FILE=/opt/agentmail-email/email.env \
-    EMAIL_CONFIG_FILE=/opt/agentmail-email/config.json \
-    /opt/agentmail-email/sync-openclaw-cron-jobs.sh
 
-  ready=0
-  for _ in $(seq 1 75); do
-    status="$(sudo docker ps --format "{{.Names}} {{.Status}}" | grep "^openclaw-openclaw-gateway-1 " || true)"
-    if echo "$status" | grep -q "(healthy)"; then
-      ready=1
-      break
-    fi
-    sleep 2
-  done
-  if [ "$ready" -ne 1 ]; then
-    echo "OpenClaw gateway did not become healthy after cron sync." >&2
-    exit 1
-  fi
+  sudo tee /etc/cron.d/agentmail-email >/dev/null <<'CRON'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Host cron runs in UTC. These lines map to 08:00, 13:00, 16:00, 20:00 MSK.
+0 5 * * * root /opt/agentmail-email/trigger-email-digest.sh morning >> /var/log/agentmail-email-cron.log 2>&1
+0 10 * * * root /opt/agentmail-email/trigger-email-digest.sh interval >> /var/log/agentmail-email-cron.log 2>&1
+0 13 * * * root /opt/agentmail-email/trigger-email-digest.sh interval >> /var/log/agentmail-email-cron.log 2>&1
+0 17 * * * root /opt/agentmail-email/trigger-email-digest.sh editorial >> /var/log/agentmail-email-cron.log 2>&1
+CRON
+  sudo chmod 0644 /etc/cron.d/agentmail-email
 
   sudo python3 - <<'PY'
 import json
+import shutil
+import time
 from pathlib import Path
 
 paths = [
@@ -225,31 +221,29 @@ paths = [
 ]
 store_path = next((path for path in paths if path.exists()), None)
 if store_path is None:
-    raise SystemExit("OpenClaw cron store not found after sync.")
+    raise SystemExit("OpenClaw cron store not found.")
 
 data = json.loads(store_path.read_text())
-jobs = data.get("jobs", []) if isinstance(data, dict) else data
+jobs = data.get("jobs", data if isinstance(data, list) else [])
 poll_jobs = [job for job in jobs if job.get("name") == "AgentMail Inbox · Poll every 5m"]
 if poll_jobs:
-    raise SystemExit("AgentMail poll cron job should not exist after sync.")
+    raise SystemExit("AgentMail poll cron job should not exist.")
 
-expected_names = [
-    "AgentMail Inbox · 08:00 Morning brief",
-    "AgentMail Inbox · 13:00 Regular digest",
-    "AgentMail Inbox · 16:00 Regular digest",
-    "AgentMail Inbox · 20:00 Evening editorial",
-]
-for name in expected_names:
-    matches = [job for job in jobs if job.get("name") == name]
-    if not matches:
-        raise SystemExit(f"AgentMail digest cron job missing after sync: {name}")
-    job = matches[-1]
-    state = job.get("state", {})
-    if not job.get("enabled", False):
-        raise SystemExit(f"AgentMail digest cron job is disabled after sync: {name}")
-    if not state.get("nextRunAtMs"):
-        raise SystemExit(f"AgentMail digest cron job has no nextRunAtMs after sync: {name}")
+changed = False
+for job in jobs:
+    if isinstance(job, dict) and str(job.get("name", "")).startswith("AgentMail Inbox ·"):
+        if job.get("enabled", True):
+            job["enabled"] = False
+            changed = True
+
+if changed:
+    shutil.copy2(store_path, store_path.with_name(f"{store_path.name}.bak-{int(time.time())}"))
+    store_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 PY
+
+  cd /opt/openclaw
+  sudo docker compose up -d openclaw-gateway
+  sudo grep -q "0 5 \* \* \* root /opt/agentmail-email/trigger-email-digest.sh morning" /etc/cron.d/agentmail-email
 '
 
 cat <<'EOF'
@@ -257,12 +251,12 @@ AgentMail inbox-email pipeline deployed.
 
 Scheduled:
   - internal scheduler poll every 5 minutes
-  - digests at 08:00 / 13:00 / 16:00 / 20:00 MSK
+  - digests at 08:00 / 13:00 / 16:00 / 20:00 MSK via /etc/cron.d/agentmail-email
 
 Useful commands:
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'cd /opt/agentmail-email && sudo docker compose logs --tail=100 agentmail-email-bridge'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'curl -s http://127.0.0.1:8092/health && echo && curl -s http://127.0.0.1:8092/status'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:jobs:email'
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'docker exec integration-bus-redis redis-cli XLEN ingest:events:email'
-  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /etc/cron.d/agentmail-email'
 EOF
