@@ -137,12 +137,11 @@ when UDP/123 is available again.
 
 ## OpenAI Codex auth recovery
 
-Current live policy: OpenAI is not the normal route. The Gateway primary route is
-`omniroute/light`, and `openai/gpt-5.5` is used only after OmniRoute/OpenRouter is unavailable.
-As of the 2026-05-28 live validation, the server has a short-lived `openai-codex` token profile
-for that fallback path because the older OAuth refresh profiles return `invalid_request_error`.
-Refresh or re-auth this fallback before its token expiry; do not promote it to primary unless
-explicitly requested.
+Current live policy: OpenAI via OpenClaw is the normal route. The Gateway primary route is
+`openai/gpt-5.5`, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve.
+As of the 2026-05-28 live validation, the server-side OpenAI Codex OAuth profile was re-authenticated
+with the device-code flow and aliased back to the legacy `openai-codex:*` profile ids so Telegram
+sessions stop seeing stale expired profile state.
 
 Symptom in Telegram:
 
@@ -199,14 +198,15 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 Expected essentials:
 
 ```text
-omniroute/light       ... Auth yes  default,configured
-openai/gpt-5.5        ... Auth yes  fallback#1
+openai/gpt-5.5              ... Auth yes  default,configured
+omniroute/light             ... Auth yes  fallback#1
+deepseek/deepseek-v4-flash  ... Auth yes  fallback#2
 ```
 
-Important: OmniRoute is the default OpenClaw route, but it only works if its own upstream accounts
-have quota. Check OmniRoute logs for `credits_exhausted`, Gemini monthly spend caps, or OpenRouter
-credit errors if the default route returns `ALL_ACCOUNTS_INACTIVE`; OpenAI `openai/gpt-5.5` is the
-configured reserve after that failure.
+Important: if OpenAI hits a subscription/usage-limit failure, Gateway should move to OmniRoute.
+OmniRoute still only works if its own upstream accounts have quota. Check OmniRoute logs for
+`credits_exhausted`, Gemini monthly spend caps, or OpenRouter credit errors if the reserve route
+returns `ALL_ACCOUNTS_INACTIVE`; DeepSeek is the final reserve after that failure.
 
 ## OpenClaw auto-compaction reserve
 
@@ -229,8 +229,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 As of 2026-05-28, the live Gateway is set to `20000`. The value was applied with
 `openclaw config set agents.defaults.compaction.reserveTokensFloor 20000 --strict-json`, followed
-by a Gateway restart. A default agent smoke then fell through from exhausted OmniRoute to
-`openai-codex/gpt-5.5` and returned `OK_COMPACTION_FALLBACK`.
+by a Gateway restart. A default agent smoke then returned through `openai/gpt-5.5`.
 
 ## LightRAG embedding-provider recovery
 
@@ -263,7 +262,7 @@ If Telegram shows the same "Model login failed" text but the session JSONL conta
 as `You have hit your ChatGPT usage limit (...) Try again in ~N min.`, the OAuth profile is not the
 root cause. That is a primary-model usage-limit failure. The live gateway was patched on
 2026-04-26 so embedded-agent `stopReason=error` results are rethrown into `runWithModelFallback`
-and can attempt `omniroute/medium -> omniroute/smart -> omniroute/light`. The same live patch also
+and can attempt the configured fallback chain. The same live patch also
 adds a user-facing usage-limit message before OAuth/login classification, so Telegram should say
 that OpenAI Codex hit a temporary ChatGPT usage limit instead of recommending OAuth re-auth.
 
@@ -941,10 +940,16 @@ launchctl unload ~/Library/LaunchAgents/com.openclaw.obsidian-sync.plist
 
 Telethon Digest reads Denis's Telegram subscriptions via Telethon and posts structured
 digests to the configured supergroup topic using the OpenClaw Telegram bot token.
-It calls OmniRoute (`http://omniroute:20129/v1`) for LLM summarization and dedup.
+LLM summarization and dedup use OpenClaw/OpenAI first, then OmniRoute
+(`http://omniroute:20129/v1`), then DeepSeek as final reserve, before local deterministic fallback.
 
-**Scheduling:** OpenClaw Gateway Cron Jobs trigger one-shot runs at
-`08:00, 11:00, 14:00, 17:00, 21:00 MSK`. No long-running daemon.
+**Scheduling:** host cron triggers one-shot runs at
+`08:00, 11:00, 14:00, 17:00, 21:00 MSK` by calling
+`/opt/telethon-digest/trigger-digest.sh`. No long-running digest worker daemon.
+The always-on `telethon-digest-cron-bridge` consumes the Redis job and runs the
+worker. OpenClaw Telethon agent-turn cron jobs are disabled on the live server
+because the 2026.5.x lightweight cron context can report `ok` while refusing the
+shell tool needed to call the bridge.
 
 **Digest types (auto-selected by hour):**
 
@@ -962,25 +967,24 @@ bash scripts/deploy-telethon-digest.sh
 ```
 
 The script: rsyncs source, fills secrets from `/opt/openclaw/.env`, rebuilds image,
-stops the old daemon if any, removes legacy `/etc/cron.d/telethon-digest`, and syncs
-the five OpenClaw Cron Jobs into the Gateway store so they appear in Control → Cron Jobs.
+stops the old daemon if any, writes `/etc/cron.d/telethon-digest`, and disables
+legacy Telethon Digest OpenClaw cron jobs if they are still present.
 
-**Managed OpenClaw jobs:**
+**Managed host cron slots:**
 
-- `Telethon Digest · 08:00 Morning brief`
-- `Telethon Digest · 11:00 Regular digest`
-- `Telethon Digest · 14:00 Regular digest`
-- `Telethon Digest · 17:00 Regular digest`
-- `Telethon Digest · 21:00 Evening editorial`
+- `0 8 * * *` → `trigger-digest.sh morning 8 0`
+- `0 11 * * *` → `trigger-digest.sh interval 11 0`
+- `0 14 * * *` → `trigger-digest.sh interval 14 0`
+- `0 17 * * *` → `trigger-digest.sh interval 17 0`
+- `0 21 * * *` → `trigger-digest.sh editorial 21 0`
 
-Each job runs as an **isolated OpenClaw cron run** and sends one authenticated
-HTTP trigger from the gateway container to `telethon-digest-cron-bridge` inside
-`openclaw_default`. The bridge then runs `python digest_worker.py --now` with an
-explicit `DIGEST_TYPE_OVERRIDE`, which keeps the run type stable even if the
-gateway retries a job later than the scheduled hour. The cron payload also passes
-the nominal slot (`08:00`, `11:00`, `14:00`, `17:00`, `21:00`) into the worker,
-so the digest header keeps the scheduled window label even if Telegram shows the
-message itself at `11:05` because rendering/posting finished a few minutes later.
+Each cron slot sends one authenticated HTTP trigger to `telethon-digest-cron-bridge`
+from inside the bridge container. The bridge then runs `python digest_worker.py --now`
+with an explicit `DIGEST_TYPE_OVERRIDE`, which keeps the run type stable even if a
+job is retried later than the scheduled hour. The trigger also passes the nominal
+slot (`08:00`, `11:00`, `14:00`, `17:00`, `21:00`) into the worker, so the digest
+header keeps the scheduled window label even if Telegram shows the message itself
+at `11:05` because rendering/posting finished a few minutes later.
 
 The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
@@ -1364,8 +1368,8 @@ Use this after migrating away from the old embedded-runtime design or after repe
 
 Signals Bridge polls allowlisted email + Telegram sources every 5 minutes through its own internal
 Python scheduler and publishes compact mini-batches into the `signals` topic. This service does not
-use OpenClaw Cron Jobs and does not use GPT-5.5 in the ingestion path; enrichment is limited to
-cheap `OmniRoute light` calls with low token budgets and a local fallback.
+use OpenClaw Cron Jobs. LLM enrichment uses OpenClaw/OpenAI first, then cheap `OmniRoute light`,
+then DeepSeek as final reserve, with local rule-based summaries only after all model routes fail.
 
 Delivery format:
 
@@ -1420,8 +1424,8 @@ Architecture note:
 - scheduling is internal to `signals-bridge`
 - public docs/templates stay generic; real local rules live in separate JSON files under `secrets/signals-bridge/rules/`
 - AgentMail and Telethon reads happen inside the bridge itself
-- the only LLM path is cheap `OmniRoute light` enrichment for already matched candidates
-- if OmniRoute is unavailable, the bridge falls back to local rule-based summaries and can still post
+- LLM enrichment for already matched candidates is `OpenClaw/OpenAI -> OmniRoute light -> DeepSeek`
+- if all model routes are unavailable, the bridge falls back to local rule-based summaries and can still post
 
 ### Bridge diagnostics
 

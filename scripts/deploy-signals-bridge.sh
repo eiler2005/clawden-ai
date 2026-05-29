@@ -108,6 +108,14 @@ PY
     fi
   fi
 
+  if ! sudo grep -Eq "^DEEPSEEK_API_KEY=.+" signals.env && sudo test -f /opt/openclaw/.env; then
+    key="$(sudo awk -F= "/^DEEPSEEK_API_KEY=/{print substr(\$0, length(\$1)+2)}" /opt/openclaw/.env | tail -n1)"
+    if [ -n "$key" ]; then
+      sudo sed -i "/^DEEPSEEK_API_KEY=/d" signals.env
+      printf "DEEPSEEK_API_KEY=%s\n" "$key" | sudo tee -a signals.env >/dev/null
+    fi
+  fi
+
   if ! sudo grep -Eq "^SIGNALS_BRIDGE_TOKEN=.+" signals.env; then
     token="$(python3 - <<'"'"'PY'"'"'
 import secrets
@@ -151,7 +159,7 @@ Signals bridge deployed.
 
 Cadence:
   - internal scheduler every 5 minutes
-  - low-cost enrichment via OmniRoute light only
+  - enrichment route: OpenClaw/OpenAI -> OmniRoute light -> DeepSeek -> local
 
 Useful commands:
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'cd /opt/signals-bridge && sudo docker compose logs --tail=100 signals-bridge'

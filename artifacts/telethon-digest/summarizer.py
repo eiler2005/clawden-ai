@@ -127,6 +127,13 @@ def _clean_text(value: str, max_len: int = 240) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
+def _clean_url(value: str, max_len: int = 600) -> str:
+    cleaned = (value or "").strip().strip(").,]")
+    if len(cleaned) <= max_len:
+        return cleaned
+    return cleaned[:max_len]
+
+
 def _reason_from_post(post: Post, config: dict) -> str:
     reasons = []
     tier = _folder_tier(post.folder_name, config)
@@ -507,17 +514,101 @@ def _require_string_list(value, field_name: str, max_items: int = 10) -> list[st
     return result
 
 
+def _require_non_empty_url(value, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    cleaned = _clean_url(value)
+    if not cleaned:
+        raise ValueError(f"{field_name} is empty")
+    return cleaned
+
+
+def _require_url_list(value, field_name: str, max_items: int = 10) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{field_name} must be a list")
+    result: list[str] = []
+    for item in value[:max_items]:
+        if not isinstance(item, str):
+            raise ValueError(f"{field_name} items must be strings")
+        cleaned = _clean_url(item)
+        if cleaned:
+            result.append(cleaned)
+    return result
+
+
+def _repair_item_post_url(value: dict, posts: list[Post], used_urls: set[str]) -> dict:
+    """Fill a missing LLM item link from the real post context only."""
+    if not isinstance(value, dict):
+        return value
+    repaired = dict(value)
+    post_url = _clean_url(str(repaired.get("post_url") or ""))
+    if post_url:
+        used_urls.add(post_url)
+        return repaired
+
+    extra_urls = _require_url_list(repaired.get("extra_post_urls", []), "extra_post_urls", max_items=4)
+    if extra_urls:
+        repaired["post_url"] = extra_urls[0]
+        repaired["extra_post_urls"] = extra_urls[1:]
+        used_urls.add(extra_urls[0])
+        return repaired
+
+    channel = _clean_text(str(repaired.get("channel") or ""), max_len=200).lower()
+    ranked_posts = sorted(posts, key=lambda post: (post.score, post.date.timestamp()), reverse=True)
+    channel_matches = [
+        post
+        for post in ranked_posts
+        if post.url and post.url not in used_urls and post.channel_name.lower() == channel
+    ]
+    candidates = channel_matches or [
+        post for post in ranked_posts if post.url and post.url not in used_urls
+    ]
+    if candidates:
+        repaired["post_url"] = candidates[0].url
+        used_urls.add(candidates[0].url or "")
+    return repaired
+
+
+def _repair_payload_post_urls(payload: dict, posts: list[Post]) -> dict:
+    if not isinstance(payload, dict):
+        return payload
+    repaired = dict(payload)
+    used_urls: set[str] = set()
+    for key in ("new_glance", "must_read"):
+        value = repaired.get(key, [])
+        if isinstance(value, list):
+            repaired[key] = [_repair_item_post_url(item, posts, used_urls) for item in value]
+    sections = repaired.get("sections", [])
+    if isinstance(sections, list):
+        repaired_sections = []
+        for section in sections:
+            if not isinstance(section, dict):
+                repaired_sections.append(section)
+                continue
+            section_copy = dict(section)
+            items = section_copy.get("items", [])
+            if isinstance(items, list):
+                section_copy["items"] = [
+                    _repair_item_post_url(item, posts, used_urls) for item in items
+                ]
+            repaired_sections.append(section_copy)
+        repaired["sections"] = repaired_sections
+    return repaired
+
+
 def _validate_item(value: dict, field_name: str) -> DigestItem:
     if not isinstance(value, dict):
         raise ValueError(f"{field_name} must be an object")
     channel = _require_non_empty_string(value.get("channel", ""), f"{field_name}.channel")
-    post_url = _require_non_empty_string(value.get("post_url", ""), f"{field_name}.post_url")
+    post_url = _require_non_empty_url(value.get("post_url", ""), f"{field_name}.post_url")
     summary = _require_non_empty_string(value.get("summary", ""), f"{field_name}.summary")
     kind = _require_non_empty_string(value.get("kind", "signal"), f"{field_name}.kind")
     channel_url = value.get("channel_url")
     if channel_url is not None and not isinstance(channel_url, str):
         raise ValueError(f"{field_name}.channel_url must be string|null")
-    extra_post_urls = _require_string_list(value.get("extra_post_urls", []), f"{field_name}.extra_post_urls", max_items=4)
+    extra_post_urls = _require_url_list(value.get("extra_post_urls", []), f"{field_name}.extra_post_urls", max_items=4)
     folder_item = DigestItem(
         channel=channel,
         channel_url=channel_url or None,
@@ -573,6 +664,7 @@ def _validate_document_payload(
 ) -> DigestDocument:
     if not isinstance(payload, dict):
         raise ValueError("Digest response is not an object")
+    payload = _repair_payload_post_urls(payload, posts)
     folder_links = config.get("folder_links", {}) or {}
     lead = _require_string_list(payload.get("lead", []), "lead", max_items=6)
     if not lead:

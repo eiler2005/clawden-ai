@@ -1,10 +1,12 @@
 FROM python:3.12-slim
 
 ARG LAST30DAYS_COMMIT=01812ec1851e5c3d92a9049a41b7da4adbfbcb5d
+ARG DEBIAN_MIRROR=https://mirror.yandex.ru
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+ && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     nodejs \

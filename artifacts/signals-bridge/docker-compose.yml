@@ -15,6 +15,7 @@ services:
       - ./config.json:/app/config.json
       - ./rules:/app/rules:ro
       - /opt/obsidian-vault:/app/obsidian
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - openclaw_default
 

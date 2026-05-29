@@ -1025,3 +1025,109 @@ Deprecated retrieval gate:
 - `scripts/smoke-check-knowledge.sh` no longer uses a remote temp JSON file + `scp`; the first server probe now streams JSON over SSH stdout.
 - LightRAG `/query/data` still cannot run hybrid retrieval because the live embedding path returns `No credentials for embedding provider: openrouter`, while direct Gemini embeddings return a monthly spending-cap error and the Codex/OpenAI subscription fallback does not provide an API embeddings route.
 - This was accepted as a temporary **deprecated retrieval** state rather than a code regression. The smoke script now exits successfully for this specific paywall/credential condition and reports `retrieval_status=deprecated_external_embeddings_unavailable` plus the underlying query errors.
+
+## 29. OpenClaw 2026.5.27 live upgrade, OpenAI OAuth refresh, and DeepSeek reserves
+
+Date: `2026-05-28`
+
+Goal: move the live Gateway from `OpenClaw 2026.5.26` to the latest stable upstream release,
+restore the user-requested OpenAI-primary route, and make DeepSeek the last reserve for bridge
+LLM work without pretending it can replace embeddings.
+
+Version source:
+
+- GitHub Releases marked `openclaw 2026.5.27` as the latest stable release.
+- The derived runtime image was rebuilt as `openclaw-with-iproute2:20260528-slim-2026.5.27`.
+
+Live deployment shape:
+
+```bash
+ssh deploy@<server-host> '
+  sudo install -m 0644 /tmp/Dockerfile.iproute2 /opt/openclaw/Dockerfile.iproute2
+  cd /opt/openclaw
+  sudo docker build --pull \
+    --build-arg DEBIAN_MIRROR=https://mirror.yandex.ru \
+    -t openclaw-with-iproute2:20260528-slim-2026.5.27 \
+    -f Dockerfile.iproute2 .
+  sudo cp .env ".env.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+  sudo sed -i "s/^OPENCLAW_IMAGE=.*/OPENCLAW_IMAGE=openclaw-with-iproute2:20260528-slim-2026.5.27/" .env
+  sudo docker compose up -d --force-recreate openclaw-gateway
+'
+```
+
+Live validation:
+
+- `/healthz` returned `{"ok":true,"status":"live"}`.
+- `openclaw --version` returned `OpenClaw 2026.5.27`.
+- `command -v ip` returned `/usr/bin/ip`; `whisper`, `ffmpeg`, and `ffprobe` remained absent.
+- `openclaw models list` showed `openai/gpt-5.5` as default, `omniroute/light` as fallback #1,
+  and `deepseek/deepseek-v4-flash` as fallback #2, all with auth present.
+
+Auth and routing:
+
+- Server-side OpenAI Codex OAuth was re-authenticated with the device-code flow.
+- The fresh OAuth profile was aliased back to the legacy `openai-codex:*` ids so existing Telegram
+  sessions stop seeing stale expired profile state.
+- Direct Gateway smoke returned the requested exact text through `openai/gpt-5.5`.
+- `telethon-digest` and `signals-bridge` route smokes both used `gpt-5.5` first with
+  `provider_fallback=false`.
+- Forced bridge fallback smokes, with OpenClaw and OmniRoute intentionally broken, reached
+  `deepseek-v4-flash` and did not fall to local deterministic output.
+
+OmniRoute and LightRAG:
+
+- DeepSeek was registered inside OmniRoute's provider store and added as the final `light` combo
+  reserve using `scripts/sync-omniroute-deepseek-provider.sh`.
+- `scripts/smoke-check-knowledge.sh` now reports `model_routes.omniroute_light_llm.ok=true` and
+  `resolved_model=deepseek-v4-flash` when OpenRouter-backed `light` routes are unavailable.
+- The same smoke explicitly records `deepseek_embeddings.supported=false`. DeepSeek has no
+  OpenAI-compatible embeddings endpoint, so LightRAG hybrid retrieval still needs a funded
+  Gemini/OpenRouter/OpenAI embeddings route.
+
+Bridge runtime cleanup:
+
+- `telethon-digest` and `signals-bridge` were redeployed after adding Docker SDK fallback routing and
+  Redis socket timeouts longer than the `XREADGROUP` block window.
+- Recent bridge logs no longer show repeating `Timeout reading from socket` traceback loops.
+
+Validation summary:
+
+- Local tests: `telethon-digest` 5 OK, `wiki-import` 23 OK, `signals-bridge` 87 OK,
+  `agentmail-email` 18 OK; total `133` OK.
+- Knowledge smoke: service healthy, LLM reserve healthy, retrieval intentionally deprecated until a
+  funded embeddings route is restored.
+
+## 30. Telethon Digest scheduler repair and LLM validation smoke
+
+Date: `2026-05-29`
+
+Problem:
+
+- The `Telethon Digest · 08:00` OpenClaw cron run reported `ok`, but its run summary said the
+  bridge HTTP call was not executed because the lightweight cron agent context had no shell tool
+  available.
+- Earlier OpenClaw cron runs also showed heredoc/exec-wrapper failures while still advancing the
+  cron state, which made the schedule look healthy without enqueuing `ingest:jobs:telegram`.
+
+Fix:
+
+- Deployed `/opt/telethon-digest/trigger-digest.sh`, which calls the live
+  `telethon-digest-cron-bridge` `/trigger` endpoint from inside the bridge container using its own
+  environment token.
+- Replaced Telethon Digest scheduling with `/etc/cron.d/telethon-digest`:
+  `08:00 morning`, `11:00 interval`, `14:00 interval`, `17:00 interval`, `21:00 editorial`.
+- Disabled the legacy OpenClaw Telethon Digest agent-turn cron jobs so they no longer spend model
+  tokens or produce false-positive `ok` runs.
+- Fixed `summarizer.py` URL validation so `post_url` values keep Telegram URLs instead of passing
+  through the general text cleaner, which strips `https://...`.
+
+Validation:
+
+- Manual trigger returned `{"ok":true,"status":"enqueued"}` and the bridge status finished with
+  `exit_code=0`.
+- The fresh derived note was written as
+  `/opt/obsidian-vault/Telegram Digest/Derived/2026-05-29/interval-0529-0545.md` with
+  `model: gpt-5.5` and `fallback: false`.
+- Telethon readback from the `telegram-digest` topic found the bot-posted message
+  `Дайджест | 08:00–08:45` at `2026-05-29T05:50:16Z`.
+- Local Telethon Digest tests: `6` OK, including coverage for missing LLM `post_url` repair.

@@ -250,7 +250,104 @@ for spec in query_specs:
 print(json.dumps(results, ensure_ascii=False))
 PY" > "${TMP_DIR}/queries.json"
 
-python3 - <<'PY' "${TMP_DIR}/remote.json" "${TMP_DIR}/backfill.txt" "${TMP_DIR}/lightrag-health.txt" "${TMP_DIR}/queries.json"
+ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" \
+  "python3 - <<'PY'
+import json
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+def read_env(path):
+    result = {}
+    for line in Path(path).read_text(encoding='utf-8', errors='ignore').splitlines():
+        if not line or line.lstrip().startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        result[key.strip()] = value.strip()
+    return result
+
+
+env = read_env('/opt/lightrag/.env')
+api_key = env.get('LLM_BINDING_API_KEY') or env.get('EMBEDDING_BINDING_API_KEY') or ''
+headers = {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer ' + api_key,
+}
+
+routes = {}
+
+chat_payload = {
+    'model': 'light',
+    'messages': [{'role': 'user', 'content': 'Reply exactly: OK_RAG_LLM_RESERVE'}],
+    'max_tokens': 32,
+    'temperature': 0,
+}
+chat_req = urllib.request.Request(
+    'http://127.0.0.1:20129/v1/chat/completions',
+    data=json.dumps(chat_payload).encode('utf-8'),
+    headers=headers,
+    method='POST',
+)
+try:
+    with urllib.request.urlopen(chat_req, timeout=90) as response:
+        payload = json.loads(response.read().decode('utf-8'))
+        text = (((payload.get('choices') or [{}])[0].get('message') or {}).get('content') or '')
+        routes['omniroute_light_llm'] = {
+            'ok': 'OK_RAG_LLM_RESERVE' in text,
+            'http_status': response.status,
+            'resolved_model': payload.get('model'),
+            'response_preview': text[:80],
+        }
+except urllib.error.HTTPError as exc:
+    routes['omniroute_light_llm'] = {
+        'ok': False,
+        'http_status': exc.code,
+        'error_preview': exc.read(300).decode('utf-8', errors='ignore'),
+    }
+except Exception as exc:
+    routes['omniroute_light_llm'] = {
+        'ok': False,
+        'error_type': type(exc).__name__,
+        'error_preview': str(exc)[:300],
+    }
+
+embedding_payload = {
+    'model': 'deepseek/deepseek-chat',
+    'input': 'ping',
+}
+embedding_req = urllib.request.Request(
+    'http://127.0.0.1:20129/v1/embeddings',
+    data=json.dumps(embedding_payload).encode('utf-8'),
+    headers=headers,
+    method='POST',
+)
+try:
+    with urllib.request.urlopen(embedding_req, timeout=30) as response:
+        routes['deepseek_embeddings'] = {
+            'supported': True,
+            'http_status': response.status,
+        }
+except urllib.error.HTTPError as exc:
+    error_preview = exc.read(300).decode('utf-8', errors='ignore')
+    if not error_preview and exc.code == 400:
+        error_preview = 'DeepSeek is not an embeddings provider in OmniRoute.'
+    routes['deepseek_embeddings'] = {
+        'supported': False,
+        'http_status': exc.code,
+        'error_preview': error_preview,
+    }
+except Exception as exc:
+    routes['deepseek_embeddings'] = {
+        'supported': False,
+        'error_type': type(exc).__name__,
+        'error_preview': str(exc)[:300],
+    }
+
+print(json.dumps(routes, ensure_ascii=False))
+PY" > "${TMP_DIR}/routing.json"
+
+python3 - <<'PY' "${TMP_DIR}/remote.json" "${TMP_DIR}/backfill.txt" "${TMP_DIR}/lightrag-health.txt" "${TMP_DIR}/queries.json" "${TMP_DIR}/routing.json"
 import json
 import re
 import sys
@@ -260,6 +357,7 @@ remote = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 backfill_text = Path(sys.argv[2]).read_text(encoding="utf-8", errors="ignore")
 health_lines = [line for line in Path(sys.argv[3]).read_text(encoding="utf-8").splitlines() if line.strip()]
 queries = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+routing = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
 
 candidates_match = re.search(r'"candidates"\s*:\s*(\d+)', backfill_text)
 resume_match = re.search(r'"resume_skipped"\s*:\s*(\d+)', backfill_text)
@@ -347,7 +445,8 @@ deprecated_retrieval = (
 quality_summary["retrieval_status"] = "deprecated_external_embeddings_unavailable" if deprecated_retrieval else "active"
 quality_summary["deprecated_reason"] = (
     "LightRAG retrieval requires a funded Gemini/OpenRouter/OpenAI API embeddings route. "
-    "Current external embedding providers are missing credentials, out of quota, or blocked by spending caps."
+    "Current external embedding providers are missing credentials, out of quota, or blocked by spending caps. "
+    "DeepSeek is validated as an LLM reserve behind OmniRoute light, but it is not an embeddings provider."
     if deprecated_retrieval
     else None
 )
@@ -368,6 +467,7 @@ summary = {
         "status": health.get("status"),
         "pipeline_busy": health.get("pipeline_busy"),
         "status_counts": status_counts,
+        "model_routes": routing,
         "queries": queries,
         "quality_summary": quality_summary,
     },

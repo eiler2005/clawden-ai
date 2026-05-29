@@ -131,15 +131,27 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 | Graph storage | NetworkX (built-in) | File-based, no Neo4j |
 | Vector storage | NanoVectorDB (built-in) | File-based, no Qdrant |
 | KV storage | JsonKV (built-in) | File-based, no Redis |
-| LLM | `OmniRoute light` via OpenAI-compatible binding | Keeps LightRAG on a stable local endpoint and adds provider fallback around the LLM hop |
-| Embedding | `gemini-embedding-001` | Direct Gemini embeddings, dim=3072, single embedding space for the whole index |
+| LLM | `OmniRoute light` via OpenAI-compatible binding | Keeps LightRAG on a stable local endpoint; DeepSeek is registered as the final reserve behind the `light` combo for this hop |
+| Embedding | `gemini-embedding-001` or OpenRouter/OpenAI embedding model | Embeddings require a real embeddings provider and a single stable vector dimension for the whole index |
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
 
-**Current split:** LLM requests go through OmniRoute; embeddings stay on direct Gemini.
+**Current split:** LLM requests go through OmniRoute; embeddings stay on an embeddings-capable provider.
 This means LightRAG currently needs:
 - one OmniRoute API key for `LLM_BINDING=openai`
-- one Gemini API key for `EMBEDDING_BINDING=gemini`
+- one Gemini/OpenRouter/OpenAI API key for `EMBEDDING_BINDING`
+
+If OmniRoute/OpenRouter LLM routes are unavailable, configure direct DeepSeek in OmniRoute and keep
+LightRAG pointed at the same `light` model:
+
+```bash
+OPENCLAW_HOST=deploy@<server-host> ./scripts/sync-omniroute-deepseek-provider.sh
+```
+
+DeepSeek is only a RAG LLM reserve. It does not expose an OpenAI-compatible embeddings endpoint, so it
+cannot repair vector retrieval when Gemini/OpenRouter/OpenAI embeddings are out of quota or missing
+credentials. Do not point LightRAG extraction at OpenClaw/OpenAI; the OpenAI subscription route is for
+Gateway text inference and does not solve LightRAG embeddings.
 
 As of 2026-05-28, retrieval is temporarily **deprecated** on the live server because every available
 external embeddings route is blocked by paid-provider limits or missing credentials: direct Gemini

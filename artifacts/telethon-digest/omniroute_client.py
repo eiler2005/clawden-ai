@@ -3,12 +3,34 @@ Shared OmniRoute helpers.
 
 Supports both normal JSON chat completions and text/event-stream responses.
 """
+import contextlib
 import json
+import os
+import uuid
 from typing import Any
 
 import aiohttp
 
 from models import LLMCompletion
+
+OPENCLAW_FALLBACK_ENABLED = os.environ.get("OPENCLAW_FALLBACK_ENABLED", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+}
+OPENCLAW_EXEC_CONTAINER = os.environ.get("OPENCLAW_EXEC_CONTAINER", "openclaw-openclaw-gateway-1").strip()
+OPENCLAW_AGENT_ID = os.environ.get("OPENCLAW_AGENT_ID", "main").strip() or "main"
+OPENCLAW_FALLBACK_MODEL = os.environ.get("OPENCLAW_FALLBACK_MODEL", "openai/gpt-5.5").strip()
+OPENCLAW_FALLBACK_TIMEOUT_SECONDS = int(os.environ.get("OPENCLAW_FALLBACK_TIMEOUT_SECONDS", "240") or 240)
+OPENCLAW_FALLBACK_SESSION_PREFIX = os.environ.get(
+    "OPENCLAW_FALLBACK_SESSION_PREFIX",
+    "agent:main:telethon-digest-openai-fallback",
+).strip()
+
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_URL = os.environ.get("DEEPSEEK_URL", "https://api.deepseek.com/chat/completions").strip()
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash").strip() or "deepseek-v4-flash"
+DEEPSEEK_TIMEOUT_SECONDS = int(os.environ.get("DEEPSEEK_TIMEOUT_SECONDS", "120") or 120)
 
 
 def strip_markdown_fences(text: str) -> str:
@@ -113,15 +135,147 @@ async def call_chat_completion(
     timeout_seconds: int,
     default_model: str,
 ) -> LLMCompletion:
+    route_errors: list[str] = []
+
+    if OPENCLAW_FALLBACK_ENABLED:
+        try:
+            return _call_openclaw_fallback(payload, default_model=default_model)
+        except Exception as exc:
+            route_errors.append(f"openclaw: {exc}")
+
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    try:
+        async with session.post(
+            f"{url}/chat/completions",
+            json=payload,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+        ) as resp:
+            resp.raise_for_status()
+            completion = await read_completion(resp, default_model=default_model)
+            completion.provider_fallback = bool(route_errors)
+            return completion
+    except Exception as exc:
+        route_errors.append(f"omniroute: {exc}")
+
+    if DEEPSEEK_API_KEY:
+        try:
+            return await _call_deepseek_fallback(session, payload, default_model=default_model)
+        except Exception as exc:
+            route_errors.append(f"deepseek: {exc}")
+
+    raise RuntimeError("LLM route chain failed: " + " | ".join(route_errors))
+
+
+def _messages_to_agent_prompt(payload: dict[str, Any]) -> str:
+    messages = payload.get("messages") or []
+    lines = [
+        "You are running as the OpenClaw/OpenAI primary route for Telegram Digest.",
+        "Return only the requested JSON payload. Do not add markdown fences or commentary.",
+    ]
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "user").upper()
+        content = str(message.get("content") or "")
+        if content:
+            lines.append(f"\n[{role}]\n{content}")
+    return "\n".join(lines).strip()
+
+
+def _call_openclaw_fallback(payload: dict[str, Any], *, default_model: str) -> LLMCompletion:
+    if not OPENCLAW_EXEC_CONTAINER:
+        raise RuntimeError("OPENCLAW_EXEC_CONTAINER is empty")
+    try:
+        import docker
+        from docker.errors import DockerException, NotFound
+    except Exception as exc:
+        raise RuntimeError("docker SDK unavailable") from exc
+
+    client = None
+    prompt = _messages_to_agent_prompt(payload)
+    try:
+        client = docker.from_env()
+        container = client.containers.get(OPENCLAW_EXEC_CONTAINER)
+        result = container.exec_run(
+            [
+                "/usr/local/bin/openclaw",
+                "agent",
+                "--agent",
+                OPENCLAW_AGENT_ID,
+                "--model",
+                OPENCLAW_FALLBACK_MODEL,
+                "--session-key",
+                f"{OPENCLAW_FALLBACK_SESSION_PREFIX}:{uuid.uuid4().hex}",
+                "--timeout",
+                str(OPENCLAW_FALLBACK_TIMEOUT_SECONDS),
+                "--message",
+                prompt,
+                "--json",
+            ],
+            environment={"NO_COLOR": "1"},
+            stdout=True,
+            stderr=True,
+            user="1000:1000",
+        )
+    except NotFound as exc:
+        raise RuntimeError(f"OpenClaw container '{OPENCLAW_EXEC_CONTAINER}' not found") from exc
+    except DockerException as exc:
+        raise RuntimeError(f"OpenClaw docker exec failed: {exc}") from exc
+    finally:
+        with contextlib.suppress(Exception):
+            if client is not None:
+                client.close()
+
+    raw = (result.output or b"").decode("utf-8", errors="replace").strip()
+    if int(result.exit_code) != 0:
+        raise RuntimeError(f"openclaw agent failed exit={result.exit_code}: {raw[-500:]}")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"openclaw agent returned non-json: {raw[-500:]}") from exc
+
+    result_payload = data.get("result") or {}
+    meta = result_payload.get("meta") or {}
+    agent_meta = meta.get("agentMeta") or {}
+    payloads = result_payload.get("payloads") or []
+    text = ""
+    if payloads and isinstance(payloads[0], dict):
+        text = str(payloads[0].get("text") or "")
+    text = text or str(meta.get("finalAssistantVisibleText") or meta.get("finalAssistantRawText") or "")
+    if not text:
+        raise RuntimeError("openclaw agent returned empty text")
+    return LLMCompletion(
+        text=text.strip(),
+        model_id=str(agent_meta.get("model") or OPENCLAW_FALLBACK_MODEL.split("/", 1)[-1]),
+        prompt_tokens=int(agent_meta.get("promptTokens") or 0),
+        completion_tokens=int(((agent_meta.get("lastCallUsage") or {}).get("output")) or 0),
+        provider_fallback=False,
+    )
+
+
+async def _call_deepseek_fallback(
+    session: aiohttp.ClientSession,
+    payload: dict[str, Any],
+    *,
+    default_model: str,
+) -> LLMCompletion:
+    deepseek_payload = dict(payload)
+    deepseek_payload["model"] = DEEPSEEK_MODEL
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+    }
     async with session.post(
-        f"{url}/chat/completions",
-        json=payload,
+        DEEPSEEK_URL,
+        json=deepseek_payload,
         headers=headers,
-        timeout=aiohttp.ClientTimeout(total=timeout_seconds),
+        timeout=aiohttp.ClientTimeout(total=DEEPSEEK_TIMEOUT_SECONDS),
     ) as resp:
         resp.raise_for_status()
-        return await read_completion(resp, default_model=default_model)
+        completion = await read_completion(resp, default_model=DEEPSEEK_MODEL or default_model)
+    completion.provider_fallback = True
+    return completion

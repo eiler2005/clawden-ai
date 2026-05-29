@@ -63,10 +63,20 @@ CONSUMER_NAME = "signals-bridge-worker"
 LAST30DAYS_CONSUMER_GROUP = "last30days-workers"
 LAST30DAYS_CONSUMER_NAME = "signals-last30days-worker"
 BLOCK_MS = 5000
+REDIS_SOCKET_TIMEOUT_SECONDS = max(
+    int(os.environ.get("REDIS_SOCKET_TIMEOUT_SECONDS", "30")),
+    int(BLOCK_MS / 1000) + 5,
+)
 
 
 def _make_redis() -> redis_lib.Redis:
-    return redis_lib.from_url(REDIS_URL, decode_responses=True)
+    return redis_lib.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        health_check_interval=30,
+    )
 
 
 def _utc_now() -> datetime:

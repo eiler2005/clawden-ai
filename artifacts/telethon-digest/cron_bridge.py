@@ -47,6 +47,10 @@ CONSUMER_NAME = "cron-bridge-worker"
 RAG_CONSUMER_GROUP = "rag-workers"
 RAG_CONSUMER_NAME = "rag-worker"
 BLOCK_MS = 5000
+REDIS_SOCKET_TIMEOUT_SECONDS = max(
+    int(os.environ.get("REDIS_SOCKET_TIMEOUT_SECONDS", "30")),
+    int(BLOCK_MS / 1000) + 5,
+)
 
 VALID_DIGEST_TYPES = {"morning", "interval", "editorial"}
 DIGEST_LOCK_KEY = "lock:telegram-digest:run"
@@ -82,7 +86,13 @@ def _write_status(payload: dict) -> None:
 
 
 def _make_redis() -> redis_lib.Redis:
-    return redis_lib.from_url(REDIS_URL, decode_responses=True)
+    return redis_lib.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        health_check_interval=30,
+    )
 
 
 def _parse_slot_value(payload: dict, key: str, *, minimum: int, maximum: int) -> int | None:

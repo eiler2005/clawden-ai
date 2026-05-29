@@ -9,6 +9,7 @@ services:
       - telethon-state:/app/state
       - ./config.json:/app/config.json
       - "/opt/obsidian-vault/Telegram Digest:/app/obsidian/Telegram Digest"
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - openclaw_default
 
@@ -25,6 +26,7 @@ services:
       - telethon-state:/app/state
       - ./config.json:/app/config.json
       - "/opt/obsidian-vault/Telegram Digest:/app/obsidian/Telegram Digest"
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - openclaw_default
 

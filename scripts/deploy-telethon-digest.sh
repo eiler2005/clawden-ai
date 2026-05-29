@@ -81,6 +81,13 @@ PY
       printf "OMNIROUTE_API_KEY=%s\n" "$key" | sudo tee -a telethon.env >/dev/null
     fi
   fi
+  if ! sudo grep -Eq "^DEEPSEEK_API_KEY=.+" telethon.env && sudo test -f /opt/openclaw/.env; then
+    key="$(sudo awk -F= "/^DEEPSEEK_API_KEY=/{print substr(\$0, length(\$1)+2)}" /opt/openclaw/.env | tail -n1)"
+    if [ -n "$key" ]; then
+      sudo sed -i "/^DEEPSEEK_API_KEY=/d" telethon.env
+      printf "DEEPSEEK_API_KEY=%s\n" "$key" | sudo tee -a telethon.env >/dev/null
+    fi
+  fi
   sudo grep -Eq "^TELEGRAM_BOT_TOKEN=.+" telethon.env || {
     echo "Missing TELEGRAM_BOT_TOKEN in telethon.env and /opt/openclaw/.env" >&2
     exit 1
@@ -95,19 +102,35 @@ PY
   fi
   sudo chmod 600 telethon.env
   sudo chmod +x /opt/telethon-digest/cron-digest.sh
+  sudo chmod +x /opt/telethon-digest/trigger-digest.sh
   sudo chmod +x /opt/telethon-digest/sync-openclaw-cron-jobs.sh
   sudo test -f config.json || sudo cp config.example.json config.json
   sudo docker compose build
 
-  # Stop old APScheduler daemon; digest runs are now triggered by OpenClaw Cron Jobs.
+  # Stop old APScheduler daemon; digest runs are triggered by host cron calling
+  # the bridge directly. OpenClaw agent-turn cron cannot reliably run shell
+  # tools in the lightweight cron context after 2026.5.x.
   sudo docker compose down 2>/dev/null || true
   sudo docker compose up -d telethon-digest-cron-bridge
 
-  # Remove legacy system cron entry if present.
-  sudo rm -f /etc/cron.d/telethon-digest
+  sudo tee /etc/cron.d/telethon-digest >/dev/null <<'CRON'
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+TZ=Europe/Moscow
 
-  # Register digest jobs in the OpenClaw gateway scheduler so they appear in Control UI.
-  /opt/telethon-digest/sync-openclaw-cron-jobs.sh
+0 8 * * * root /opt/telethon-digest/trigger-digest.sh morning 8 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 11 * * * root /opt/telethon-digest/trigger-digest.sh interval 11 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 14 * * * root /opt/telethon-digest/trigger-digest.sh interval 14 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 17 * * * root /opt/telethon-digest/trigger-digest.sh interval 17 0 >> /var/log/telethon-digest-cron.log 2>&1
+0 21 * * * root /opt/telethon-digest/trigger-digest.sh editorial 21 0 >> /var/log/telethon-digest-cron.log 2>&1
+CRON
+  sudo chmod 0644 /etc/cron.d/telethon-digest
+
+  if sudo docker ps --format "{{.Names}}" | grep -qx "openclaw-openclaw-gateway-1"; then
+    for id in $(sudo docker compose -f /opt/openclaw/docker-compose.yml exec -T openclaw-gateway sh -lc "openclaw cron list 2>/dev/null" | awk "/Telethon Digest/ {print \$1}"); do
+      sudo docker compose -f /opt/openclaw/docker-compose.yml exec -T openclaw-gateway sh -lc "openclaw cron disable $id >/dev/null" || true
+    done
+  fi
 
   ready=0
   for _ in $(seq 1 75); do
@@ -123,57 +146,24 @@ PY
     exit 1
   fi
 
-  sudo python3 - <<'PY'
-import json
-from pathlib import Path
-
-expected = {
-    "Telethon Digest · 08:00 Morning brief": "0 8 * * *",
-    "Telethon Digest · 11:00 Regular digest": "0 11 * * *",
-    "Telethon Digest · 14:00 Regular digest": "0 14 * * *",
-    "Telethon Digest · 17:00 Regular digest": "0 17 * * *",
-    "Telethon Digest · 21:00 Evening editorial": "0 21 * * *",
-}
-paths = [
-    Path("/opt/openclaw/config/cron/jobs.json"),
-    Path("/home/deploy/.openclaw/cron/jobs.json"),
-]
-store_path = next((path for path in paths if path.exists()), None)
-if store_path is None:
-    raise SystemExit("OpenClaw cron store not found after sync.")
-
-data = json.loads(store_path.read_text())
-jobs = data.get("jobs", data if isinstance(data, list) else [])
-found = {
-    job.get("name"): ((job.get("schedule") or {}).get("expr"), job.get("enabled"))
-    for job in jobs
-    if str(job.get("name", "")).startswith("Telethon Digest")
-}
-for name, expr in expected.items():
-    if name not in found:
-        raise SystemExit(f"Missing Telethon Digest cron job after sync: {name}")
-    found_expr, enabled = found[name]
-    if found_expr != expr:
-        raise SystemExit(f"Unexpected cron expr for {name}: {found_expr} != {expr}")
-    if enabled is not True:
-        raise SystemExit(f"Telethon Digest cron job is disabled after sync: {name}")
-PY
+  sudo test -x /opt/telethon-digest/trigger-digest.sh
+  sudo grep -q "/opt/telethon-digest/trigger-digest.sh morning 8 0" /etc/cron.d/telethon-digest
 '
 
 cat <<'EOF'
-Telethon Digest deployed. OpenClaw Cron Jobs are now the scheduler.
+Telethon Digest deployed. Host cron now triggers the bridge directly.
 
-Scheduled: 08:00, 11:00, 14:00, 17:00, 21:00 MSK via OpenClaw Control -> Cron Jobs
+Scheduled: 08:00, 11:00, 14:00, 17:00, 21:00 MSK via /etc/cron.d/telethon-digest
 
 Useful commands:
   # Run digest immediately
-  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo /opt/telethon-digest/cron-digest.sh'
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo /opt/telethon-digest/trigger-digest.sh interval 11 0'
 
   # Watch digest log
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo tail -f /var/log/telethon-digest-cron.log'
 
-  # Inspect cron store directly
-  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
+  # Inspect host cron
+  ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'sudo cat /etc/cron.d/telethon-digest'
 
   # Re-sync channels
   ssh -i "$SSH_KEY" "$OPENCLAW_HOST" 'cd /opt/telethon-digest && sudo docker compose run --rm telethon-digest python sync_channels.py'

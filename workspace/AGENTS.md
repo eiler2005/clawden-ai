@@ -26,9 +26,10 @@
 
 ## Выбор модели по сложности задачи
 
-Основной диалог с Денисом идёт через OpenClaw; текущий основной маршрут — OmniRoute `light`.
-OpenAI Codex `openai/gpt-5.5` используется как резерв только если OmniRoute/OpenRouter маршруты отказали.
-OmniRoute (`http://omniroute:20129/v1`) также используется для делегирования подзадач.
+Основной диалог с Денисом идёт через OpenClaw; текущий основной маршрут — OpenAI Codex `openai/gpt-5.5`.
+OmniRoute `light` используется как первый резерв, если OpenAI недоступен; DeepSeek — последний резерв,
+если отказали и OpenAI, и OmniRoute/OpenRouter. OmniRoute (`http://omniroute:20129/v1`) также используется
+для делегирования подзадач и для LightRAG LLM extraction.
 
 ### Тиры и критерии
 
@@ -45,7 +46,7 @@ OmniRoute (`http://omniroute:20129/v1`) также используется дл
 3. Требует архитектурного решения или trade-off анализа → **smart**
 4. Обычный диалог, Q&A, суммаризация → **medium**
 5. Классификация, извлечение данных, форматирование → **light**
-6. Вспомогательные LightRAG lookups/классификация → **light**; индексация LightRAG сейчас идёт через OmniRoute `light` для LLM и прямой Gemini для embeddings
+6. Вспомогательные LightRAG lookups/классификация → **light**; индексация LightRAG сейчас идёт через OmniRoute `light` для LLM, DeepSeek как резерв за OmniRoute, и прямой Gemini для embeddings
 
 Отдельно:
 - `Ideas` queue / promotion, `Knowledgebase` save, короткие Telegram workflow-команды → **medium**
@@ -67,7 +68,7 @@ API ключ: переменная `OMNIROUTE_API_KEY` в окружении Ope
 
 - Не вызывать `smart` для тривиальных вопросов — расточительство квоты
 - Не вызывать `smart` для listing / confirmation / promotion workflow в Telegram, если не нужен глубокий анализ
-- Не обращаться к OpenAI Codex, пока OmniRoute/OpenRouter маршруты работают
+- Не обращаться к DeepSeek, пока работают OpenAI Codex или OmniRoute/OpenRouter
 - Не вызывать OmniRoute если достаточно собственных знаний без HTTP вызова
 
 ## Подпись сообщения (footer)
@@ -81,8 +82,8 @@ _маршрут: ... · модель: ... · [резервная модель ·
 
 Примеры:
 ```
-_маршрут: OpenClaw primary · модель: OmniRoute Light · сложность: обычная · память: включена_
-_маршрут: OpenClaw fallback · модель: GPT-5.5 · резервная модель · сложность: обычная · память: включена_
+_маршрут: OpenClaw primary · модель: GPT-5.5 · сложность: обычная · память: включена_
+_маршрут: OpenClaw fallback · модель: OmniRoute Light · резервная модель · сложность: обычная · память: включена_
 _маршрут: OmniRoute smart · модель: Claude Sonnet 4.5 · резервная модель · сложность: сложная · память: включена_
 _маршрут: OmniRoute medium · модель: Claude Haiku 4.5 · сложность: простая · память: без memory-файлов_
 _маршрут: прямой рендер · модель: без LLM · сложность: шаблонный обзор · контекст: окно почты_
@@ -91,14 +92,14 @@ _маршрут: прямой рендер · модель: без LLM · сло
 ### Правила заполнения полей
 
 **Маршрут** — через какой путь был собран ответ:
-- `OpenClaw primary` — ответ сгенерирован основным маршрутом OpenClaw (`OmniRoute Light`)
-- `OpenClaw fallback` — ответ сгенерирован резервной моделью OpenAI Codex (`GPT-5.5`)
+- `OpenClaw primary` — ответ сгенерирован основным маршрутом OpenClaw (`GPT-5.5`)
+- `OpenClaw fallback` — ответ сгенерирован резервным маршрутом OpenClaw (`OmniRoute Light` или DeepSeek)
 - `OmniRoute smart` / `medium` / `light` — ответ делегирован в OmniRoute
 - `прямой рендер` — ответ собран без LLM, шаблонно/детерминированно
 
 **Модель** — конкретное имя модели:
-- Для `OpenClaw primary`: `OmniRoute Light`
-- Для `OpenClaw fallback`: `GPT-5.5`
+- Для `OpenClaw primary`: `GPT-5.5`
+- Для `OpenClaw fallback`: фактическая резервная модель (`OmniRoute Light`, DeepSeek и т.п.)
 - Для OmniRoute: фактическая модель из ответа (напр. `Claude Sonnet 4.5`, `Gemini 2.0 Flash`)
 - Для прямого рендера: `без LLM`
 - Если конкретная модель известна — писать её явно, не внутренний ярлык вроде `OpenClaw Agent`

@@ -51,14 +51,16 @@ Expansion of permissions or memory scope requires explicit instruction.
 User message
   -> OpenClaw gateway
      -> Agent runner
-        -> Primary route: omniroute/light
+        -> Primary route: openai/gpt-5.5
             on rate_limit / error:
-            -> Fallback 1: openai/gpt-5.5
+            -> Fallback 1: omniroute/light
+            -> Fallback 2: deepseek/deepseek-v4-flash
 ```
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
 This is channel-agnostic — applies to all surfaces (Telegram, web UI, API).
-OpenAI `openai/gpt-5.5` is kept as the reserve route and should be used only after OmniRoute/OpenRouter routes fail.
+OpenAI `openai/gpt-5.5` is the primary Gateway route. OmniRoute remains the first reserve route,
+and DeepSeek is final reserve when both OpenAI and OmniRoute/OpenRouter routes fail.
 
 ### OmniRoute tiers
 
@@ -88,7 +90,7 @@ For Telegram save/promote actions, the preferred write path is:
 - `wiki_ingest(url)` when a stable source URL already exists
 - `wiki_ingest(text)` only when there is no reliable URL or the source is a plain note
 
-The main user response uses OmniRoute first. Codex/OpenAI is the reserve route, not the default.
+The main user response uses OpenAI first. OmniRoute is the first reserve route, not the default.
 
 ### Response footer
 
@@ -350,8 +352,8 @@ topic in `Benka_Clawbot_SuperGroup` — 5× daily (08:00, 11:00, 14:00, 17:00, 2
 ### Architecture
 
 ```
-OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
-  └── isolated OpenClaw agent run
+Host cron (08:00/11:00/14:00/17:00/21:00 МСК)
+  └── /opt/telethon-digest/trigger-digest.sh
         └── HTTP POST /trigger → telethon-digest-cron-bridge
               └── XADD ingest:jobs:telegram → HTTP 202 (immediate)
 
@@ -383,7 +385,7 @@ OpenClaw Cron Jobs (08:00/11:00/14:00/17:00/21:00 МСК)
                        │  ingest:jobs:signals ────────────────────────┼──► signals-bridge
  signals scheduler ────┤    {run_id, ruleset_id, source_id?}         │    → AgentMail + Telethon
                        │                                              │    → deterministic filter
-                       │                                              │    → OmniRoute light only
+                       │                                              │    → OpenClaw/OpenAI → OmniRoute → DeepSeek
                        │                                              │    → signals topic + derived events
                        │  ingest:events:email ────────────────────────┼──► scheduled digest recap builder
  email-poller ─────────┤    (derived inbox-email events, 7d)         │
@@ -404,21 +406,24 @@ Stream naming:
 - `ingest:rag:queue` — items queued for LightRAG indexing
 - `dlq:failed` — dead letter queue (all sources)
 
-Container `telethon-digest-cron-bridge` shares the `openclaw_default` network and
-has direct access to `http://omniroute:20129/v1` and `http://integration-bus-redis:6379`.
+Container `telethon-digest-cron-bridge` shares the `openclaw_default` network, mounts the Docker
+socket so it can exec OpenClaw/OpenAI requests inside the live gateway, and has direct access to
+`http://omniroute:20129/v1` plus `http://integration-bus-redis:6379`.
 
-The scheduler of record is the OpenClaw Gateway itself. The five digest jobs
-are stored in the gateway cron store and show up in Control → Cron Jobs:
+The scheduler of record is `/etc/cron.d/telethon-digest`. It calls
+`/opt/telethon-digest/trigger-digest.sh` for the five slots:
 
-- `Telethon Digest · 08:00 Morning brief`
-- `Telethon Digest · 11:00 Regular digest`
-- `Telethon Digest · 14:00 Regular digest`
-- `Telethon Digest · 17:00 Regular digest`
-- `Telethon Digest · 21:00 Evening editorial`
+- `08:00` morning
+- `11:00` interval
+- `14:00` interval
+- `17:00` interval
+- `21:00` editorial
 
-The repo sync helpers patch the OpenClaw cron store directly instead of relying
-on `openclaw cron list/add/remove`, because the CLI can hang on this gateway build
-while the underlying `jobs.json` store and scheduler keep working.
+The old OpenClaw Telethon agent-turn cron jobs are disabled on the live server.
+After the 2026.5.x upgrade they could report a successful cron run while the
+lightweight agent context refused the shell command needed to call the bridge.
+Host cron keeps the trigger path deterministic and avoids spending model tokens
+just to enqueue a digest job.
 
 ### Rate limit handling
 
@@ -476,8 +481,8 @@ recap selection.
 ## Signals Bridge
 
 `signals-bridge` is a separate Python service for narrow, time-sensitive signals such as trading
-alerts. It is intentionally optimized for low token cost and does **not** use GPT-5.5 in the
-signals pipeline.
+alerts. It now shares the same model reserve order as the digest path: OpenClaw/OpenAI first,
+OmniRoute light second, DeepSeek final, then local deterministic rendering.
 
 ### Architecture
 
@@ -493,8 +498,9 @@ signals-bridge (every 5 minutes, internal scheduler)
               ├── telegram source:
               │     Telethon user session → chat / author / hashtag prefilter
               ├── deterministic rules first
-              ├── one cheap OmniRoute `light` batch prompt for matched candidates only
-              │     max_tokens kept low; local fallback if OmniRoute unavailable
+              ├── OpenClaw/OpenAI batch prompt for matched candidates only
+              ├── fallback to cheap OmniRoute `light`, then DeepSeek
+              │     max_tokens kept low; local fallback if all model routes are unavailable
               └── Telegram topic `signals` + XADD ingest:events:signals
                     Telegram items carry source links; email items keep a compact excerpt
 ```
@@ -507,11 +513,10 @@ signals-bridge (every 5 minutes, internal scheduler)
   JSON files via `rule_files`.
 - Source reads stay inside the bridge: AgentMail HTTP API for email, Telethon for Telegram.
 - LLM usage is deliberately constrained:
-  - only `OmniRoute light`
+  - OpenClaw/OpenAI first, then `OmniRoute light`, then DeepSeek
   - short JSON-only prompt
   - low `max_tokens`
-  - local rule-based fallback if OmniRoute is unavailable
-- GPT-5.5 remains outside the signals path; it is not used for signal ingestion, filtering, or rendering.
+  - local rule-based fallback if all model routes are unavailable
 - `ingest:events:signals` stores only derived summaries + metadata for 14 days; no raw email bodies
   or full Telegram dumps are persisted.
 

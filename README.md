@@ -210,7 +210,7 @@ graph LR
     end
 
     subgraph Core["Core"]
-        OC["OpenClaw Gateway\n127.0.0.1:18789\nOmniRoute light primary"]
+        OC["OpenClaw Gateway\n127.0.0.1:18789\nOpenAI primary"]
         OR["OmniRoute\n:20129\nsmart / medium / light"]
         RAG["LightRAG\n127.0.0.1:8020\nKnowledge Graph"]
         Redis[("Redis Streams\nasync bus")]
@@ -252,8 +252,8 @@ graph LR
     Redis -->|"ingest:jobs:email"| EM
     Redis -->|"ingest:jobs:email:work"| WE
 
-    SB -->|"OmniRoute light"| OR
-    TD -->|"OmniRoute medium"| OR
+    SB -->|"OpenClaw/OpenAI -> OmniRoute -> DeepSeek"| OC
+    TD -->|"OpenClaw/OpenAI -> OmniRoute -> DeepSeek"| OC
 
     SB --> T1
     SB --> T2
@@ -272,13 +272,13 @@ graph LR
 
 | Service | Role | Network binding | LLM tier |
 |---------|------|----------------|----------|
-| **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | OmniRoute `light`, OpenAI gpt-5.5 fallback |
+| **OpenClaw Gateway** | Main agent runtime, conversation broker | `127.0.0.1:18789` | OpenAI `gpt-5.5`, OmniRoute fallback, DeepSeek final reserve |
 | **OmniRoute** | Smart model dispatcher, 3-tier routing with failover | `127.0.0.1:20128` (UI), `:20129` (API) | — |
 | **LightRAG** | Knowledge graph, hybrid vector+graph retrieval | `127.0.0.1:8020` | OmniRoute `light` + Gemini embeddings |
 | **wiki-import** | Curated import bridge for `url` / `text` / `server_path` into LLM-Wiki | `127.0.0.1:8095` | deterministic v1 |
 | **Redis Streams** | Async integration bus, consumer groups, DLQ | internal only | — |
-| **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OmniRoute `light` |
-| **telethon-digest** | Telegram channel digest (150–200 channels) | `127.0.0.1:8091` | OmniRoute `medium` |
+| **signals-bridge** | Signal routing from email + Telegram sources | `127.0.0.1:8093` | OpenClaw/OpenAI -> OmniRoute -> DeepSeek -> local |
+| **telethon-digest** | Telegram channel digest (150–200 channels) | `127.0.0.1:8091` | OpenClaw/OpenAI -> OmniRoute -> DeepSeek -> local |
 | **agentmail-email** | Personal inbox polling + scheduled digests | `127.0.0.1:8092` | OmniRoute `medium` |
 | **agentmail-work-email** | Work inbox polling + scheduled digests with forwarded-sender resolution and actionable/info triage | `127.0.0.1:8094` | OmniRoute `medium` |
 
@@ -451,8 +451,8 @@ OmniRoute dispatches tasks across three tiers with automatic provider failover.
 | **medium** | Summarization, Q&A, digests | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-30B |
 | **light** | Classification, signals enrichment, tagging | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-8B |
 
-**Primary route:** OmniRoute `light` for the main OpenClaw conversation; OpenAI `openai/gpt-5.5` via OAuth Plus is the fallback when OmniRoute/OpenRouter routes fail.
-**LightRAG:** OmniRoute `light` for LLM extraction/summarization, direct Gemini `gemini-embedding-001` for embeddings.
+**Primary route:** OpenAI `openai/gpt-5.5` via the OpenClaw subscription path; OmniRoute `light` is the first fallback, and DeepSeek is final reserve when both are unavailable.
+**LightRAG:** OmniRoute `light` for LLM extraction/summarization, with DeepSeek registered as the final LLM reserve behind that combo. Retrieval embeddings still require Gemini/OpenRouter/OpenAI embeddings; DeepSeek is not an embeddings provider.
 **Last30Days reasoning:** OpenRouter `google/gemini-2.5-flash-lite` via `OPENROUTER_API_KEY` in `signals.env`.
 
 | Provider | Auth | Cost |

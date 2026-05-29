@@ -32,8 +32,8 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
 - Docker networks: `lightrag_default` + `openclaw_default`; OpenClaw container uses `http://lightrag:9621`
 - input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
-- LLM: OmniRoute OpenAI-compatible endpoint `http://omniroute:20129/v1` with model `light` (`LLM_BINDING=openai`, `MAX_ASYNC=1`, `TIMEOUT=180`)
-- embedding: `gemini-embedding-001` via direct Gemini API key (dim=3072, kept outside OmniRoute to preserve one embedding space)
+- LLM: OmniRoute OpenAI-compatible endpoint `http://omniroute:20129/v1` with model `light` (`LLM_BINDING=openai`, `MAX_ASYNC=1`, `TIMEOUT=180`); DeepSeek is registered as the final `light` combo reserve for LLM generation
+- embedding: external embeddings provider only; live retrieval is temporarily deprecated while Gemini/OpenRouter/OpenAI embeddings credentials/quota are unavailable. DeepSeek is not an embeddings provider.
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
 - active ingest boundary:
@@ -50,9 +50,9 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 
 ### OpenClaw builtin memorySearch
 
-- status: enabled in `/opt/openclaw/config/openclaw.json`
+- status: disabled/deprecated while external embedding limits are unstable
 - backend: builtin SQLite memory engine (not QMD)
-- embedding provider: Gemini `gemini-embedding-001` via direct `GEMINI_API_KEY`
+- embedding provider: Gemini/OpenRouter/OpenAI embeddings when a funded route is restored
 - default memory roots:
   - `/opt/openclaw/workspace/MEMORY.md`
   - `/opt/openclaw/workspace/memory/**/*.md`
@@ -192,14 +192,15 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
-- `openclaw-with-iproute2:20260528-slim-2026.5.26`
+- `openclaw-with-iproute2:20260528-slim-2026.5.27`
 
 Previous confirmed healthy images:
 
 - `openclaw-with-iproute2:20260412-slim-2026.4.11`
 - `openclaw-with-iproute2:20260516-slim-2026.5.12`
+- `openclaw-with-iproute2:20260528-slim-2026.5.26`
 
-The current image is live-confirmed on `/opt/openclaw` and reports `OpenClaw 2026.5.26`.
+The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.5.27`; live validation is recorded in the command log after deployment.
 
 Reason:
 
@@ -209,10 +210,10 @@ Reason:
 - Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.5.26`
-- bundled Codex plugin registry version: `2026.5.26`; stale managed npm `codex@2026.5.12` was removed after the upgrade
+- current OpenClaw CLI version in that image: `2026.5.27`
+- bundled Codex plugin registry version: `2026.5.27`; stale managed npm `codex@2026.5.12` was removed after the upgrade
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.5.26`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.5.27`.
 
 ## Workspace state
 
@@ -259,11 +260,11 @@ See `docs/09-workspace-setup.md` for full onboarding guide.
 
 ## Validation status note
 
-Upgrade to `2026.5.26` confirmed successful (2026-05-28):
+Upgrade to `2026.5.27` deployment validation (2026-05-28):
 
 - gateway container is `healthy`
 - `/healthz` returns `{"ok":true,"status":"live"}`
-- `openclaw --version` reports `OpenClaw 2026.5.26`
+- `openclaw --version` reports `OpenClaw 2026.5.27`
 - `openclaw doctor` reports warnings only; no gateway startup error is present
 
 ## Important caveat
@@ -296,9 +297,9 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - routing tiers (priority order inside OmniRoute; Gateway-level fallback is documented below):
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
-  - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B
+  - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B; optional direct DeepSeek reserve is available when `DEEPSEEK_API_KEY` is present
 - LightRAG integration: **deprecated for retrieval** — service health is live, but query embeddings are blocked by external paid-provider limits: direct Gemini returns the monthly spending-cap error, OmniRoute/OpenRouter embeddings have no usable OpenRouter quota/credentials, and the Codex/OpenAI subscription fallback is not a usable API embeddings route. Keep `memorySearch` disabled until a funded embeddings route is healthy again; user-facing errors should say retrieval is deprecated/unavailable because paid embeddings are missing.
-- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `omniroute/light` as primary and `openai/gpt-5.5` as fallback only after OmniRoute/OpenRouter failure
+- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve
 - OpenClaw compaction reserve: `agents.defaults.compaction.reserveTokensFloor=20000` in the live Gateway config, added after the 2026-05-28 upgrade to keep long tool-heavy sessions recoverable.
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY` is redacted on the API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
@@ -311,19 +312,19 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - source artifact: `artifacts/telethon-digest/`
 - network: `openclaw_default` (external; used to reach OmniRoute at `http://omniroute:20129/v1`)
 - runtime containers:
-  - `telethon-digest-cron-bridge` — always-on HTTP trigger bridge for OpenClaw Cron Jobs
+  - `telethon-digest-cron-bridge` — always-on HTTP trigger bridge for host cron and manual smoke runs
   - `telethon-digest` — one-shot worker container used by manual runs / compose runs
 - Docker volumes:
   - `telethon-sessions` — Telethon user session file
   - `telethon-state` — per-channel watermarks, last run timestamp, and `pulse-profile.json` for learned interest buckets
 - runtime config: `/opt/telethon-digest/config.json`, generated from Telegram folders by `sync_channels.py`
 - output target: `telegram-digest` topic in `Benka_Clawbot_SuperGroup`
-- schedule: OpenClaw Cron Jobs at 08:00, 11:00, 14:00, 17:00, 21:00 Moscow time
+- schedule: host cron file `/etc/cron.d/telethon-digest` at 08:00, 11:00, 14:00, 17:00, 21:00 Moscow time; OpenClaw Telethon agent-turn cron jobs are disabled because the lightweight cron context no longer exposes shell tools reliably
 - read scope: application-enforced allowlist, `read_only=true`, `read_broadcast_channels_only=true`
 - current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `work`, `eb1`, `гребенюк`, `personal`, `faang`
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
 - bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
-- status: running as `telethon-digest`; job timing managed by OpenClaw Gateway cron store
+- status: bridge running as `telethon-digest-cron-bridge`; job timing managed by host cron calling `/opt/telethon-digest/trigger-digest.sh`
 
 ### Signals Bridge
 
