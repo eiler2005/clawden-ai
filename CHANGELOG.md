@@ -38,6 +38,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute DeepSeek sync helper**: added `scripts/sync-omniroute-deepseek-provider.sh` to upsert the live DeepSeek key into OmniRoute's encrypted provider store and attach `deepseek/deepseek-chat` as the final `light` combo reserve.
 
 ### Fixed
+- **Telegram Digest full-day windows and lead links**: aligned live `telethon-digest` schedule config with the host cron slots (`08:00`, `11:00`, `14:00`, `17:00`, `21:00` MSK), made scheduled runs read/filter exact nominal windows instead of drifting from `last_run`, expanded overnight lookahead for `21:00-08:00`, and made `Главное` bullets render source `→` links like folder items.
 - **AgentMail email digest delivery**: moved `inbox-email` and `work-email` scheduled digest delivery from OpenClaw agent-turn Cron Jobs to host cron direct `/trigger` calls. The email pollers were healthy and continued producing Redis events; only Telegram delivery was stalled because OpenClaw Cron reported false-positive `ok` runs without an exec/shell tool.
 - **Telegram Digest deterministic fallback path**: fixed the digest service using direct OmniRoute only; it now tries the existing OpenClaw/OpenAI subscription first, then OmniRoute and DeepSeek before rendering `local deterministic fallback · no LLM`.
 - **Telegram Digest LLM validation**: fixed `post_url` validation so Telegram URLs are preserved as URLs instead of being stripped by the text cleaner. The live smoke posted a fresh `08:00-08:45` digest with `model: gpt-5.5` and `fallback: false`.

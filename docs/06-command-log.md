@@ -1140,6 +1140,12 @@ Follow-up correction:
 - The live `/etc/cron.d/telethon-digest` was corrected to explicit UTC times:
   `05:00 -> 08:00 MSK`, `08:00 -> 11:00 MSK`, `11:00 -> 14:00 MSK`,
   `14:00 -> 17:00 MSK`, `18:00 -> 21:00 MSK`.
+- Follow-up on `2026-05-30`: the live `/opt/telethon-digest/config.json` still carried the older
+  `[08:00, 09:00, 13:00, 17:00, 21:00]` schedule, so nominal host-cron triggers produced labels
+  such as `09:00-11:00` and `13:00-14:00`. The deploy now rewrites schedule config to
+  `[08:00, 11:00, 14:00, 17:00, 21:00]`, and `digest_worker.py` reads/filters exact nominal
+  windows instead of relying on `last_run` drift. `Главное` bullets now get source `→` links from
+  matching digest items.
 
 ## 31. AgentMail digest delivery repair
 

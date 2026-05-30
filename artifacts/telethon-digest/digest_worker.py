@@ -79,6 +79,14 @@ def _schedule_slots(config: dict) -> list[tuple[int, int]]:
 
 
 def _scheduled_period_label(config: dict, *, now: datetime) -> str | None:
+    bounds = _scheduled_period_bounds(config, now=now)
+    if bounds is None:
+        return None
+    _, _, label = bounds
+    return label
+
+
+def _scheduled_period_bounds(config: dict, *, now: datetime) -> tuple[datetime, datetime, str] | None:
     raw_hour = os.environ.get("DIGEST_SLOT_HOUR", "").strip()
     if not raw_hour:
         return None
@@ -107,7 +115,17 @@ def _scheduled_period_label(config: dict, *, now: datetime) -> str | None:
         return None
     end_local = matching_points[-1]
     start_local = points[points.index(end_local) - 1]
-    return f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+    label = f"{start_local.strftime('%H:%M')}–{end_local.strftime('%H:%M')}"
+    return start_local.astimezone(timezone.utc), end_local.astimezone(timezone.utc), label
+
+
+def _post_in_period(post, start: datetime, end: datetime) -> bool:
+    post_dt = post.date
+    if post_dt.tzinfo is None:
+        post_dt = post_dt.replace(tzinfo=timezone.utc)
+    else:
+        post_dt = post_dt.astimezone(timezone.utc)
+    return start <= post_dt < end
 
 
 def apply_read_allowlist(config: dict) -> dict:
@@ -182,13 +200,21 @@ async def run_digest(config: dict | None = None):
     config = apply_read_allowlist(config)
     channels_in_scope = sum(len(folder.get("channels", [])) for folder in config.get("folders", []))
 
-    period_end = datetime.now(timezone.utc)
-    period_start_ts = state_store.get_last_run()
-    if period_start_ts == 0:
-        # First run: use lookahead_hours as window
-        period_start_ts = time.time() - config.get("lookahead_hours", 4) * 3600
-    period_start = datetime.fromtimestamp(period_start_ts, tz=timezone.utc)
-    period_label_override = _scheduled_period_label(config, now=period_end)
+    now_utc = datetime.now(timezone.utc)
+    slot_bounds = _scheduled_period_bounds(config, now=now_utc)
+    if slot_bounds is not None:
+        period_start, period_end, period_label_override = slot_bounds
+        config = copy.deepcopy(config)
+        window_age_hours = max((now_utc - period_start).total_seconds() / 3600, 0)
+        config["lookahead_hours"] = max(float(config.get("lookahead_hours", 4) or 4), window_age_hours + 0.25)
+    else:
+        period_end = now_utc
+        period_start_ts = state_store.get_last_run()
+        if period_start_ts == 0:
+            # First run: use lookahead_hours as window
+            period_start_ts = time.time() - config.get("lookahead_hours", 4) * 3600
+        period_start = datetime.fromtimestamp(period_start_ts, tz=timezone.utc)
+        period_label_override = None
 
     logger.info(
         f"Digest cycle: {period_start.isoformat()} → {period_end.isoformat()}"
@@ -208,13 +234,23 @@ async def run_digest(config: dict | None = None):
     finally:
         await client.disconnect()
 
-    if not all_posts:
+    posts_in_period = [post for post in all_posts if _post_in_period(post, period_start, period_end)]
+    if len(posts_in_period) != len(all_posts):
+        logger.info(
+            "Window filter: kept %s/%s posts for %s → %s",
+            len(posts_in_period),
+            len(all_posts),
+            period_start.isoformat(),
+            period_end.isoformat(),
+        )
+
+    if not posts_in_period:
         logger.info("No new posts — skipping digest")
         state_store.set_last_run()
         return
 
     # 2. Score & filter
-    top_posts = score_posts(all_posts, config)
+    top_posts = score_posts(posts_in_period, config)
 
     if not top_posts:
         logger.info("No posts above min_score — skipping digest")
@@ -229,13 +265,13 @@ async def run_digest(config: dict | None = None):
 
     stats = DigestStats(
         channels_in_scope=channels_in_scope,
-        new_posts_seen=len(all_posts),
+        new_posts_seen=len(posts_in_period),
         posts_selected=len(top_posts),
         active_channels_seen=len({post.channel_id for post in all_posts}),
-        folder_message_counts=dict(Counter(post.folder_name for post in all_posts)),
+            folder_message_counts=dict(Counter(post.folder_name for post in posts_in_period)),
         folder_channel_counts={
             folder_name: len(channel_ids)
-            for folder_name, channel_ids in _folder_channel_sets(all_posts).items()
+            for folder_name, channel_ids in _folder_channel_sets(posts_in_period).items()
         },
     )
 
@@ -268,7 +304,7 @@ async def run_digest(config: dict | None = None):
         logger.error("Digest persistence failed: %s", exc)
 
     # 8. Advance watermarks
-    update_cursors(all_posts)
+    update_cursors(posts_in_period)
     state_store.set_last_run()
 
     logger.info("Digest cycle complete")

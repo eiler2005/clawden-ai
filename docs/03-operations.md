@@ -985,6 +985,10 @@ job is retried later than the scheduled hour. The trigger also passes the nomina
 slot (`08:00`, `11:00`, `14:00`, `17:00`, `21:00`) into the worker, so the digest
 header keeps the scheduled window label even if Telegram shows the message itself
 at `11:05` because rendering/posting finished a few minutes later.
+The worker also uses that nominal slot to read and filter the exact source window:
+`21:00-08:00`, `08:00-11:00`, `11:00-14:00`, `14:00-17:00`, and `17:00-21:00`.
+The overnight window expands `lookahead_hours` for that run, so it does not silently
+miss earlier night posts.
 Do not replace these lines with `TZ=Europe/Moscow` plus local-hour cron expressions:
 the deployed host cron evaluates schedule times in UTC, while `TZ` only changes the
 command environment. Using local-hour expressions there causes delayed, stale

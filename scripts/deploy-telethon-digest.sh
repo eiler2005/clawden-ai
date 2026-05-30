@@ -105,6 +105,23 @@ PY
   sudo chmod +x /opt/telethon-digest/trigger-digest.sh
   sudo chmod +x /opt/telethon-digest/sync-openclaw-cron-jobs.sh
   sudo test -f config.json || sudo cp config.example.json config.json
+  sudo python3 - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("/opt/telethon-digest/config.json")
+data = json.loads(path.read_text())
+data["schedule_hours"] = [8, 11, 14, 17, 21]
+data["schedule_slots"] = ["08:00", "11:00", "14:00", "17:00", "21:00"]
+data["digest_types"] = {
+    "8": "morning",
+    "11": "interval",
+    "14": "interval",
+    "17": "interval",
+    "21": "editorial",
+}
+path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+PY
   sudo docker compose build
 
   # Stop old APScheduler daemon; digest runs are triggered by host cron calling

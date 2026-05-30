@@ -41,6 +41,30 @@ class ScheduledWindowTests(unittest.TestCase):
 
         self.assertEqual(label, "08:00–11:00")
 
+    def test_scheduled_period_bounds_return_exact_utc_slot_window(self) -> None:
+        previous_hour = os.environ.get("DIGEST_SLOT_HOUR")
+        previous_minute = os.environ.get("DIGEST_SLOT_MINUTE")
+        os.environ["DIGEST_SLOT_HOUR"] = "8"
+        os.environ["DIGEST_SLOT_MINUTE"] = "0"
+        try:
+            start, end, label = digest_worker._scheduled_period_bounds(
+                {"timezone": "Europe/Moscow", "schedule_hours": [8, 11, 14, 17, 21]},
+                now=datetime(2026, 5, 30, 5, 5, tzinfo=timezone.utc),
+            )
+        finally:
+            if previous_hour is None:
+                os.environ.pop("DIGEST_SLOT_HOUR", None)
+            else:
+                os.environ["DIGEST_SLOT_HOUR"] = previous_hour
+            if previous_minute is None:
+                os.environ.pop("DIGEST_SLOT_MINUTE", None)
+            else:
+                os.environ["DIGEST_SLOT_MINUTE"] = previous_minute
+
+        self.assertEqual(label, "21:00–08:00")
+        self.assertEqual(start, datetime(2026, 5, 29, 18, 0, tzinfo=timezone.utc))
+        self.assertEqual(end, datetime(2026, 5, 30, 5, 0, tzinfo=timezone.utc))
+
     def test_schedule_slots_support_explicit_minutes(self) -> None:
         slots = digest_worker._schedule_slots(
             {"schedule_slots": ["08:30", "10:00", "11:30", "13:00"]}

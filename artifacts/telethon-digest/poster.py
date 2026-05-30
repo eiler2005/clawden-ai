@@ -105,19 +105,50 @@ def _render_lead_line(value: str) -> str:
     return f"• <b>{escape(channel)}</b>: {_summary_text(summary)}"
 
 
-def _find_lead_item(document: DigestDocument, value: str) -> DigestItem | None:
-    raw = re.sub(r"\s+", " ", value or "").strip()
-    match = re.match(r"^([^:]{2,80}):\s*(.+)$", raw)
-    if not match:
-        return None
-    channel, summary = match.group(1).strip(), match.group(2).strip()
-    candidates = [*document.new_glance, *document.must_read]
+def _lead_candidates(document: DigestDocument) -> list[DigestItem]:
+    candidates = [*document.must_read, *document.new_glance]
     for section in document.sections:
         candidates.extend(section.items)
+    return candidates
+
+
+def _normalized_terms(value: str) -> set[str]:
+    return {
+        item.casefold()
+        for item in re.findall(r"[A-Za-zА-Яа-я0-9]{4,}", value or "")
+        if item
+    }
+
+
+def _item_urls(item: DigestItem) -> set[str]:
+    return {url for url in [item.post_url, *item.extra_post_urls] if url}
+
+
+def _find_lead_item(document: DigestDocument, value: str, used_urls: set[str] | None = None) -> DigestItem | None:
+    used_urls = used_urls or set()
+    raw = re.sub(r"\s+", " ", value or "").strip()
+    match = re.match(r"^([^:]{2,80}):\s*(.+)$", raw)
+    candidates = [item for item in _lead_candidates(document) if not (_item_urls(item) & used_urls)]
     for item in candidates:
-        if item.channel == channel and item.summary == summary:
+        if match and item.channel == match.group(1).strip() and item.summary == match.group(2).strip():
             return item
-    return None
+
+    lead_terms = _normalized_terms(raw)
+    scored: list[tuple[float, DigestItem]] = []
+    for item in candidates:
+        item_text = f"{item.channel} {item.summary} {' '.join(item.also_mentioned)}"
+        item_terms = _normalized_terms(item_text)
+        overlap = len(lead_terms & item_terms)
+        if not overlap:
+            continue
+        channel_bonus = 2 if item.channel.casefold() in raw.casefold() else 0
+        scored.append((overlap + channel_bonus, item))
+    if scored:
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        if scored[0][0] >= 2:
+            return scored[0][1]
+
+    return candidates[0] if candidates else None
 
 
 def _render_post_links(item: DigestItem) -> str:
@@ -253,11 +284,13 @@ def render_digest_html(document: DigestDocument) -> str:
     if document.lead:
         lines.append("")
         lines.append("🧭 <b>Главное</b>")
+        used_lead_urls: set[str] = set()
         for item in document.lead:
             lead_line = _render_lead_line(item)
-            lead_item = _find_lead_item(document, item)
+            lead_item = _find_lead_item(document, item, used_urls=used_lead_urls)
             if lead_item:
                 lead_line += _render_post_links(lead_item)
+                used_lead_urls.update(_item_urls(lead_item))
             lines.append(lead_line)
 
     lines.extend(_render_themes(document))
