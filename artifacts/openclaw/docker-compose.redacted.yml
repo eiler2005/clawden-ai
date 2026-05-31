@@ -1,6 +1,10 @@
 services:
   openclaw-gateway:
     image: ${OPENCLAW_IMAGE}
+    cpus: "0.90"
+    mem_limit: 1224m
+    memswap_limit: 1224m
+    pids_limit: 256
     environment:
       HOME: /home/node
       TERM: xterm-256color

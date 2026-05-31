@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Live Docker resource guardrails**: capped the main 2-vCPU AI path with about 20% host headroom:
+  `openclaw-gateway` at `0.90 CPU / 1224m`, `omniroute` at `0.25 CPU / 512m`, and `lightrag` at
+  `0.45 CPU / 1536m`. The LightRAG memory cap intentionally stays at 1.5GB because the current
+  graph cold start OOMed at 768MB.
 - **Telegram LLM route order**: `telethon-digest` and `signals-bridge` now use the intended route order for LLM enrichment: OpenClaw `openai/gpt-5.5` primary via the live Gateway, OmniRoute fallback, then optional DeepSeek API fallback. Deterministic local fallback is now last-resort only after all model routes fail.
 - **OpenClaw runtime live upgrade**: upgraded the prepared derived gateway image to `openclaw-with-iproute2:20260528-slim-2026.5.27`, based on the latest stable upstream `OpenClaw 2026.5.27` release. Removed the stale managed npm `codex@2026.5.12` plugin install so the live registry uses the bundled `codex` plugin from the current OpenClaw image.
 - **OpenAI primary auth refresh**: refreshed the live `openai-codex` token profile used by the `openai/gpt-5.5` primary route. OmniRoute/OpenRouter remain configured as the first fallback route.
@@ -38,6 +42,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute DeepSeek sync helper**: added `scripts/sync-omniroute-deepseek-provider.sh` to upsert the live DeepSeek key into OmniRoute's encrypted provider store and attach `deepseek/deepseek-chat` as the final `light` combo reserve.
 
 ### Fixed
+- **Knowledgebase forwarded-save stall**: reset a stuck `Knowledgebase` topic session after a long
+  forwarded save wandered into broad OpenClaw/source searches and hit an active-model timeout. The
+  workspace policy now requires direct `wiki_ingest` for forwarded/long save content and a short
+  operator error instead of repo/source diagnostics when ingest is unavailable.
 - **Knowledgebase stale session compaction recovery**: reset the live stale `Knowledgebase` topic session mapping and generic `agent:main:main` mapping after `reserveTokensFloor=20000` was already present but the old transcript kept failing with `already_compacted_recently`. Backed up the session records, recreated the Gateway, and validated a fresh Knowledgebase Telegram smoke without auto-compaction errors.
 - **Knowledgebase save degraded RAG UX**: `wiki-import` now supports an explicit `WIKI_IMPORT_RAG_DEGRADED_REASON` mode so Knowledgebase saves still materialize `raw/**` and `wiki/research/**` while skipping known-failing LightRAG uploads. Telegram instructions now treat `rag_status=degraded` as a successful wiki-first save and forbid leaking raw infra-debug messages such as `getent hosts ... (agent) failed` after the save.
 - **Telegram Digest full-day windows and lead links**: aligned live `telethon-digest` schedule config with the host cron slots (`08:00`, `11:00`, `14:00`, `17:00`, `21:00` MSK), made scheduled runs read/filter exact nominal windows instead of drifting from `last_run`, expanded overnight lookahead for `21:00-08:00`, and made `Главное` bullets render source `→` links like folder items.

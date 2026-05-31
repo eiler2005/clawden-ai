@@ -89,6 +89,10 @@ services:
       - /opt/obsidian-vault:/app/data/inputs/obsidian:ro
       - /opt/openclaw/workspace:/app/data/inputs/workspace:ro
     restart: unless-stopped
+    cpus: "0.45"
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=5).read()"]
       interval: 30s

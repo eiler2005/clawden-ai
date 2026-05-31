@@ -5,6 +5,10 @@
 services:
   omniroute:
     container_name: omniroute
+    cpus: "0.25"
+    mem_limit: 512m
+    memswap_limit: 512m
+    pids_limit: 128
     build:
       context: ./omniroute-src
       target: runner-base

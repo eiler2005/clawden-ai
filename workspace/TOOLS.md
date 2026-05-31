@@ -129,7 +129,11 @@ _(если ничего нет после review: «В локальной Knowle
 3. Если есть надёжный canonical URL статьи/поста — предпочесть `wiki_ingest({source_type: "url", source: "https://..."})`
 4. Иначе вызвать `wiki_ingest({source_type: "text", source: "[извлечённый markdown]"})`
 5. Убедиться, что результат содержит `wiki_page_paths` и `raw_path`; без этого save не считается успешным
-6. Ответить кратко в wiki-first формате:
+6. Не запускать broad repo/source diagnostics (`rg wiki_ingest`, чтение OpenClaw source/docs, поиск по
+   memory-wiki реализации) из Telegram save-turn. Если `wiki_ingest` недоступен или вернул ошибку,
+   ответить коротким operator error; если материал уже существует, ответить `уже сохранено` с
+   существующим `wiki/research/**` путём.
+7. Ответить кратко в wiki-first формате:
 
 ```
 ✅ Сохранено в wiki: {title}

@@ -11,6 +11,7 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 
 - provider: Hetzner Cloud
 - instance class: `CX23`
+- observed capacity: `2 vCPU`, `~3.7GiB RAM`, `2GiB swap`
 - OS: Ubuntu `24.04 LTS`
 - workload shape: one existing application plus one dedicated OpenClaw deployment
 
@@ -127,6 +128,14 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - env file: `/opt/openclaw/.env`
 - reverse proxy: `Caddy`
 - public hostname: intentionally omitted from git-safe docs
+- resource guardrails on the live 2-vCPU host:
+  - `openclaw-gateway`: `0.90 CPU`, `1224m` RAM, `256` pids
+  - `omniroute`: `0.25 CPU`, `512m` RAM, `128` pids
+  - `lightrag`: `0.45 CPU`, `1536m` RAM, `128` pids
+  - combined CPU cap for the main AI path is `1.60` out of `2.00` vCPU, leaving roughly 20%
+    headroom for SSH, Docker, Redis, Caddy/networking, and bridge services
+  - active OpenClaw/OmniRoute limits live in `/opt/openclaw/docker-compose.override.yml`; LightRAG
+    limits live in `/opt/lightrag/docker-compose.override.yml`
 
 ### Container-side tools (optional)
 

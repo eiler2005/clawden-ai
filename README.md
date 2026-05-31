@@ -65,11 +65,11 @@ Everything is observable through a Telegram supergroup with 11 dedicated topics 
 
 ## How It Works
 
-Everything runs inside Docker containers on a single Hetzner CX23 (3 vCPU / 4 GB RAM, Ubuntu 24.04). Caddy is the only public-facing service — it terminates TLS and enforces mTLS client certificate auth before anything reaches OpenClaw. All other services communicate over the private `openclaw_default` Docker bridge network.
+Everything runs inside Docker containers on a single Hetzner CX23 (2 vCPU / 4 GB RAM, Ubuntu 24.04). Caddy is the only public-facing service — it terminates TLS and enforces mTLS client certificate auth before anything reaches OpenClaw. All other services communicate over the private `openclaw_default` Docker bridge network.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Hetzner CX23 (3 vCPU / 4 GB RAM, Ubuntu 24.04)                        │
+│  Hetzner CX23 (2 vCPU / 4 GB RAM, Ubuntu 24.04)                        │
 │                                                                         │
 │  ┌──────────────────────────────────────────────┐                      │
 │  │  Caddy (reverse proxy)                       │ ← 443 / 80           │
@@ -263,7 +263,7 @@ graph LR
     OC --> T6
 ```
 
-**Host:** Hetzner CX23 · 3 vCPU / 4 GB RAM · Ubuntu 24.04  
+**Host:** Hetzner CX23 · 2 vCPU / 4 GB RAM · Ubuntu 24.04
 **Network:** All services on `openclaw_default` Docker bridge. Only Caddy is public-facing (ports 80/443).
 
 ---

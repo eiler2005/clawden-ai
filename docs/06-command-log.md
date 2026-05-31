@@ -1221,3 +1221,41 @@ Follow-up on `2026-05-31`:
 - Telethon owner-session smoke posted an `обсуди:` probe into `Knowledgebase`; the bot replied without
   `Auto-compaction could not recover`, and fresh session mappings were created for topic `232` and
   `agent:main:main`.
+
+## 33. Docker CPU/RAM guardrails after Knowledgebase stall
+
+Date: `2026-05-31`
+
+Problem:
+
+- After a forwarded `Knowledgebase` save, Gateway logs showed a long active model call with very large
+  context and an eventual timeout. The user also observed the VPS degrading to near-100% CPU.
+- The server class is `CX23`, but live inspection showed the current instance exposes `2 vCPU` and
+  about `3.7GiB` RAM, so unbounded AI containers can starve SSH, Docker, Redis, Caddy/networking, and
+  bridge services.
+- An initial memory-only LightRAG cap of `768m` was too low for the current graph and caused
+  `Exit 137` during cold start.
+
+Fix:
+
+- Applied active Docker Compose resource guardrails in the live override files:
+  - `/opt/openclaw/docker-compose.override.yml`:
+    `openclaw-gateway` = `0.90 CPU / 1224m / 256 pids`, `omniroute` = `0.25 CPU / 512m / 128 pids`
+  - `/opt/lightrag/docker-compose.override.yml`:
+    `lightrag` = `0.45 CPU / 1536m / 128 pids`
+- The main AI path is capped at `1.60` out of `2.00` vCPU, leaving about 20% host headroom.
+- Updated workspace policy so forwarded posts, URLs, and long save content must use the direct
+  `wiki_ingest` path instead of spending a Telegram turn on broad OpenClaw/source diagnostics.
+
+Validation:
+
+- `docker inspect` confirmed `NanoCpus`, memory, memory-swap, and pid limits on all three containers.
+- `openclaw-gateway`, `omniroute`, and `lightrag` were healthy after recreate.
+- `GET /healthz` on OpenClaw returned live, and LightRAG health returned healthy on the host-local
+  `127.0.0.1:8020` mapping.
+- A low-idle `docker stats --no-stream` sample showed the capped containers below their CPU and memory
+  ceilings, and host load returned to normal.
+- Knowledge smoke returned the expected `deprecated_external_embeddings_unavailable` retrieval status
+  while keeping LightRAG service health green and confirming DeepSeek only as an LLM reserve.
+- Local unit tests passed: `telethon-digest` 8, `wiki-import` 24, `signals-bridge` 87,
+  `agentmail-email` 18 (`137` total).

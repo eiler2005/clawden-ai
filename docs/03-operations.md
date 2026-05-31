@@ -252,6 +252,36 @@ The removed records were copied to
 `/opt/openclaw/config/agents/main/sessions/reset-backups/knowledgebase-compaction-<timestamp>/`
 before the Gateway restart.
 
+## Docker resource guardrails
+
+The live `CX23` currently exposes `2 vCPU` and about `3.7GiB` RAM. Keep roughly 20-25% CPU headroom
+for SSH, Docker, Redis, Caddy/networking, and lightweight bridge services. The active caps are:
+
+```text
+openclaw-gateway  0.90 CPU  1224m RAM  256 pids
+omniroute         0.25 CPU   512m RAM  128 pids
+lightrag          0.45 CPU  1536m RAM  128 pids
+```
+
+The combined CPU cap for the main AI path is `1.60` out of `2.00` vCPU. Do not reduce LightRAG
+memory below `1536m` without rebuilding/pruning its graph: the current graph is about `15k` nodes /
+`20k` edges, and a `768m` cap caused `Exit 137` during cold start.
+
+These are active Compose overrides, not advisory examples: OpenClaw/OmniRoute limits live in
+`/opt/openclaw/docker-compose.override.yml`, and LightRAG limits live in
+`/opt/lightrag/docker-compose.override.yml`.
+
+Check applied limits, not only YAML:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  for c in openclaw-openclaw-gateway-1 omniroute lightrag-lightrag-1; do
+    sudo docker inspect "$c" \
+      --format "$c NanoCpus={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}} PidsLimit={{.HostConfig.PidsLimit}}"
+  done
+'
+```
+
 ## LightRAG embedding-provider recovery
 
 Current live status after the 2026-05-28 OpenClaw upgrade:

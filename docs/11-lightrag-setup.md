@@ -124,7 +124,7 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 
 ---
 
-## Resource Requirements (Hetzner CX23: 3 vCPU, 4GB RAM)
+## Resource Requirements (Hetzner CX23: 2 vCPU, 4GB RAM)
 
 | Component | Choice | Why |
 |-----------|--------|-----|
@@ -135,6 +135,10 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 | Embedding | `gemini-embedding-001` or OpenRouter/OpenAI embedding model | Embeddings require a real embeddings provider and a single stable vector dimension for the whole index |
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
+
+Live resource guardrail on this host: LightRAG runs with `cpus: "0.45"`, `mem_limit: 1536m`,
+`memswap_limit: 1536m`, and `pids_limit: 128`. The 1.5GB memory cap is intentional: the current
+graph has roughly 15k nodes and 20k edges, and a 768MB cap caused `Exit 137` during cold start.
 
 **Current split:** LLM requests go through OmniRoute; embeddings stay on an embeddings-capable provider.
 This means LightRAG currently needs:
@@ -224,6 +228,10 @@ services:
       - /opt/obsidian-vault:/app/data/inputs/obsidian:ro
       - /opt/openclaw/workspace:/app/data/inputs/workspace:ro
     restart: unless-stopped
+    cpus: "0.45"
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=5).read()"]
       interval: 30s
