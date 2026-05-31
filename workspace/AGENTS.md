@@ -203,10 +203,12 @@ credentials/quota (`No credentials for embedding provider`, `monthly spending ca
 embeddings-маршрут требует оплаченной квоты/credentials. Wiki-save остаётся рабочим.
 
 Для явного save `rag_status=degraded` от `wiki_ingest` означает успешный wiki-first save с
-отложенной индексацией. Не запускать из Telegram-контекста дополнительные infra-debug команды и не
-публиковать сырой вывод (`getent hosts`, `curl`, `docker`, stack trace, `(agent) failed`) отдельным
-сообщением после успешного сохранения. DeepSeek допустим только как LLM-резерв, но не как
-embeddings fallback.
+отложенной индексацией. Если нативного `wiki_ingest` tool нет в runtime, использовать узкий wrapper:
+`python3 /home/node/.openclaw/workspace/bin/wiki_import_tool.py trigger` с JSON payload из `TOOLS.md`.
+Не запускать из Telegram-контекста дополнительные infra-debug команды и не публиковать сырой вывод
+(`getent hosts`, `curl`, `docker`, stack trace, `(agent) failed`) отдельным сообщением после успешного
+сохранения. Для LightRAG/wiki API-only LLM задач маршрут: OmniRoute first, затем DeepSeek API fallback.
+DeepSeek допустим только как LLM-резерв, но не как embeddings fallback.
 
 ```
 POST http://lightrag:9621/query

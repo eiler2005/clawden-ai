@@ -11,11 +11,14 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      WIKI_IMPORT_URL: http://wiki-import:8095
+      WIKI_IMPORT_TOKEN_FILE: /run/secrets/wiki_import_token
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
       - /opt/obsidian-vault:/opt/obsidian-vault:rw
+      - /opt/openclaw/secrets/wiki_import_token:/run/secrets/wiki_import_token:ro
     ports:
       - "${OPENCLAW_GATEWAY_PORT}:18789"
       - "${OPENCLAW_BRIDGE_PORT}:18790"
@@ -43,12 +46,15 @@ services:
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      WIKI_IMPORT_URL: http://wiki-import:8095
+      WIKI_IMPORT_TOKEN_FILE: /run/secrets/wiki_import_token
       BROWSER: echo
       TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
       - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
       - /opt/obsidian-vault:/opt/obsidian-vault:rw
+      - /opt/openclaw/secrets/wiki_import_token:/run/secrets/wiki_import_token:ro
     stdin_open: true
     tty: true
     init: true

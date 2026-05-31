@@ -32,6 +32,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Knowledgebase historical-save recovery**: documented and operationalized a dedicated backfill path for old `Knowledgebase` posts that were previously handled as `raw/articles + LightRAG` without visible wiki artifacts.
 
 ### Added
+- **Gateway wiki-import wrapper**: added `workspace/bin/wiki_import_tool.py`, a narrow runtime helper
+  that calls the internal `wiki-import` API from the OpenClaw Gateway using a mounted token file. This
+  makes `Knowledgebase` saves work even when `wiki_ingest` is only a documented workflow concept and
+  not exposed as a native OpenClaw tool.
 - **Human-first memory explainer**: added `docs/19-llm-wiki-memory-explained.md` with Mermaid diagrams for vault structure, compile flow, explicit save flow, query path, and the role split between `wiki`, `LightRAG`, and OpenClaw.
 - **LLM-facing project orientation**: added `docs/20-llm-project-orientation.md` so another model can understand what this repo is, which docs are canonical by topic, and how to navigate the current architecture without scanning the whole tree blindly.
 - **wiki-import cron sync helper**: added `artifacts/wiki-import/sync-openclaw-cron-jobs.sh` to patch the OpenClaw cron store with lifecycle maintenance jobs safely and idempotently.
@@ -42,6 +46,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute DeepSeek sync helper**: added `scripts/sync-omniroute-deepseek-provider.sh` to upsert the live DeepSeek key into OmniRoute's encrypted provider store and attach `deepseek/deepseek-chat` as the final `light` combo reserve.
 
 ### Fixed
+- **Knowledgebase save tool availability**: mounted the `wiki-import` token into the Gateway as a
+  file-only secret, deployed the workspace wrapper, reset the stale `Knowledgebase` session, and
+  validated a real Telegram save. The live reply now confirms `raw/**` + `wiki/**` creation and marks
+  LightRAG as degraded instead of saying `wiki_ingest` is unavailable.
 - **Knowledgebase forwarded-save stall**: reset a stuck `Knowledgebase` topic session after a long
   forwarded save wandered into broad OpenClaw/source searches and hit an active-model timeout. The
   workspace policy now requires direct `wiki_ingest` for forwarded/long save content and a short

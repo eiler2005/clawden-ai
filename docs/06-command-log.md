@@ -1259,3 +1259,35 @@ Validation:
   while keeping LightRAG service health green and confirming DeepSeek only as an LLM reserve.
 - Local unit tests passed: `telethon-digest` 8, `wiki-import` 24, `signals-bridge` 87,
   `agentmail-email` 18 (`137` total).
+
+## 34. Gateway wiki-import wrapper repair
+
+Date: `2026-05-31`
+
+Problem:
+
+- A fresh `Knowledgebase` forwarded-save attempt no longer spiraled into diagnostics, but it replied
+  that `wiki_ingest` was unavailable in the current runtime.
+- Root cause: `wiki_ingest` was documented as the conceptual workflow, but not exposed as a native
+  OpenClaw tool in the Telegram agent runtime. The Gateway also did not have a `wiki-import` token
+  file, so a direct authenticated `POST /trigger` could not be called from a narrow wrapper.
+
+Fix:
+
+- Added `workspace/bin/wiki_import_tool.py`, a small standard-library wrapper for `status`,
+  `trigger`, `lint`, and `maintain` calls to `wiki-import`.
+- Mounted the live `wiki-import` token into `openclaw-gateway` as
+  `/run/secrets/wiki_import_token` and set `WIKI_IMPORT_URL=http://wiki-import:8095` plus
+  `WIKI_IMPORT_TOKEN_FILE=/run/secrets/wiki_import_token`.
+- Updated workspace policy: if no native `wiki_ingest` tool is exposed, use the wrapper rather than
+  broad source/repo diagnostics.
+- For LightRAG/wiki API-only LLM work, the route remains OmniRoute first and DeepSeek API fallback;
+  DeepSeek is not an embeddings provider.
+
+Validation:
+
+- Gateway wrapper `status` returned `ok=true`, `rag_degraded=true`, and the internal LightRAG URL.
+- Direct wrapper `trigger` created `raw/articles/**` plus `wiki/research/**` and returned
+  `rag_status=degraded`.
+- Telegram owner-session save smoke in `Knowledgebase` returned `✅ Сохранено в wiki` with a
+  concrete page path and `LightRAG: degraded`, with no `wiki_ingest unavailable` error.

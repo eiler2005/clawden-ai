@@ -746,6 +746,23 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
+### Check Gateway-side wiki import wrapper
+
+The Telegram agent does not always receive `wiki_ingest` as a native OpenClaw tool. In that case it
+must use the narrow wrapper deployed into the Gateway workspace:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw
+  sudo docker compose exec -T openclaw-gateway \
+    python3 /home/node/.openclaw/workspace/bin/wiki_import_tool.py status | jq .
+'
+```
+
+The wrapper reads the internal token from `/run/secrets/wiki_import_token`. Do not echo the token in
+logs. For a manual save smoke, pass a JSON payload to `trigger` and confirm `wiki_page_paths`,
+`raw_path`, and `rag_status` in the response.
+
 ### Run wiki lifecycle maintenance manually
 
 Dry-run report:

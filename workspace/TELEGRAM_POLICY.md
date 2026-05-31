@@ -31,9 +31,11 @@ Telegram message after a successful save; suppress command lines and traces such
 `curl`, `docker compose logs`, Python tracebacks, or `(agent) failed`. DeepSeek is allowed only as a
 final LLM fallback behind OpenAI/OmniRoute; it is not an embeddings fallback for LightRAG retrieval.
 For forwarded posts, URLs, and long save content, do not spend the Telegram turn on broad OpenClaw
-source/repo searches to rediscover the ingest implementation. Use the configured wiki ingest path;
-if it is unavailable, return a short operator error, and if the item already exists, reply with the
-existing `wiki/research/**` path.
+source/repo searches to rediscover the ingest implementation. Use the configured wiki ingest path; if
+no native `wiki_ingest` tool is exposed, call the narrow runtime wrapper
+`python3 /home/node/.openclaw/workspace/bin/wiki_import_tool.py trigger` with the JSON payload. If
+that wrapper is unavailable or fails, return a short operator error, and if the item already exists,
+reply with the existing `wiki/research/**` path.
 
 ## Permission Assumptions
 

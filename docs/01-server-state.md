@@ -118,6 +118,9 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
   - `GET /status`
   - `POST /trigger`
   - `POST /lint`
+- OpenClaw Gateway calls the bridge through `/home/node/.openclaw/workspace/bin/wiki_import_tool.py`.
+  The wrapper reads the internal token from `/run/secrets/wiki_import_token`, mounted from
+  `/opt/openclaw/secrets/wiki_import_token`; do not print or copy the token into tracked docs.
 
 ### OpenClaw deployment
 
@@ -136,6 +139,8 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
     headroom for SSH, Docker, Redis, Caddy/networking, and bridge services
   - active OpenClaw/OmniRoute limits live in `/opt/openclaw/docker-compose.override.yml`; LightRAG
     limits live in `/opt/lightrag/docker-compose.override.yml`
+  - `wiki-import` access for agent saves is provided by `WIKI_IMPORT_URL=http://wiki-import:8095` and
+    `WIKI_IMPORT_TOKEN_FILE=/run/secrets/wiki_import_token` in the Gateway container
 
 ### Container-side tools (optional)
 

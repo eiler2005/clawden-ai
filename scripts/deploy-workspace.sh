@@ -11,6 +11,7 @@
 # What it does:
 #   - Syncs all *.md files from ./workspace/ root to /opt/openclaw/workspace/
 #   - Deploys memory/INDEX.md (catalog template) but skips daily memory logs
+#   - Deploys executable helpers from ./workspace/bin/
 #   - Creates memory/archive/ and raw/ directories on the server if missing
 #   - Does NOT delete existing files on the server (safe incremental deploy)
 
@@ -32,7 +33,7 @@ echo "=== Deploying workspace files to ${OPENCLAW_HOST}:${REMOTE_DIR} ==="
 
 # 1. Deploy root workspace *.md files (MEMORY.md, INDEX.md, AGENTS.md, etc.)
 echo ""
-echo "[1/4] Syncing workspace root templates..."
+echo "[1/5] Syncing workspace root templates..."
 rsync -avz \
   --include="*.md" \
   --exclude="memory/" \
@@ -44,15 +45,29 @@ rsync -avz \
 
 # 2. Deploy memory/INDEX.md (catalog template — not the daily logs)
 echo ""
-echo "[2/4] Deploying memory/INDEX.md catalog template..."
+echo "[2/5] Deploying memory/INDEX.md catalog template..."
 rsync -avz \
   -e "${SSH}" \
   "${WORKSPACE_DIR}/memory/INDEX.md" \
   "${OPENCLAW_HOST}:${REMOTE_DIR}/memory/INDEX.md"
 
-# 3. Create memory/archive/ and raw/ directories on server (if missing)
+# 3. Deploy executable helpers
 echo ""
-echo "[3/4] Ensuring memory/archive/ and raw/ directories exist on server..."
+echo "[3/5] Deploying workspace bin helpers..."
+rsync -avz \
+  --include="*/" \
+  --include="*" \
+  -e "${SSH}" \
+  "${WORKSPACE_DIR}/bin/" \
+  "${OPENCLAW_HOST}:${REMOTE_DIR}/bin/"
+
+${SSH} "${OPENCLAW_HOST}" "
+  chmod +x ${REMOTE_DIR}/bin/*.py 2>/dev/null || true
+"
+
+# 4. Create memory/archive/ and raw/ directories on server (if missing)
+echo ""
+echo "[4/5] Ensuring memory/archive/ and raw/ directories exist on server..."
 ${SSH} "${OPENCLAW_HOST}" "
   mkdir -p ${REMOTE_DIR}/memory/archive
   mkdir -p ${REMOTE_DIR}/raw
@@ -60,9 +75,9 @@ ${SSH} "${OPENCLAW_HOST}" "
   echo '  raw/            — ok'
 "
 
-# 4. Fix ownership so OpenClaw container can write to the directories
+# 5. Fix ownership so OpenClaw container can write to the directories
 echo ""
-echo "[4/4] Fixing ownership on /opt/openclaw/workspace/ ..."
+echo "[5/5] Fixing ownership on /opt/openclaw/workspace/ ..."
 ${SSH} "${OPENCLAW_HOST}" "
   sudo chown -R 1000:1000 ${REMOTE_DIR}/memory/archive ${REMOTE_DIR}/raw 2>/dev/null || \
   echo '  (chown skipped — already correct or requires manual fix)'
