@@ -16,7 +16,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OpenClaw runtime live upgrade**: upgraded the prepared derived gateway image to `openclaw-with-iproute2:20260528-slim-2026.5.27`, based on the latest stable upstream `OpenClaw 2026.5.27` release. Removed the stale managed npm `codex@2026.5.12` plugin install so the live registry uses the bundled `codex` plugin from the current OpenClaw image.
 - **OpenAI primary auth refresh**: refreshed the live `openai-codex` token profile used by the `openai/gpt-5.5` primary route. OmniRoute/OpenRouter remain configured as the first fallback route.
 - **OpenClaw compaction reserve**: set the live Gateway `agents.defaults.compaction.reserveTokensFloor` to `20000` to avoid over-aggressive auto-compaction recovery after long tool-heavy turns.
-- **LightRAG route split**: registered DeepSeek as the final OmniRoute `light` LLM reserve for RAG answer generation, while keeping retrieval deprecated when embeddings providers are out of quota or missing credentials. DeepSeek is explicitly documented and smoke-tested as not being an embeddings provider.
+- **LightRAG route split**: registered DeepSeek as the final OmniRoute `light` LLM reserve for RAG answer generation, then moved the live LightRAG extraction hop to direct `deepseek-chat` after OmniRoute `light` timed out. Retrieval now uses `wiki-import` local 3072-dimensional embeddings because Gemini/OpenRouter embeddings are blocked by quota/credits. DeepSeek is explicitly documented and smoke-tested as not being an embeddings provider.
 - **Telethon Digest scheduler**: moved live digest scheduling from OpenClaw agent-turn Cron Jobs to `/etc/cron.d/telethon-digest`, which calls `/opt/telethon-digest/trigger-digest.sh` directly. This avoids false-positive OpenClaw cron runs when the lightweight cron context has no shell tool available.
 - **OpenClaw runtime target**: updated the redacted OpenClaw image template from `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) to `openclaw-with-iproute2:20260516-slim-2026.5.12`, based on the GitHub latest stable release and GHCR `latest` image reporting `OpenClaw 2026.5.12`. Added a tracked `artifacts/openclaw/Dockerfile.iproute2` template for rebuilding the minimal derived image with only `iproute2`; the live `/opt/openclaw` gateway now runs this image.
 - **OpenClaw model policy**: live Gateway uses `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
@@ -36,6 +36,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   that calls the internal `wiki-import` API from the OpenClaw Gateway using a mounted token file. This
   makes `Knowledgebase` saves work even when `wiki_ingest` is only a documented workflow concept and
   not exposed as a native OpenClaw tool.
+- **wiki-import local embeddings endpoint**: added authenticated `/v1/embeddings` compatibility with
+  deterministic 3072-dimensional vectors so LightRAG can keep indexing when Gemini/OpenRouter
+  embeddings are blocked by external quota or credits.
 - **Human-first memory explainer**: added `docs/19-llm-wiki-memory-explained.md` with Mermaid diagrams for vault structure, compile flow, explicit save flow, query path, and the role split between `wiki`, `LightRAG`, and OpenClaw.
 - **LLM-facing project orientation**: added `docs/20-llm-project-orientation.md` so another model can understand what this repo is, which docs are canonical by topic, and how to navigate the current architecture without scanning the whole tree blindly.
 - **wiki-import cron sync helper**: added `artifacts/wiki-import/sync-openclaw-cron-jobs.sh` to patch the OpenClaw cron store with lifecycle maintenance jobs safely and idempotently.
@@ -44,8 +47,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`scripts/backfill-knowledgebase-to-wiki.sh`**: the Knowledgebase backfill helper now runs as a two-stage replay: every historical item is first materialized as a source-centric `ideas` capture, and only high-signal articles are immediately re-run through `promotion` to deepen canonical wiki pages without reviving broad graph noise.
 - **Claude/Gemini research prompt for memory lifecycle**: added `docs/18-claude-llm-wiki-memory-lifecycle-prompt.md` so the current LLM-Wiki lifecycle problem can be handed to another model with consistent context, constraints, and evaluation criteria.
 - **OmniRoute DeepSeek sync helper**: added `scripts/sync-omniroute-deepseek-provider.sh` to upsert the live DeepSeek key into OmniRoute's encrypted provider store and attach `deepseek/deepseek-chat` as the final `light` combo reserve.
+- **OmniRoute OpenRouter sync helper**: added `scripts/sync-omniroute-openrouter-provider.sh` to upsert the live OpenRouter key into OmniRoute's encrypted provider store, clear stale no-credential/quota state, and smoke-test 3072-dimensional embeddings from the LightRAG runtime.
 
 ### Fixed
+- **LightRAG embeddings recovery**: added a local OpenAI-compatible embeddings endpoint to `wiki-import`, switched live LightRAG embeddings to `local/hash-embedding-3072`, synced the OmniRoute OpenRouter provider store for future paid-route recovery, cleared `WIKI_IMPORT_RAG_DEGRADED_REASON`, and validated that new `Knowledgebase` saves enqueue touched wiki pages instead of returning `LightRAG: degraded`.
 - **Knowledgebase save tool availability**: mounted the `wiki-import` token into the Gateway as a
   file-only secret, deployed the workspace wrapper, reset the stale `Knowledgebase` session, and
   validated a real Telegram save. The live reply now confirms `raw/**` + `wiki/**` creation and marks

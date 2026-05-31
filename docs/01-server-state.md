@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-05-28`
+Snapshot date: `2026-05-31`
 
 This file is for live inventory and host state.
 For the actual memory model, use `docs/10-memory-architecture.md`.
@@ -33,8 +33,8 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - port: `127.0.0.1:8020` → container internal port `9621` (not exposed via Caddy)
 - Docker networks: `lightrag_default` + `openclaw_default`; OpenClaw container uses `http://lightrag:9621`
 - input mounts (read-only): `/opt/obsidian-vault` → `/app/data/inputs/obsidian`, `/opt/openclaw/workspace` → `/app/data/inputs/workspace`
-- LLM: OmniRoute OpenAI-compatible endpoint `http://omniroute:20129/v1` with model `light` (`LLM_BINDING=openai`, `MAX_ASYNC=1`, `TIMEOUT=180`); DeepSeek is registered as the final `light` combo reserve for LLM generation
-- embedding: external embeddings provider only; live retrieval is temporarily deprecated while Gemini/OpenRouter/OpenAI embeddings credentials/quota are unavailable. DeepSeek is not an embeddings provider.
+- LLM: direct DeepSeek API fallback (`LLM_BINDING=openai`, `LLM_MODEL=deepseek-chat`, `LLM_BINDING_HOST=https://api.deepseek.com/v1`) while OmniRoute `light` returns bridge timeouts during LightRAG extraction
+- embedding: local OpenAI-compatible endpoint exposed by `wiki-import` (`EMBEDDING_BINDING=openai`, `EMBEDDING_MODEL=local/hash-embedding-3072`, `EMBEDDING_BINDING_HOST=http://wiki-import:8095/v1`, `EMBEDDING_DIM=3072`); this avoids Gemini/OpenRouter quota failures. DeepSeek is not an embeddings provider.
 - storage backend: NetworkX + NanoVectorDB + JsonKV (no external DB)
 - ingest script: `/opt/lightrag/scripts/lightrag-ingest.sh` (uses `POST /documents/upload` file-by-file)
 - active ingest boundary:
@@ -105,9 +105,10 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - port: `127.0.0.1:8095`
 - network: `openclaw_default`
 - purpose: deterministic curated import bridge for `url`, `text`, and `server_path`
-- current RAG enqueue mode: `degraded` via `WIKI_IMPORT_RAG_DEGRADED_REASON` while external
-  embeddings quota/credentials are unavailable; wiki saves still materialize `raw/**` and
-  `wiki/research/**`
+- current RAG enqueue mode: active; `WIKI_IMPORT_RAG_DEGRADED_REASON` is normally empty, so
+  Knowledgebase saves materialize `raw/**` + `wiki/research/**` and enqueue the touched pages to
+  LightRAG. If embeddings fail again, degraded mode may be set temporarily so wiki-save remains
+  successful while indexing is repaired.
 - write scope:
   - `/opt/obsidian-vault/raw/articles/**`
   - `/opt/obsidian-vault/raw/documents/**`
@@ -315,7 +316,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `smart` → Kiro/claude-sonnet-4-5 → OpenRouter/claude-3.5-sonnet → OpenRouter/kimi-k2
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
   - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B; optional direct DeepSeek reserve is available when `DEEPSEEK_API_KEY` is present
-- LightRAG integration: **deprecated for retrieval** — service health is live, but query embeddings are blocked by external paid-provider limits: direct Gemini returns the monthly spending-cap error, OmniRoute/OpenRouter embeddings have no usable OpenRouter quota/credentials, and the Codex/OpenAI subscription fallback is not a usable API embeddings route. Keep `memorySearch` disabled until a funded embeddings route is healthy again; user-facing errors should say retrieval is deprecated/unavailable because paid embeddings are missing.
+- LightRAG integration: active again for API-based retrieval. Live LightRAG uses direct DeepSeek for extraction after OmniRoute `light` timed out, and `wiki-import` local embeddings for vector work after Gemini/OpenRouter credentials/credits failed. `scripts/sync-omniroute-openrouter-provider.sh` remains available if a paid OpenRouter embeddings route is restored. Codex/OpenAI OAuth remains a Gateway text-inference route, not an embeddings API route; DeepSeek remains an LLM reserve only.
 - OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve
 - OpenClaw compaction reserve: `agents.defaults.compaction.reserveTokensFloor=20000` in the live Gateway config, added after the 2026-05-28 upgrade to keep long tool-heavy sessions recoverable.
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light

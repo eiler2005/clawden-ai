@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Register the server-side OpenRouter API key inside OmniRoute.
+#
+# This repairs stale OmniRoute provider-store state such as expired
+# credits_exhausted/no-credentials flags while keeping the raw key in the live
+# server env. OpenRouter is used by LightRAG for OpenAI-compatible embeddings
+# through OmniRoute; DeepSeek is only an LLM reserve and is not an embeddings
+# provider.
+
+set -euo pipefail
+
+OPENCLAW_HOST="${OPENCLAW_HOST:-}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"
+SSH_OPTS=(
+  -i "$SSH_KEY"
+  -o BatchMode=yes
+  -o StrictHostKeyChecking=accept-new
+  -o ConnectTimeout="${SSH_CONNECT_TIMEOUT:-30}"
+  -o ConnectionAttempts=1
+)
+
+if [[ -z "$OPENCLAW_HOST" ]]; then
+  echo "Set OPENCLAW_HOST, for example: export OPENCLAW_HOST=deploy@<server-host>" >&2
+  exit 1
+fi
+
+echo "Syncing OpenRouter provider into OmniRoute on ${OPENCLAW_HOST}..."
+
+ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" \
+  'sudo docker exec -i omniroute sh -lc "cd /app && node -"' <<'JS'
+import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+
+const { encrypt } = await import("./src/lib/db/encryption.ts");
+
+const key = process.env.OPENROUTER_API_KEY;
+if (!key) {
+  throw new Error("OPENROUTER_API_KEY is not set in the omniroute container env");
+}
+
+const dbPath = "/app/data/storage.sqlite";
+const backupDir = "/app/data/db_backups";
+fs.mkdirSync(backupDir, { recursive: true });
+const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+const backupPath = `${backupDir}/db_${stamp}_pre-openrouter-provider.sqlite`;
+fs.copyFileSync(dbPath, backupPath);
+
+const db = new Database(dbPath);
+const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const encryptedKey = encrypt(key);
+
+const existing = db
+  .prepare("select id from provider_connections where provider = ? order by priority limit 1")
+  .get("openrouter");
+
+let action = "inserted";
+if (existing) {
+  db.prepare(`
+    update provider_connections
+       set api_key = ?,
+           auth_type = 'apikey',
+           is_active = 1,
+           test_status = 'active',
+           error_code = null,
+           last_error = null,
+           last_error_at = null,
+           last_error_type = null,
+           last_error_source = null,
+           rate_limited_until = null,
+           updated_at = ?
+     where id = ?
+  `).run(encryptedKey, now, existing.id);
+  action = "updated";
+} else {
+  db.prepare(`
+    insert into provider_connections (
+      id, provider, auth_type, name, priority, is_active, test_status,
+      api_key, created_at, updated_at
+    ) values (?, 'openrouter', 'apikey', 'OpenRouter API key', 1, 1, 'active', ?, ?, ?)
+  `).run(randomUUID(), encryptedKey, now, now);
+}
+
+console.log(JSON.stringify({
+  ok: true,
+  provider: "openrouter",
+  action,
+  backup: backupPath.split("/").pop(),
+}));
+JS
+
+echo "Restarting OmniRoute..."
+ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" '
+  set -euo pipefail
+  cd /opt/openclaw
+  sudo docker compose up -d --force-recreate omniroute >/dev/null
+  for _ in $(seq 1 60); do
+    status="$(sudo docker inspect -f "{{.State.Health.Status}}" omniroute 2>/dev/null || echo starting)"
+    [[ "$status" == "healthy" ]] && break
+    sleep 2
+  done
+  sudo docker compose ps omniroute
+'
+
+echo "Probing OmniRoute embeddings from the LightRAG runtime..."
+ssh "${SSH_OPTS[@]}" "$OPENCLAW_HOST" '
+  set -euo pipefail
+  cd /opt/lightrag
+  sudo docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T lightrag python - <<'"'"'PY'"'"'
+import json
+import os
+import urllib.request
+
+key = os.environ.get("LLM_BINDING_API_KEY") or os.environ.get("EMBEDDING_BINDING_API_KEY")
+if not key:
+    raise SystemExit("LightRAG OmniRoute API key is not configured")
+
+payload = json.dumps({
+    "model": "openrouter/openai/text-embedding-3-large",
+    "input": "openrouter embedding smoke",
+}).encode()
+req = urllib.request.Request(
+    "http://omniroute:20129/v1/embeddings",
+    data=payload,
+    headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=30) as resp:
+    data = json.loads(resp.read().decode())
+vec = data["data"][0]["embedding"]
+print(json.dumps({"ok": True, "provider": "openrouter", "embedding_dim": len(vec)}))
+PY
+'
+
+echo "Done."

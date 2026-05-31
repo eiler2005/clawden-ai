@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # create-lightrag-env.sh
-# Creates scripts/lightrag.env by prompting for OmniRoute and Google Gemini keys.
-# OmniRoute is used for LightRAG extraction; Gemini is used for embeddings.
-# DeepSeek can be an OmniRoute LLM reserve, but it cannot replace embeddings.
+# Creates scripts/lightrag.env by prompting for DeepSeek and wiki-import keys.
+# DeepSeek is used as the current LightRAG extraction fallback after OmniRoute
+# light timeouts; wiki-import provides local OpenAI-compatible embeddings.
 #
 # Usage:
 #   ./scripts/create-lightrag-env.sh
 #
-# If OMNIROUTE_API_KEY and/or GEMINI_API_KEY are already set in the environment,
-# they are used automatically without prompting.
+# If DEEPSEEK_API_KEY and/or WIKI_IMPORT_TOKEN are already set in the
+# environment, they are used automatically without prompting.
 
 set -euo pipefail
 
@@ -22,52 +22,51 @@ if [[ -f "${ENV_FILE}" ]]; then
   [[ "${confirm}" == "y" || "${confirm}" == "Y" ]] || { echo "Aborted."; exit 0; }
 fi
 
-# Get OmniRoute API key for LightRAG LLM extraction.
-if [[ -n "${OMNIROUTE_API_KEY:-}" ]]; then
-  OMNIROUTE_KEY="${OMNIROUTE_API_KEY}"
-  echo "Using OMNIROUTE_API_KEY from environment."
+# Get DeepSeek API key for LightRAG LLM extraction.
+if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
+  DEEPSEEK_KEY="${DEEPSEEK_API_KEY}"
+  echo "Using DEEPSEEK_API_KEY from environment."
 else
   echo ""
-  echo "Enter your OmniRoute API key."
-  echo "This is the key configured for http://omniroute:20129/v1."
+  echo "Enter your DeepSeek API key."
+  echo "This is used for https://api.deepseek.com/v1 while OmniRoute light is timing out."
   echo ""
-  read -rsp "OmniRoute API key: " OMNIROUTE_KEY
+  read -rsp "DeepSeek API key: " DEEPSEEK_KEY
   echo ""
 fi
 
-if [[ -z "${OMNIROUTE_KEY}" ]]; then
-  echo "Error: OmniRoute API key cannot be empty."
+if [[ -z "${DEEPSEEK_KEY}" ]]; then
+  echo "Error: DeepSeek API key cannot be empty."
   exit 1
 fi
 
-# Get Gemini API key for embeddings.
-if [[ -n "${GEMINI_API_KEY:-}" ]]; then
-  GEMINI_KEY="${GEMINI_API_KEY}"
-  echo "Using GEMINI_API_KEY from environment."
+# Get wiki-import token for local embeddings.
+if [[ -n "${WIKI_IMPORT_TOKEN:-}" ]]; then
+  WIKI_IMPORT_KEY="${WIKI_IMPORT_TOKEN}"
+  echo "Using WIKI_IMPORT_TOKEN from environment."
 else
   echo ""
-  echo "Enter your Google Gemini API key for embeddings."
-  echo "Get it free at: https://aistudio.google.com/app/apikey"
-  echo "It starts with 'AIza...'"
+  echo "Enter your wiki-import bearer token."
+  echo "This is the same token used by /opt/wiki-import/wiki-import.env."
   echo ""
-  read -rsp "Gemini API key: " GEMINI_KEY
+  read -rsp "wiki-import token: " WIKI_IMPORT_KEY
   echo ""
 fi
 
-if [[ -z "${GEMINI_KEY}" ]]; then
-  echo "Error: Gemini API key cannot be empty."
+if [[ -z "${WIKI_IMPORT_KEY}" ]]; then
+  echo "Error: wiki-import token cannot be empty."
   exit 1
 fi
 
 # Write env file from template.
-python3 - "$TEMPLATE" "$ENV_FILE" "$OMNIROUTE_KEY" "$GEMINI_KEY" <<'PY'
+python3 - "$TEMPLATE" "$ENV_FILE" "$DEEPSEEK_KEY" "$WIKI_IMPORT_KEY" <<'PY'
 import sys
 from pathlib import Path
 
-template, env_file, omniroute_key, gemini_key = sys.argv[1:5]
+template, env_file, deepseek_key, wiki_import_key = sys.argv[1:5]
 text = Path(template).read_text()
-text = text.replace("<your-omniroute-api-key>", omniroute_key)
-text = text.replace("<your-gemini-api-key>", gemini_key)
+text = text.replace("<your-deepseek-api-key>", deepseek_key)
+text = text.replace("<your-wiki-import-token>", wiki_import_key)
 Path(env_file).write_text(text)
 PY
 chmod 600 "${ENV_FILE}"

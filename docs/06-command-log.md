@@ -1291,3 +1291,51 @@ Validation:
   `rag_status=degraded`.
 - Telegram owner-session save smoke in `Knowledgebase` returned `✅ Сохранено в wiki` with a
   concrete page path and `LightRAG: degraded`, with no `wiki_ingest unavailable` error.
+## 35. LightRAG local embeddings and DeepSeek extraction recovery
+Date: `2026-05-31`
+
+Problem:
+
+- `wiki-import` saves were correctly materializing wiki pages, but LightRAG stayed in explicit
+  degraded mode because the previous direct Gemini embeddings route hit a provider spending cap.
+- OmniRoute had `OPENROUTER_API_KEY` in its env, but its encrypted provider store still carried stale
+  no-credential/quota state, so LightRAG saw `No credentials for embedding provider: openrouter`.
+- After the OpenRouter provider record was repaired, OpenRouter still returned account-level
+  `Insufficient credits` / prompt-token-limit errors for real document embeddings.
+- OmniRoute `light` also timed out during LightRAG LLM extraction with `api_bridge_timeout`.
+- DeepSeek was available as an LLM reserve, but it cannot provide embeddings.
+
+Actions:
+
+- Synced the live OpenRouter key from the OmniRoute container env into OmniRoute's encrypted provider
+  table without printing the key, backed up the SQLite store, cleared stale provider error/rate-limit
+  fields, and recreated OmniRoute.
+- Added `scripts/sync-omniroute-openrouter-provider.sh` so the OpenRouter provider-store repair is repeatable if paid credits are restored.
+- Added a local OpenAI-compatible `/v1/embeddings` endpoint to `wiki-import`. It returns
+  deterministic 3072-dimensional lexical vectors and is protected by the existing wiki-import bearer
+  token.
+- Switched `/opt/lightrag/.env` embeddings to `wiki-import` local embeddings:
+  `EMBEDDING_BINDING=openai`,
+  `EMBEDDING_MODEL=local/hash-embedding-3072`,
+  `EMBEDDING_BINDING_HOST=http://wiki-import:8095/v1`,
+  `EMBEDDING_DIM=3072`.
+- Switched LightRAG LLM extraction to direct DeepSeek fallback:
+  `LLM_MODEL=deepseek-chat`,
+  `LLM_BINDING_HOST=https://api.deepseek.com/v1`.
+- Recreated `wiki-import` and LightRAG, and cleared `WIKI_IMPORT_RAG_DEGRADED_REASON` in `wiki-import`.
+
+Validation:
+
+- Direct `wiki-import` embeddings probe from the LightRAG runtime returned a 3072-dimensional vector.
+- Direct DeepSeek chat smoke returned the requested marker text.
+- `wiki-import` status reported `rag_degraded=false`.
+- Direct `wiki-import` trigger returned `rag_status=queued` and included `rag_enqueued_paths`.
+- LightRAG `/documents/status_counts` showed processing advancing again; remaining pending files are
+  historical backlog, not a new credential failure. The backlog is expected to take longer because it
+  is now doing real LLM extraction via the direct fallback route.
+
+Operational note:
+
+- Keeping `EMBEDDING_DIM=3072` avoids immediate vector-shape crashes, but old Gemini/OpenRouter
+  vectors and new local vectors are not semantically identical. If retrieval quality looks
+  inconsistent, schedule a backed-up full LightRAG rebuild from source markdown.

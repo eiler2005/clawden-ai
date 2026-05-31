@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 REPO_ROOT = ROOT.parents[1]
 
 from importer import ImportRequest, WikiImporter
+from service import embeddings_response, local_embedding
 
 
 def scaffold(root: Path) -> None:
@@ -42,6 +43,28 @@ def scaffold(root: Path) -> None:
 
 
 class WikiImportTests(unittest.TestCase):
+    def test_local_embeddings_are_openai_compatible_and_deterministic(self) -> None:
+        payload = {
+            "model": "local/hash-embedding-3072",
+            "input": ["LightRAG recall", "LightRAG recall"],
+            "dimensions": 64,
+        }
+        result = embeddings_response(payload)
+
+        self.assertEqual(result["object"], "list")
+        self.assertEqual(result["model"], "local/hash-embedding-3072")
+        self.assertEqual(len(result["data"]), 2)
+        self.assertEqual(len(result["data"][0]["embedding"]), 64)
+        self.assertEqual(result["data"][0]["embedding"], result["data"][1]["embedding"])
+        self.assertGreater(result["usage"]["prompt_tokens"], 0)
+
+    def test_local_embedding_changes_with_input(self) -> None:
+        first = local_embedding("OpenRouter credits", dimensions=64)
+        second = local_embedding("Gemini spending cap", dimensions=64)
+
+        self.assertEqual(len(first), 64)
+        self.assertNotEqual(first, second)
+
     def test_text_import_creates_raw_and_wiki_pages(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

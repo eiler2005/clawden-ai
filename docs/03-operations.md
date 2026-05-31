@@ -284,30 +284,63 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 ## LightRAG embedding-provider recovery
 
-Current live status after the 2026-05-28 OpenClaw upgrade:
+Current live status after the 2026-05-31 recovery:
 
 - LightRAG health and document status endpoints are live.
-- LightRAG retrieval is temporarily **deprecated** until a funded embeddings route is restored.
-- `scripts/smoke-check-knowledge.sh` reports `retrieval_status=deprecated_external_embeddings_unavailable`
-  when `/query/data` fails only because embeddings credentials/quota are missing.
-- Direct Gemini embeddings return the monthly spending-cap error.
-- OmniRoute/OpenRouter embeddings return no usable OpenRouter embedding credentials/quota.
+- LightRAG retrieval is active through `wiki-import` local embeddings.
+- `wiki-import` normally has an empty `WIKI_IMPORT_RAG_DEGRADED_REASON`, so explicit Telegram saves
+  enqueue their touched wiki pages to LightRAG instead of stopping at wiki-save.
+- The embedding model is `local/hash-embedding-3072` through `http://wiki-import:8095/v1`, with
+  `EMBEDDING_DIM=3072`.
+- LightRAG LLM extraction currently uses direct DeepSeek (`deepseek-chat`) because OmniRoute `light`
+  returned `api_bridge_timeout` during document extraction.
 - The Codex/OpenAI subscription fallback works for Gateway chat responses, but it does not provide a
-  usable OpenAI API embeddings route on this server.
+  usable API embeddings route for LightRAG. DeepSeek is an LLM reserve only.
 
-User-facing wording for this condition:
+If Telegram shows `LightRAG: degraded`, first verify the local endpoint from the LightRAG container:
 
-```text
-LightRAG retrieval is temporarily deprecated/unavailable: the external embeddings route lacks paid
-quota or credentials. Wiki save still works, but search requires a funded Gemini/OpenRouter/OpenAI
-API embeddings route.
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/lightrag
+  docker compose -f docker-compose.yml -f docker-compose.override.yml exec -T lightrag python - <<'"'"'PY'"'"'
+import json, os, urllib.request
+payload = json.dumps({"model": "local/hash-embedding-3072", "input": ["smoke"], "dimensions": 3072}).encode()
+req = urllib.request.Request(
+    "http://wiki-import:8095/v1/embeddings",
+    data=payload,
+    headers={"Content-Type": "application/json", "Authorization": "Bearer " + os.environ["EMBEDDING_BINDING_API_KEY"]},
+    method="POST",
+)
+with urllib.request.urlopen(req, timeout=30) as resp:
+    data = json.loads(resp.read().decode())
+print(len(data["data"][0]["embedding"]))
+PY
+'
 ```
 
-Recovery choices:
+Then restart LightRAG if the env changed and requeue pending/failed documents:
 
-1. restore a healthy 3072-dimensional Gemini/OpenRouter embedding route, then restart LightRAG
-2. provision an OpenAI API key with embedding quota and switch LightRAG to a compatible 3072-dimensional embedding model
-3. rebuild/reindex LightRAG intentionally if changing to a different embedding dimension
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/lightrag
+  docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --force-recreate lightrag
+  curl -sf -X POST http://127.0.0.1:8020/documents/reprocess_failed
+'
+```
+
+Only use degraded mode as a temporary pressure valve:
+
+```bash
+WIKI_IMPORT_RAG_DEGRADED_REASON="LightRAG indexing paused: embeddings route is degraded; wiki save is complete and indexing will resume after embeddings quota/credentials are restored."
+```
+
+That keeps `raw/**` and `wiki/research/**` writes successful while embedding/indexing is being
+repaired. Clear the variable again once `/v1/embeddings` from the LightRAG container succeeds.
+
+If a paid OpenRouter embeddings route is restored, `scripts/sync-omniroute-openrouter-provider.sh`
+can refresh OmniRoute's encrypted provider record. Changing embedding providers without changing
+`EMBEDDING_DIM=3072` avoids immediate crashes, but old vectors and new vectors are not semantically
+identical. Plan a backed-up full rebuild of `/opt/lightrag/data/` after any provider switch.
 
 If Telegram shows the same "Model login failed" text but the session JSONL contains an error such
 as `You have hit your ChatGPT usage limit (...) Try again in ~N min.`, the OAuth profile is not the

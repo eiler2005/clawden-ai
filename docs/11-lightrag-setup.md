@@ -131,8 +131,8 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 | Graph storage | NetworkX (built-in) | File-based, no Neo4j |
 | Vector storage | NanoVectorDB (built-in) | File-based, no Qdrant |
 | KV storage | JsonKV (built-in) | File-based, no Redis |
-| LLM | `OmniRoute light` via OpenAI-compatible binding | Keeps LightRAG on a stable local endpoint; DeepSeek is registered as the final reserve behind the `light` combo for this hop |
-| Embedding | `gemini-embedding-001` or OpenRouter/OpenAI embedding model | Embeddings require a real embeddings provider and a single stable vector dimension for the whole index |
+| LLM | Direct DeepSeek API fallback | Used for LightRAG extraction while OmniRoute `light` returns bridge timeouts |
+| Embedding | `wiki-import` local OpenAI-compatible endpoint | Keeps Knowledgebase indexing functional without Gemini/OpenRouter credits; dimensions stay at 3072 |
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
 
@@ -140,45 +140,36 @@ Live resource guardrail on this host: LightRAG runs with `cpus: "0.45"`, `mem_li
 `memswap_limit: 1536m`, and `pids_limit: 128`. The 1.5GB memory cap is intentional: the current
 graph has roughly 15k nodes and 20k edges, and a 768MB cap caused `Exit 137` during cold start.
 
-**Current split:** LLM requests go through OmniRoute; embeddings stay on an embeddings-capable provider.
-This means LightRAG currently needs:
-- one OmniRoute API key for `LLM_BINDING=openai`
-- one Gemini/OpenRouter/OpenAI API key for `EMBEDDING_BINDING`
+**Current split:** the preferred policy is OmniRoute first, then direct DeepSeek fallback for RAG
+LLM extraction. On 2026-05-31 the live server moved to the fallback because OmniRoute `light`
+returned `api_bridge_timeout` during LightRAG extraction. Embeddings use the local
+OpenAI-compatible endpoint exposed by `wiki-import`:
 
-If OmniRoute/OpenRouter LLM routes are unavailable, configure direct DeepSeek in OmniRoute and keep
-LightRAG pointed at the same `light` model:
+- `LLM_BINDING_HOST=https://api.deepseek.com/v1`
+- `LLM_MODEL=deepseek-chat`
+- `EMBEDDING_BINDING_HOST=http://wiki-import:8095/v1`
+- `EMBEDDING_MODEL=local/hash-embedding-3072`
+- `EMBEDDING_DIM=3072`
+
+If OmniRoute recovers, it can be restored as the first LLM hop by pointing LightRAG back at
+`http://omniroute:20129/v1` and model `light`. DeepSeek should remain the fallback. To refresh
+the direct DeepSeek reserve inside OmniRoute:
 
 ```bash
 OPENCLAW_HOST=deploy@<server-host> ./scripts/sync-omniroute-deepseek-provider.sh
 ```
 
-DeepSeek is only a RAG LLM reserve. It does not expose an OpenAI-compatible embeddings endpoint, so it
-cannot repair vector retrieval when Gemini/OpenRouter/OpenAI embeddings are out of quota or missing
-credentials. Do not point LightRAG extraction at OpenClaw/OpenAI; the OpenAI subscription route is for
-Gateway text inference and does not solve LightRAG embeddings.
+DeepSeek is only a RAG LLM reserve. It does not expose an OpenAI-compatible embeddings endpoint.
+The local `wiki-import` embedding endpoint is a lightweight deterministic fallback, not a paid
+semantic embedding model. It is good enough to keep saves searchable and LightRAG ingestion live
+when external providers are unavailable. If a funded Gemini/OpenRouter/OpenAI embeddings route is
+restored, switch embeddings back intentionally and schedule a full LightRAG rebuild after backing up
+`/opt/lightrag/data/`, because old vectors and new vectors are not semantically identical even when
+the dimension remains `3072`.
 
-As of 2026-05-30, retrieval is temporarily **deprecated** on the live server because every available
-external embeddings route is blocked by paid-provider limits or missing credentials. The live
-`/opt/lightrag/.env` is configured for direct Gemini embeddings (`EMBEDDING_BINDING=gemini`,
-`EMBEDDING_MODEL=gemini-embedding-001`), but Gemini currently returns a monthly spending-cap error;
-OmniRoute/OpenRouter has no usable embedding credentials/quota, and the Codex/OpenAI subscription
-fallback used by Gateway text inference is not an OpenAI API embeddings route. Treat this as an
-operational billing/credential state, not a LightRAG code bug.
-
-While this state is active, keep `wiki-import` in explicit RAG degraded mode:
-
-```bash
-WIKI_IMPORT_RAG_DEGRADED_REASON="LightRAG indexing paused: embeddings route is degraded; wiki save is complete and indexing will resume after embeddings quota/credentials are restored."
-```
-
-That setting makes interactive Knowledgebase saves create `raw/**` + `wiki/research/**` without
-trying an immediate LightRAG upload/reprocess that is known to fail. User-facing Telegram replies
-should show `LightRAG: degraded` and must not post raw diagnostic command failures as a follow-up.
-
-**Gemini free tier limits (still important for embeddings during bulk ingestion):**
-- 15 requests per minute (RPM)
-- 1,500 requests per day (RPD) — resets at UTC midnight (03:00 МСК)
-- If Gemini RPD is exhausted during bulk indexing: wait for reset, or add billing to the GCP project
+New Knowledgebase saves should return `rag_status=queued` or `success`, not `degraded`. If both the
+local endpoint and external embeddings fail, it is acceptable to set `WIKI_IMPORT_RAG_DEGRADED_REASON`
+temporarily so wiki-save remains successful while retrieval is being repaired.
 
 ---
 
@@ -272,20 +263,25 @@ Generate it with:
 Or manually from template `scripts/lightrag.env.template`:
 
 ```env
-# LLM: OmniRoute OpenAI-compatible endpoint
+# LLM: direct DeepSeek fallback
 LLM_BINDING=openai
-LLM_MODEL=light
-LLM_BINDING_API_KEY=<omniroute-api-key>
-LLM_BINDING_HOST=http://omniroute:20129/v1
+LLM_MODEL=deepseek-chat
+LLM_BINDING_API_KEY=<deepseek-api-key>
+LLM_BINDING_HOST=https://api.deepseek.com/v1
 LLM_MAX_TOKEN_SIZE=32768
 
-# Embeddings: Google Gemini
-EMBEDDING_BINDING=gemini
-EMBEDDING_MODEL=gemini-embedding-001
-EMBEDDING_BINDING_API_KEY=<gemini-api-key>
-EMBEDDING_BINDING_HOST=https://generativelanguage.googleapis.com
+# Embeddings: wiki-import local fallback
+EMBEDDING_BINDING=openai
+EMBEDDING_MODEL=local/hash-embedding-3072
+EMBEDDING_BINDING_API_KEY=<wiki-import-token>
+EMBEDDING_BINDING_HOST=http://wiki-import:8095/v1
 EMBEDDING_DIM=3072
-EMBEDDING_MAX_TOKEN_SIZE=2048
+EMBEDDING_MAX_TOKEN_SIZE=8192
+EMBEDDING_TOKEN_LIMIT=8192
+EMBEDDING_SEND_DIM=false
+EMBEDDING_BATCH_NUM=16
+CHUNK_SIZE=1200
+CHUNK_OVERLAP_SIZE=100
 
 # Storage: file-based
 LIGHTRAG_KV_STORAGE=JsonKVStorage
@@ -307,8 +303,8 @@ WEBUI_TITLE=БенькаMemory
 ```
 
 Secrets in this setup:
-- `LLM_BINDING_API_KEY` = OmniRoute API key
-- `EMBEDDING_BINDING_API_KEY` = Gemini API key
+- `LLM_BINDING_API_KEY` = DeepSeek API key
+- `EMBEDDING_BINDING_API_KEY` = wiki-import bearer token
 
 ---
 
@@ -485,12 +481,15 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 
 ## Initial Indexing Notes
 
-During bulk indexing, Gemini can return temporary capacity or quota errors. If you see
-`503 UNAVAILABLE` ("high demand") or `429 RESOURCE_EXHAUSTED`:
+During bulk indexing, external embedding providers can return temporary capacity or quota errors.
+The live fallback avoids them by using `wiki-import` local embeddings. If you intentionally switch
+back to OpenRouter/OpenAI embeddings and see `401`, `403`, `429`, `credits_exhausted`, or
+`No credentials for embedding provider: openrouter`:
 
-1. Wait a few minutes for `503`; wait until UTC midnight (03:00 МСК) for daily `429`
-2. Or add billing to the GCP project to remove the daily cap
+1. Run `scripts/sync-omniroute-openrouter-provider.sh` to refresh OmniRoute's encrypted OpenRouter provider record
+2. Verify `/v1/embeddings` through OmniRoute from the LightRAG container
 3. Keep `MAX_PARALLEL_INSERT=1` and `MAX_ASYNC=1` in `.env` to serialize requests
+4. If the upstream is genuinely out of quota, set `WIKI_IMPORT_RAG_DEGRADED_REASON` only until quota/credentials are restored
 
 After quota resets, re-run: `ssh deploy@<server> '/opt/lightrag/scripts/lightrag-ingest.sh'`
 
@@ -510,7 +509,7 @@ After quota resets, re-run: `ssh deploy@<server> '/opt/lightrag/scripts/lightrag
 
 ## Files to Back Up
 
-- `/opt/lightrag/.env` (Gemini API key)
+- `/opt/lightrag/.env` (DeepSeek API key + wiki-import token)
 - `/opt/lightrag/data/` (graph + vector state — rebuild requires re-ingestion)
 - `/opt/lightrag/docker-compose.override.yml`
 - `/opt/lightrag/scripts/lightrag-ingest.sh`

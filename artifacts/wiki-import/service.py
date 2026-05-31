@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import math
 import os
+import re
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +20,8 @@ HOST_OPT_ROOT = Path(os.environ.get("WIKI_IMPORT_HOST_OPT_ROOT", "/host-opt"))
 STATE_ROOT = Path(os.environ.get("WIKI_IMPORT_STATE_ROOT", "/app/state"))
 LIGHTRAG_URL = os.environ.get("WIKI_IMPORT_LIGHTRAG_URL", "http://lightrag:9621").strip()
 RAG_DEGRADED_REASON = os.environ.get("WIKI_IMPORT_RAG_DEGRADED_REASON", "").strip()
+EMBEDDING_DIM = int(os.environ.get("WIKI_IMPORT_EMBEDDING_DIM", "3072") or 3072)
+TOKEN_RE = re.compile(r"[\wа-яА-ЯёЁ]+", re.UNICODE)
 
 IMPORTER = WikiImporter(
     obsidian_root=OBSIDIAN_ROOT,
@@ -26,6 +31,51 @@ IMPORTER = WikiImporter(
     rag_degraded_reason=RAG_DEGRADED_REASON,
 )
 LOCK = threading.Lock()
+
+
+def local_embedding(text: str, dimensions: int = EMBEDDING_DIM) -> list[float]:
+    """Small deterministic lexical embedding for API-fallback indexing."""
+    dimensions = max(8, int(dimensions or EMBEDDING_DIM))
+    text = str(text or "").strip().lower()
+    words = TOKEN_RE.findall(text)
+    features: list[tuple[str, float]] = []
+    features.extend((f"w:{word}", 1.0) for word in words)
+    compact = re.sub(r"\s+", " ", text)
+    if len(compact) >= 3:
+        features.extend((f"c:{compact[i:i+3]}", 0.25) for i in range(len(compact) - 2))
+    if not features:
+        features.append(("empty", 1.0))
+
+    vector = [0.0] * dimensions
+    for feature, weight in features:
+        digest = hashlib.blake2b(feature.encode("utf-8"), digest_size=8).digest()
+        index = int.from_bytes(digest[:4], "little") % dimensions
+        sign = 1.0 if digest[4] & 1 else -1.0
+        vector[index] += sign * weight
+
+    norm = math.sqrt(sum(value * value for value in vector)) or 1.0
+    return [round(value / norm, 8) for value in vector]
+
+
+def embeddings_response(payload: dict) -> dict:
+    raw_input = payload.get("input", "")
+    inputs = raw_input if isinstance(raw_input, list) else [raw_input]
+    dimensions = int(payload.get("dimensions") or EMBEDDING_DIM)
+    model = str(payload.get("model") or "local/hash-embedding-3072")
+    token_count = sum(len(TOKEN_RE.findall(str(item))) for item in inputs)
+    return {
+        "object": "list",
+        "data": [
+            {
+                "object": "embedding",
+                "index": index,
+                "embedding": local_embedding(str(item), dimensions=dimensions),
+            }
+            for index, item in enumerate(inputs)
+        ],
+        "model": model,
+        "usage": {"prompt_tokens": token_count, "total_tokens": token_count},
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -60,6 +110,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/maintain":
             self._handle_maintain(payload)
+            return
+        if self.path in {"/v1/embeddings", "/embeddings"}:
+            self._handle_embeddings(payload)
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
@@ -105,6 +158,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.OK, result)
         except Exception as exc:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": f"{exc.__class__.__name__}: {exc}"})
+
+    def _handle_embeddings(self, payload: dict) -> None:
+        try:
+            self._send_json(HTTPStatus.OK, embeddings_response(payload))
+        except Exception as exc:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": {"message": f"{exc.__class__.__name__}: {exc}"}})
 
     def _authorized(self) -> bool:
         if not TOKEN:
