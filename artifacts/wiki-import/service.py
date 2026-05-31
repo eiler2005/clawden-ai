@@ -16,12 +16,14 @@ OBSIDIAN_ROOT = Path(os.environ.get("WIKI_IMPORT_OBSIDIAN_ROOT", "/app/obsidian"
 HOST_OPT_ROOT = Path(os.environ.get("WIKI_IMPORT_HOST_OPT_ROOT", "/host-opt"))
 STATE_ROOT = Path(os.environ.get("WIKI_IMPORT_STATE_ROOT", "/app/state"))
 LIGHTRAG_URL = os.environ.get("WIKI_IMPORT_LIGHTRAG_URL", "http://lightrag:9621").strip()
+RAG_DEGRADED_REASON = os.environ.get("WIKI_IMPORT_RAG_DEGRADED_REASON", "").strip()
 
 IMPORTER = WikiImporter(
     obsidian_root=OBSIDIAN_ROOT,
     host_opt_root=HOST_OPT_ROOT,
     state_root=STATE_ROOT,
     lightrag_url=LIGHTRAG_URL,
+    rag_degraded_reason=RAG_DEGRADED_REASON,
 )
 LOCK = threading.Lock()
 

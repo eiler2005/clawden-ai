@@ -202,6 +202,12 @@ credentials/quota (`No credentials for embedding provider`, `monthly spending ca
 называть это отсутствием знания. Сказать прямо: retrieval временно deprecated, потому что внешний
 embeddings-маршрут требует оплаченной квоты/credentials. Wiki-save остаётся рабочим.
 
+Для явного save `rag_status=degraded` от `wiki_ingest` означает успешный wiki-first save с
+отложенной индексацией. Не запускать из Telegram-контекста дополнительные infra-debug команды и не
+публиковать сырой вывод (`getent hosts`, `curl`, `docker`, stack trace, `(agent) failed`) отдельным
+сообщением после успешного сохранения. DeepSeek допустим только как LLM-резерв, но не как
+embeddings fallback.
+
 ```
 POST http://lightrag:9621/query
 {"query": "...", "mode": "hybrid"}
@@ -226,3 +232,4 @@ POST http://lightrag:9621/query
 - если нужно существенно переписать недавно созданный markdown-файл, предпочитать полный `write` вместо `edit`
 - держать в краткосрочном контексте последний tool failure минимум 1–2 пользовательских хода
 - на вопросы вроде `в чем была ошибка?` отвечать про последний сбой конкретно: какой tool, почему упал, что было сделано потом
+- не отправлять в Telegram raw infra-debug после успешной пользовательской операции; диагностический сбой описывать человечески только если Денис прямо спросит

@@ -153,11 +153,23 @@ cannot repair vector retrieval when Gemini/OpenRouter/OpenAI embeddings are out 
 credentials. Do not point LightRAG extraction at OpenClaw/OpenAI; the OpenAI subscription route is for
 Gateway text inference and does not solve LightRAG embeddings.
 
-As of 2026-05-28, retrieval is temporarily **deprecated** on the live server because every available
-external embeddings route is blocked by paid-provider limits or missing credentials: direct Gemini
-returns the monthly spending-cap error, OmniRoute/OpenRouter has no usable embedding credentials/quota,
-and the Codex/OpenAI subscription fallback used by Gateway text inference is not an OpenAI API
-embeddings route. Treat this as an operational billing/credential state, not a LightRAG code bug.
+As of 2026-05-30, retrieval is temporarily **deprecated** on the live server because every available
+external embeddings route is blocked by paid-provider limits or missing credentials. The live
+`/opt/lightrag/.env` is configured for direct Gemini embeddings (`EMBEDDING_BINDING=gemini`,
+`EMBEDDING_MODEL=gemini-embedding-001`), but Gemini currently returns a monthly spending-cap error;
+OmniRoute/OpenRouter has no usable embedding credentials/quota, and the Codex/OpenAI subscription
+fallback used by Gateway text inference is not an OpenAI API embeddings route. Treat this as an
+operational billing/credential state, not a LightRAG code bug.
+
+While this state is active, keep `wiki-import` in explicit RAG degraded mode:
+
+```bash
+WIKI_IMPORT_RAG_DEGRADED_REASON="LightRAG indexing paused: embeddings route is degraded; wiki save is complete and indexing will resume after embeddings quota/credentials are restored."
+```
+
+That setting makes interactive Knowledgebase saves create `raw/**` + `wiki/research/**` without
+trying an immediate LightRAG upload/reprocess that is known to fail. User-facing Telegram replies
+should show `LightRAG: degraded` and must not post raw diagnostic command failures as a follow-up.
 
 **Gemini free tier limits (still important for embeddings during bulk ingestion):**
 - 15 requests per minute (RPM)

@@ -475,6 +475,36 @@ class WikiImportTests(unittest.TestCase):
             self.assertEqual(result["rag_status"], "failed")
             self.assertTrue(any(path.startswith("wiki/research/") for path in result["wiki_page_paths"]))
 
+    @patch("importer.requests.post")
+    @patch("importer.requests.get")
+    def test_degraded_rag_mode_skips_lightrag_calls(self, mock_get, mock_post) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scaffold(root)
+            importer = WikiImporter(
+                obsidian_root=root,
+                state_root=root / "state",
+                lightrag_url="http://lightrag:9621",
+                rag_degraded_reason="embeddings quota exhausted",
+            )
+            result = importer.import_source(
+                ImportRequest(
+                    source_type="text",
+                    source="# Save note\n\nA curated note that should still land in wiki.",
+                    title="Save note",
+                    capture_mode="knowledgebase",
+                )
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["status"], "partial_success")
+            self.assertEqual(result["rag_status"], "degraded")
+            self.assertEqual(result["rag_enqueued_paths"], [])
+            self.assertEqual(result["rag_message"], "embeddings quota exhausted")
+            self.assertTrue(any(path.startswith("wiki/research/") for path in result["wiki_page_paths"]))
+            mock_get.assert_not_called()
+            mock_post.assert_not_called()
+
     def test_maintain_archives_old_light_research_and_rebuilds_indexes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

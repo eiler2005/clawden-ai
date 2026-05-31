@@ -231,6 +231,27 @@ As of 2026-05-28, the live Gateway is set to `20000`. The value was applied with
 `openclaw config set agents.defaults.compaction.reserveTokensFloor 20000 --strict-json`, followed
 by a Gateway restart. A default agent smoke then returned through `openai/gpt-5.5`.
 
+If the value is already correct but a Telegram topic still posts the recovery warning, inspect stale
+session mappings. A long transcript can keep failing with `already_compacted_recently` even after the
+global reserve is fixed. The safe recovery is:
+
+1. Back up `/opt/openclaw/config/agents/main/sessions/sessions.json`.
+2. Back up the session files referenced by the affected keys.
+3. Remove only the stale keys from `sessions.json`.
+4. Recreate `openclaw-gateway` so the in-memory mapping cache is cleared.
+5. Send a short Telegram smoke in the affected topic and verify a fresh session is created.
+
+For the `Knowledgebase` topic this was done on 2026-05-31 for:
+
+```text
+agent:main:telegram:group:<ops-supergroup-chat-id>:topic:232
+agent:main:main
+```
+
+The removed records were copied to
+`/opt/openclaw/config/agents/main/sessions/reset-backups/knowledgebase-compaction-<timestamp>/`
+before the Gateway restart.
+
 ## LightRAG embedding-provider recovery
 
 Current live status after the 2026-05-28 OpenClaw upgrade:

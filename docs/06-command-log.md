@@ -1174,3 +1174,50 @@ Validation:
 - Polling remained internal to the bridge and continued every 5 minutes.
 - Fresh work-email derived events were present before the repair, including contract/payment threads,
   confirming the outage was Telegram delivery only rather than AgentMail ingestion.
+
+## 32. Knowledgebase save degraded RAG guard
+
+Date: `2026-05-30`
+
+Problem:
+
+- A `Knowledgebase` save created the expected `raw/**` and `wiki/research/**` files, but immediate
+  LightRAG indexing failed because embeddings were unavailable.
+- The live LightRAG route was switched to direct Gemini embeddings, but Gemini returned the provider
+  monthly spending-cap error. OmniRoute/OpenRouter embeddings were still unavailable, and DeepSeek is
+  only an LLM fallback, not an embeddings provider.
+- After the successful wiki save, Telegram also surfaced a raw internal diagnostic command failure
+  (`getent hosts ... (agent) failed`) as a separate user-visible message.
+
+Fix:
+
+- Added `WIKI_IMPORT_RAG_DEGRADED_REASON` support to `wiki-import`. When set, interactive saves skip
+  the known-failing immediate LightRAG upload/reprocess path and return `rag_status=degraded` with a
+  human message while still materializing wiki artifacts.
+- Protected live-only `wiki-import.env` and `docker-compose.override.local.yml` from
+  `scripts/deploy-wiki-import.sh --delete` rsync, and added Yandex Debian mirror build args for the
+  wiki-import image after the default Debian mirror was unreachable from the server.
+- Updated OpenClaw workspace instructions so `rag_status=degraded` is treated as a successful
+  wiki-first save and raw infra-debug command output is not posted to Telegram after success.
+
+Validation:
+
+- Local `artifacts/wiki-import` unit tests: `24` OK, including a degraded-mode test that verifies no
+  LightRAG HTTP calls are made.
+- Deployed `wiki-import` and workspace policy to the server.
+- Live `/status` reports `rag_degraded=true` and `lightrag_url=http://lightrag:9621`.
+- Container smoke verified a degraded save creates `wiki_page_paths`, returns `partial_success`, and
+  does not call LightRAG.
+
+Follow-up on `2026-05-31`:
+
+- A new `Knowledgebase` message still surfaced the OpenClaw auto-compaction recovery warning.
+- The live config already had `agents.defaults.compaction.reserveTokensFloor=20000`; Gateway logs
+  showed stale session compaction failures on `agent:main:main` with `already_compacted_recently`.
+- Backed up and removed the stale `agent:main:main` and `Knowledgebase topic_id=232` session mappings
+  from `/opt/openclaw/config/agents/main/sessions/sessions.json`, preserving their transcript files
+  under `reset-backups/knowledgebase-compaction-<timestamp>/`.
+- Recreated `openclaw-gateway`; it returned healthy.
+- Telethon owner-session smoke posted an `обсуди:` probe into `Knowledgebase`; the bot replied without
+  `Auto-compaction could not recover`, and fresh session mappings were created for topic `232` and
+  `agent:main:main`.

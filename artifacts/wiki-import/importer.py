@@ -381,6 +381,7 @@ class WikiImporter:
         host_opt_root: Path | None = None,
         state_root: Path | None = None,
         lightrag_url: str | None = None,
+        rag_degraded_reason: str | None = None,
     ) -> None:
         self.obsidian_root = Path(obsidian_root)
         self.host_opt_root = Path(host_opt_root) if host_opt_root else Path("/host-opt")
@@ -388,6 +389,7 @@ class WikiImporter:
         self.wiki_root = self.obsidian_root / "wiki"
         self.raw_root = self.obsidian_root / "raw"
         self.lightrag_url = (lightrag_url or "").strip().rstrip("/")
+        self.rag_degraded_reason = (rag_degraded_reason or "").strip()
 
     def import_source(self, request: ImportRequest) -> dict[str, Any]:
         self._ensure_layout()
@@ -451,6 +453,8 @@ class WikiImporter:
                 "status": status,
                 "queue_status": entry["status"],
             }
+            if rag_status == "degraded" and self.rag_degraded_reason:
+                result["rag_message"] = self.rag_degraded_reason
         except Exception as exc:
             entry["status"] = "failed"
             entry["updated"] = _utc_now()
@@ -686,7 +690,11 @@ class WikiImporter:
             "raw_root": str(self.raw_root),
             "canonical_file": str(self.wiki_root / "CANONICALS.yaml"),
             "topics_file": str(self.wiki_root / "TOPICS.md"),
+            "lightrag_url": self.lightrag_url,
+            "rag_degraded": bool(self.rag_degraded_reason),
         }
+        if self.rag_degraded_reason:
+            payload["rag_degraded_reason"] = self.rag_degraded_reason
         if status_path.exists():
             try:
                 payload["last_status"] = json.loads(status_path.read_text(encoding="utf-8"))
@@ -732,6 +740,8 @@ class WikiImporter:
         )
 
     def _enqueue_rag_paths(self, paths: list[Path]) -> tuple[str, list[Path]]:
+        if self.rag_degraded_reason:
+            return "degraded", []
         if not self.lightrag_url:
             return "delayed", []
         allowed_paths = [path for path in _dedupe_paths(paths) if path.exists()]

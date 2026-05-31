@@ -25,6 +25,8 @@ rsync -avz --delete \
   --exclude '__pycache__/' \
   --exclude '.pytest_cache/' \
   --exclude 'tests/' \
+  --exclude 'wiki-import.env' \
+  --exclude 'docker-compose.override.local.yml' \
   -e "$RSYNC_SSH" --rsync-path="sudo rsync" \
   "$ROOT_DIR/artifacts/wiki-import/" \
   "$OPENCLAW_HOST":/opt/wiki-import/
@@ -47,13 +49,20 @@ WIKI_IMPORT_OBSIDIAN_ROOT=/app/obsidian
 WIKI_IMPORT_HOST_OPT_ROOT=/host-opt
 WIKI_IMPORT_STATE_ROOT=/app/state
 WIKI_IMPORT_LIGHTRAG_URL=http://lightrag:9621
+WIKI_IMPORT_RAG_DEGRADED_REASON=
 EOF
+  fi
+
+  if ! sudo grep -q "^WIKI_IMPORT_RAG_DEGRADED_REASON=" wiki-import.env; then
+    printf "\nWIKI_IMPORT_RAG_DEGRADED_REASON=\n" | sudo tee -a wiki-import.env >/dev/null
   fi
 
   sudo chmod 600 wiki-import.env
   sudo chmod +x /opt/wiki-import/entrypoint.sh
   sudo chmod +x /opt/wiki-import/sync-openclaw-cron-jobs.sh
-  sudo docker compose build
+  sudo docker compose build \
+    --build-arg DEBIAN_MIRROR=https://mirror.yandex.ru/debian \
+    --build-arg DEBIAN_SECURITY_MIRROR=https://mirror.yandex.ru/debian-security
   sudo docker compose down 2>/dev/null || true
   sudo docker compose up -d wiki-import
 

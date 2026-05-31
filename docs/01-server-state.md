@@ -104,6 +104,9 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - port: `127.0.0.1:8095`
 - network: `openclaw_default`
 - purpose: deterministic curated import bridge for `url`, `text`, and `server_path`
+- current RAG enqueue mode: `degraded` via `WIKI_IMPORT_RAG_DEGRADED_REASON` while external
+  embeddings quota/credentials are unavailable; wiki saves still materialize `raw/**` and
+  `wiki/research/**`
 - write scope:
   - `/opt/obsidian-vault/raw/articles/**`
   - `/opt/obsidian-vault/raw/documents/**`

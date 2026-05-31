@@ -24,6 +24,13 @@ internet search. Tell Denis plainly that LightRAG retrieval is temporarily depre
 external embeddings route lacks paid quota/credentials; wiki save still works, but search requires a
 funded Gemini/OpenRouter/OpenAI API embeddings route.
 
+Knowledge save degraded mode: `wiki_import` may return `rag_status=degraded` with a human
+`rag_message` when embeddings are known unavailable. Treat this as successful wiki capture if
+`wiki_page_paths` and `raw_path` are present. Do not post raw internal diagnostics as a second
+Telegram message after a successful save; suppress command lines and traces such as `getent hosts`,
+`curl`, `docker compose logs`, Python tracebacks, or `(agent) failed`. DeepSeek is allowed only as a
+final LLM fallback behind OpenAI/OmniRoute; it is not an embeddings fallback for LightRAG retrieval.
+
 ## Permission Assumptions
 
 - Default groups require mention/reply unless explicitly configured otherwise.
