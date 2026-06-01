@@ -1339,3 +1339,38 @@ Operational note:
 - Keeping `EMBEDDING_DIM=3072` avoids immediate vector-shape crashes, but old Gemini/OpenRouter
   vectors and new local vectors are not semantically identical. If retrieval quality looks
   inconsistent, schedule a backed-up full LightRAG rebuild from source markdown.
+
+## 36. Telegram ingress spool recovery and Knowledgebase backfill
+
+Date: `2026-06-01`
+
+Problem:
+
+- Telegram Bot API polling was receiving updates, but `General` and `Knowledgebase` stopped replying
+  after an `openclaw-gateway` recreate.
+- The isolated polling spool contained old `.json.processing` claims from the previous container.
+  The new container reused the same internal PID, so OpenClaw treated the old claims as owned by a
+  live process and blocked the affected Telegram lanes.
+- Several `Knowledgebase` messages were received during the block but did not get wiki-save replies.
+
+Actions:
+
+- Backed up and requeued the stale `.json.processing` files in the live Telegram ingress spool.
+- Reset only the stale `Knowledgebase` topic 232 session mapping, then recreated `openclaw-gateway`.
+- Added `scripts/recover-telegram-ingress-spool.sh`, which requeues only processing claims older than
+  the current Gateway container start time.
+- Installed `/usr/local/sbin/openclaw-telegram-spool-guard` plus
+  `/etc/cron.d/openclaw-telegram-spool-guard` so the safe recovery runs once per minute.
+- Backfilled the missed `Knowledgebase` messages into `wiki-import` as three curated sources:
+  the OpenClaw/deterministic-orchestration critique, the `#такМожноБыло` video note, and the
+  Harness article note.
+
+Validation:
+
+- Telegram spool returned `pending=0 processing=0 failed=0`.
+- A live `General` smoke returned `OK_GENERAL`.
+- A live `Knowledgebase` smoke returned `✅ Сохранено в wiki` with `LightRAG: queued`.
+- The three backfilled sources show `status=done` in `wiki/IMPORT-QUEUE.md`.
+- LightRAG `/documents/pipeline_status` reported `busy=false` and `request_pending=false` after the
+  backfill. The only remaining failed document records were two older duplicate records already known
+  from the previous LightRAG recovery.

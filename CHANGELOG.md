@@ -50,6 +50,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute OpenRouter sync helper**: added `scripts/sync-omniroute-openrouter-provider.sh` to upsert the live OpenRouter key into OmniRoute's encrypted provider store, clear stale no-credential/quota state, and smoke-test 3072-dimensional embeddings from the LightRAG runtime.
 
 ### Fixed
+- **Telegram ingress spool recovery**: added `scripts/recover-telegram-ingress-spool.sh` and installed
+  a live cron guard that requeues only `.json.processing` Telegram updates claimed before the current
+  `openclaw-gateway` container start. This fixes the no-reaction failure mode where a Gateway recreate
+  leaves isolated-polling claims behind and the new container reuses the same PID.
+- **Knowledgebase missed-save backfill**: recovered the blocked `Knowledgebase` topic by requeueing
+  stale Telegram spool claims, resetting only the stale topic 232 session mapping, then backfilling the
+  missed forwarded posts into wiki/LightRAG. A live Knowledgebase smoke returned `Сохранено в wiki` and
+  LightRAG showed `busy=false`.
 - **LightRAG embeddings recovery**: added a local OpenAI-compatible embeddings endpoint to `wiki-import`, switched live LightRAG embeddings to `local/hash-embedding-3072`, synced the OmniRoute OpenRouter provider store for future paid-route recovery, cleared `WIKI_IMPORT_RAG_DEGRADED_REASON`, and validated that new `Knowledgebase` saves enqueue touched wiki pages instead of returning `LightRAG: degraded`.
 - **Knowledgebase save tool availability**: mounted the `wiki-import` token into the Gateway as a
   file-only secret, deployed the workspace wrapper, reset the stale `Knowledgebase` session, and

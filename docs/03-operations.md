@@ -252,6 +252,58 @@ The removed records were copied to
 `/opt/openclaw/config/agents/main/sessions/reset-backups/knowledgebase-compaction-<timestamp>/`
 before the Gateway restart.
 
+## Telegram ingress spool recovery
+
+OpenClaw Telegram isolated polling writes incoming updates to
+`/home/node/.openclaw/telegram/ingress-spool-default` inside the Gateway container. A Gateway
+recreate can leave old `.json.processing` claims behind. If the new container reuses the same PID,
+OpenClaw may treat those old claims as live and stop draining the lane even though Bot API polling
+still receives updates.
+
+Symptoms:
+
+- Gateway `/healthz` is OK.
+- Telegram logs show `isolated polling ingress started`.
+- New user messages get no reply.
+- The spool has `.json` or `.json.processing` files that do not drain.
+
+Check the spool:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker exec openclaw-openclaw-gateway-1 sh -lc '"'"'
+    d=/home/node/.openclaw/telegram/ingress-spool-default
+    printf "pending=%s processing=%s failed=%s\n" \
+      "$(find "$d" -maxdepth 1 -name "*.json" | wc -l)" \
+      "$(find "$d" -maxdepth 1 -name "*.processing" | wc -l)" \
+      "$(find "$d" -maxdepth 1 -name "*.failed" | wc -l)"
+  '"'"'
+'
+```
+
+Safe recovery guard:
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+scripts/recover-telegram-ingress-spool.sh
+```
+
+The script requeues only `.json.processing` files whose claim timestamp is older than the current
+`openclaw-gateway` container start time. It does not touch active in-process updates from the current
+container.
+
+Install the live cron guard:
+
+```bash
+export OPENCLAW_HOST="deploy@<server-host>"
+scripts/recover-telegram-ingress-spool.sh --install-cron
+```
+
+This installs `/usr/local/sbin/openclaw-telegram-spool-guard` and
+`/etc/cron.d/openclaw-telegram-spool-guard`. The cron runs once per minute and logs only when it
+actually requeues or drops stale duplicate processing files.
+
 ## Docker resource guardrails
 
 The live `CX23` currently exposes `2 vCPU` and about `3.7GiB` RAM. Keep roughly 20-25% CPU headroom
