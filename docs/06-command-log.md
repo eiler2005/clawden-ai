@@ -1416,3 +1416,38 @@ Validation:
   with the existing ChatGPT/Codex OAuth profiles. The live config was backed up and tested with
   `auth.order.openai` OAuth profile mappings and `models.providers.openai.auth=oauth`, but the direct
   OpenAI-primary path remains a follow-up item.
+
+## 38. Knowledgebase save recovery after OpenClaw 2026.6.1
+
+Date: `2026-06-06`
+
+Problem:
+
+- A new `Knowledgebase` topic post reached Telegram ingress, but no save confirmation appeared in the
+  topic.
+- The wiki-import service and spool were healthy (`pending=0 processing=0 failed=0`), so the failure was
+  not a stuck ingress queue or RAG outage.
+- Gateway logs showed the turn entered the `Knowledgebase` topic, failed the direct `openai/gpt-5.5`
+  primary route with the same provider-auth selection error seen after the `2026.6.1` upgrade, then hit
+  stale transcript compaction on the old topic session.
+
+Actions:
+
+- Backed up the affected OpenClaw session registry and transcript records under the live
+  `agents/main/sessions/reset-backups/knowledgebase-compaction-<timestamp>/` directory.
+- Removed only the stale `agent:main:main` and `Knowledgebase` topic 232 session mappings from the live
+  session registry, preserving the transcript files in the backup.
+- Recreated `openclaw-gateway` and waited for the Gateway to return healthy.
+- Recovered the missed source with a direct `wiki_import_tool.py trigger` call from the Gateway runtime,
+  using `capture_mode=knowledgebase` and a sanitized source payload.
+
+Validation:
+
+- `wiki_import_tool.py status` returned `ok=true`, `rag_degraded=false`, and empty pending/processing
+  queues before recovery.
+- The manual import returned `status=success`, created `raw/articles/**`, `wiki/research/**`, related
+  `wiki/entities/**` and `wiki/concepts/**` pages, and returned `rag_status=queued`.
+- A fresh Telegram smoke in topic 232 was received by the Gateway and produced an outbound Telegram
+  reply in the same thread after falling back from the broken OpenAI primary route to `omniroute/light`.
+- The direct `openai/gpt-5.5` route is still a separate follow-up: the save lane works again through
+  fallback, but the OpenAI provider-auth regression introduced by `2026.6.1` is not resolved here.

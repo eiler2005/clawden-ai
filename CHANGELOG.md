@@ -54,6 +54,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute OpenRouter sync helper**: added `scripts/sync-omniroute-openrouter-provider.sh` to upsert the live OpenRouter key into OmniRoute's encrypted provider store, clear stale no-credential/quota state, and smoke-test 3072-dimensional embeddings from the LightRAG runtime.
 
 ### Fixed
+- **Knowledgebase save recovery after 2026.6.1**: recovered a missed `Knowledgebase` save after the
+  message reached Telegram ingress but the agent turn failed on the new OpenAI provider-auth regression
+  plus a stale compacted topic transcript. Reset only the affected topic/generic session mappings,
+  recreated the Gateway, manually imported the missed source into `wiki-import`, and validated a fresh
+  topic smoke reply through the configured fallback route.
 - **Telegram Digest Telethon session recovery**: upgraded `telethon-digest` from `Telethon 1.36.0` to
   `1.43.2` after the live session database gained the newer `tmp_auth_key` column and the old runtime
   started failing every scheduled digest with `ValueError: too many values to unpack`. A manual interval
