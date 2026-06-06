@@ -1374,3 +1374,45 @@ Validation:
 - LightRAG `/documents/pipeline_status` reported `busy=false` and `request_pending=false` after the
   backfill. The only remaining failed document records were two older duplicate records already known
   from the previous LightRAG recovery.
+
+## 37. OpenClaw 2026.6.1 stable upgrade and Telegram Digest recovery
+
+Date: `2026-06-06`
+
+Problem:
+
+- Telegram Digest scheduled jobs kept enqueuing, but every run after `2026-06-03T14:00:00Z` failed
+  within a few seconds with `ValueError: too many values to unpack (expected 5)` while opening the
+  Telethon SQLite session.
+- The live session table had the newer `tmp_auth_key` column, while the deployed image still pinned
+  `Telethon 1.36.0`, which expected the older five-column session schema.
+
+Actions:
+
+- Upgraded the live OpenClaw derived gateway image from
+  `openclaw-with-iproute2:20260528-slim-2026.5.27` to
+  `openclaw-with-iproute2:20260606-slim-2026.6.1`, based on upstream stable `OpenClaw 2026.6.1`.
+- Backed up the live OpenClaw `.env`, rebuilt the derived image with `iproute2`, updated
+  `OPENCLAW_IMAGE`, and recreated only `openclaw-gateway`.
+- Updated `telethon-digest` to `Telethon 1.43.2`, backed up the live session file inside the
+  `telethon-sessions` volume, rebuilt `telethon-digest-cron-bridge`, and recreated the bridge.
+- Restored executable bits on `/opt/telethon-digest/trigger-digest.sh`,
+  `/opt/telethon-digest/cron-digest.sh`, and `/opt/telethon-digest/sync-openclaw-cron-jobs.sh` after
+  the manual rsync deploy.
+
+Validation:
+
+- `openclaw --version` returned `OpenClaw 2026.6.1`, the gateway returned healthy, `/healthz`
+  returned `{"ok":true,"status":"live"}`, and `command -v ip` returned `/usr/bin/ip`.
+- `telethon-digest-cron-bridge` reported `Telethon 1.43.2`, and `reader.build_client()` could open
+  the existing session database with the `tmp_auth_key` column.
+- A manual Telegram Digest interval trigger returned `status=enqueued` and finished with
+  `exit_code=0`, posting three chunks, persisting
+  `/opt/obsidian-vault/Telegram Digest/Derived/2026-06-05/interval-0500-0800.md`, and enqueuing RAG.
+- The digest LLM route still degraded: the manual digest fell back to deterministic local output after
+  two empty LLM responses. A small bridge route smoke reached `deepseek-v4-flash` with
+  `provider_fallback=true`, proving the reserve route works.
+- Direct `openai/gpt-5.5` gateway smokes on `2026.6.1` still report a provider-auth selection error
+  with the existing ChatGPT/Codex OAuth profiles. The live config was backed up and tested with
+  `auth.order.openai` OAuth profile mappings and `models.providers.openai.auth=oauth`, but the direct
+  OpenAI-primary path remains a follow-up item.

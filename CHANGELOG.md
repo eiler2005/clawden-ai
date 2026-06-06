@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw runtime live upgrade**: upgraded the live derived gateway image to
+  `openclaw-with-iproute2:20260606-slim-2026.6.1`, based on the latest stable upstream
+  `OpenClaw 2026.6.1` release. The gateway returned healthy and `/healthz` returned live status after
+  the recreate.
 - **Live Docker resource guardrails**: capped the main 2-vCPU AI path with about 20% host headroom:
   `openclaw-gateway` at `0.90 CPU / 1224m`, `omniroute` at `0.25 CPU / 512m`, and `lightrag` at
   `0.45 CPU / 1536m`. The LightRAG memory cap intentionally stays at 1.5GB because the current
@@ -50,6 +54,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute OpenRouter sync helper**: added `scripts/sync-omniroute-openrouter-provider.sh` to upsert the live OpenRouter key into OmniRoute's encrypted provider store, clear stale no-credential/quota state, and smoke-test 3072-dimensional embeddings from the LightRAG runtime.
 
 ### Fixed
+- **Telegram Digest Telethon session recovery**: upgraded `telethon-digest` from `Telethon 1.36.0` to
+  `1.43.2` after the live session database gained the newer `tmp_auth_key` column and the old runtime
+  started failing every scheduled digest with `ValueError: too many values to unpack`. A manual interval
+  smoke completed with `exit_code=0`, posted three chunks, persisted the derived note, and enqueued RAG.
 - **Telegram ingress spool recovery**: added `scripts/recover-telegram-ingress-spool.sh` and installed
   a live cron guard that requeues only `.json.processing` Telegram updates claimed before the current
   `openclaw-gateway` container start. This fixes the no-reaction failure mode where a Gateway recreate

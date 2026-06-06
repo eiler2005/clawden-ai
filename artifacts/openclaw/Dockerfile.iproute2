@@ -1,4 +1,4 @@
-ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:2026.5.27-slim
+ARG OPENCLAW_BASE_IMAGE=ghcr.io/openclaw/openclaw:2026.6.1-slim
 FROM ${OPENCLAW_BASE_IMAGE}
 
 ARG DEBIAN_MIRROR=https://mirror.yandex.ru

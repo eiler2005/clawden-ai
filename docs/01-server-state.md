@@ -210,15 +210,16 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
-- `openclaw-with-iproute2:20260528-slim-2026.5.27`
+- `openclaw-with-iproute2:20260606-slim-2026.6.1`
 
 Previous confirmed healthy images:
 
 - `openclaw-with-iproute2:20260412-slim-2026.4.11`
 - `openclaw-with-iproute2:20260516-slim-2026.5.12`
 - `openclaw-with-iproute2:20260528-slim-2026.5.26`
+- `openclaw-with-iproute2:20260528-slim-2026.5.27`
 
-The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.5.27`; live validation is recorded in the command log after deployment.
+The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.6.1`; live validation is recorded in the command log after deployment.
 
 Reason:
 
@@ -228,10 +229,10 @@ Reason:
 - Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.5.27`
-- bundled Codex plugin registry version: `2026.5.27`; stale managed npm `codex@2026.5.12` was removed after the upgrade
+- current OpenClaw CLI version in that image: `2026.6.1`
+- bundled Codex plugin registry version: `2026.6.1`; stale managed npm `codex@2026.5.12` was removed after the earlier upgrade
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.5.27`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.1`.
 
 ## Workspace state
 
@@ -278,12 +279,12 @@ See `docs/09-workspace-setup.md` for full onboarding guide.
 
 ## Validation status note
 
-Upgrade to `2026.5.27` deployment validation (2026-05-28):
+Upgrade to `2026.6.1` deployment validation (2026-06-06):
 
 - gateway container is `healthy`
 - `/healthz` returns `{"ok":true,"status":"live"}`
-- `openclaw --version` reports `OpenClaw 2026.5.27`
-- `openclaw doctor` reports warnings only; no gateway startup error is present
+- `openclaw --version` reports `OpenClaw 2026.6.1`
+- `command -v ip` returns `/usr/bin/ip`
 
 ## Important caveat
 
@@ -317,7 +318,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
   - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B; optional direct DeepSeek reserve is available when `DEEPSEEK_API_KEY` is present
 - LightRAG integration: active again for API-based retrieval. Live LightRAG uses direct DeepSeek for extraction after OmniRoute `light` timed out, and `wiki-import` local embeddings for vector work after Gemini/OpenRouter credentials/credits failed. `scripts/sync-omniroute-openrouter-provider.sh` remains available if a paid OpenRouter embeddings route is restored. Codex/OpenAI OAuth remains a Gateway text-inference route, not an embeddings API route; DeepSeek remains an LLM reserve only.
-- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway uses `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve
+- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway policy lists `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve. After the `2026.6.1` upgrade, direct `openai/gpt-5.5` CLI smokes still report a provider-auth selection error with ChatGPT/Codex OAuth, so bridge LLM work currently relies on the fallback chain until the OpenAI-primary auth mapping is repaired.
 - OpenClaw compaction reserve: `agents.defaults.compaction.reserveTokensFloor=20000` in the live Gateway config, added after the 2026-05-28 upgrade to keep long tool-heavy sessions recoverable.
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY` is redacted on the API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`
@@ -343,6 +344,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
 - bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
 - status: bridge running as `telethon-digest-cron-bridge`; job timing managed by host cron calling `/opt/telethon-digest/trigger-digest.sh`
+- current Telethon runtime: `Telethon 1.43.2`; this is required for the live session database schema with `tmp_auth_key`
 
 ### Signals Bridge
 

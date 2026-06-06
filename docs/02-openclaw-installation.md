@@ -85,7 +85,8 @@ Upgrade history:
 - `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) — previous production; slim image retained, base OpenClaw updated
 - `openclaw-with-iproute2:20260516-slim-2026.5.12` (`OpenClaw 2026.5.12`) — previous production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
 - `openclaw-with-iproute2:20260528-slim-2026.5.26` (`OpenClaw 2026.5.26`) — previous production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
-- `openclaw-with-iproute2:20260528-slim-2026.5.27` (`OpenClaw 2026.5.27`) — current production; latest stable release verified from GitHub and live-confirmed on `/opt/openclaw`
+- `openclaw-with-iproute2:20260528-slim-2026.5.27` (`OpenClaw 2026.5.27`) — previous production; latest stable release verified from GitHub and live-confirmed on `/opt/openclaw`
+- `openclaw-with-iproute2:20260606-slim-2026.6.1` (`OpenClaw 2026.6.1`) — current production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
 
 ## Final deployed shape
 
@@ -95,7 +96,7 @@ Upgrade history:
 - gateway auth mode: `token`
 - trusted proxies: localhost and Docker bridge
 - builtin memorySearch: disabled while external embedding limits are unstable; retrieval should use LightRAG once its embedding provider is healthy
-- model routing: `openai/gpt-5.5` primary, `omniroute/light` fallback, `deepseek/deepseek-v4-flash` final reserve
+- model routing: `openai/gpt-5.5` primary, `omniroute/light` fallback, `deepseek/deepseek-v4-flash` final reserve. Note: after the `2026.6.1` upgrade, direct `openai/gpt-5.5` CLI smokes still hit a provider-auth selection error with ChatGPT/Codex OAuth, while bridge fallback routing remains available.
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`
@@ -138,7 +139,7 @@ Current policy:
 - Whisper is **not** installed on the host OS
 - Whisper is **not** installed in the current OpenClaw gateway image
 - the current derived image keeps only `iproute2`, which is operationally required for `bind=lan`
-- the current live image tag is `openclaw-with-iproute2:20260528-slim-2026.5.27`
+- the current live image tag is `openclaw-with-iproute2:20260606-slim-2026.6.1`
 
 ### Verify current absence
 
