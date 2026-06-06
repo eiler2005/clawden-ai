@@ -451,7 +451,7 @@ OmniRoute dispatches tasks across three tiers with automatic provider failover.
 | **medium** | Summarization, Q&A, digests | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-30B |
 | **light** | Classification, signals enrichment, tagging | Kiro/Claude Haiku → Gemini 2.0 Flash → OpenRouter/Qwen3-8B |
 
-**Primary route:** OpenAI `openai/gpt-5.5` via the OpenClaw subscription path; OmniRoute `light` is the first fallback, and DeepSeek is final reserve when both are unavailable.
+**Primary route:** OpenAI `openai/gpt-5.5` via the OpenClaw subscription path; DeepSeek is the direct reserve for interactive Gateway turns. OmniRoute remains available for dedicated service routes, but is not in the interactive fallback chain.
 **LightRAG:** OmniRoute `light` for LLM extraction/summarization, with DeepSeek registered as the final LLM reserve behind that combo. Retrieval embeddings still require Gemini/OpenRouter/OpenAI embeddings; DeepSeek is not an embeddings provider.
 **Last30Days reasoning:** OpenRouter `google/gemini-2.5-flash-lite` via `OPENROUTER_API_KEY` in `signals.env`.
 

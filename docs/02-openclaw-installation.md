@@ -96,7 +96,9 @@ Upgrade history:
 - gateway auth mode: `token`
 - trusted proxies: localhost and Docker bridge
 - builtin memorySearch: disabled while external embedding limits are unstable; retrieval should use LightRAG once its embedding provider is healthy
-- model routing: `openai/gpt-5.5` primary, `omniroute/light` fallback, `deepseek/deepseek-v4-flash` final reserve. Note: after the `2026.6.1` upgrade, direct `openai/gpt-5.5` CLI smokes still hit a provider-auth selection error with ChatGPT/Codex OAuth, while bridge fallback routing remains available.
+- model routing: `openai/gpt-5.5` primary, `deepseek/deepseek-v4-flash` direct fallback. After the
+  `2026.6.1` upgrade, the live repair also had to align both `auth.order.openai` and the
+  agent-scoped `models auth order` override to canonical `openai:*` OAuth profile ids.
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`

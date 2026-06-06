@@ -1,9 +1,9 @@
 {
   "version": 1,
   "profiles": {
-    "openai-codex:default": {
+    "openai:default": {
       "type": "oauth",
-      "provider": "openai-codex",
+      "provider": "openai",
       "access": "[redacted]",
       "refresh": "[redacted]",
       "expires": 1776019823000,

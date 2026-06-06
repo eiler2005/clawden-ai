@@ -53,14 +53,15 @@ User message
      -> Agent runner
         -> Primary route: openai/gpt-5.5
             on rate_limit / error:
-            -> Fallback 1: omniroute/light
-            -> Fallback 2: deepseek/deepseek-v4-flash
+            -> Fallback: deepseek/deepseek-v4-flash
 ```
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
 This is channel-agnostic — applies to all surfaces (Telegram, web UI, API).
-OpenAI `openai/gpt-5.5` is the primary Gateway route. OmniRoute remains the first reserve route,
-and DeepSeek is final reserve when both OpenAI and OmniRoute/OpenRouter routes fail.
+OpenAI `openai/gpt-5.5` is the primary Gateway route. DeepSeek is the direct reserve for interactive
+Gateway turns. OmniRoute remains available as a separate service route for digest/signals/RAG flows,
+but it is intentionally not in the interactive Gateway fallback chain after the 2026.6.1 continuation
+failure (`Cannot continue from message role: assistant`) seen in Telegram smokes.
 
 ### OmniRoute tiers
 

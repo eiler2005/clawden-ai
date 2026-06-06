@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw 2026.6.1 auth-order hardening**: aligned the tracked Gateway config with the live
+  recovery path: canonical `openai:*` OAuth profiles for `openai/gpt-5.5`, matching
+  `models auth order` override guidance, and a direct `deepseek/deepseek-v4-flash` reserve route
+  instead of routing interactive Telegram turns through `omniroute/light`.
 - **OpenClaw runtime live upgrade**: upgraded the live derived gateway image to
   `openclaw-with-iproute2:20260606-slim-2026.6.1`, based on the latest stable upstream
   `OpenClaw 2026.6.1` release. The gateway returned healthy and `/healthz` returned live status after

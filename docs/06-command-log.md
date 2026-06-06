@@ -1449,5 +1449,43 @@ Validation:
   `wiki/entities/**` and `wiki/concepts/**` pages, and returned `rag_status=queued`.
 - A fresh Telegram smoke in topic 232 was received by the Gateway and produced an outbound Telegram
   reply in the same thread after falling back from the broken OpenAI primary route to `omniroute/light`.
-- The direct `openai/gpt-5.5` route is still a separate follow-up: the save lane works again through
-  fallback, but the OpenAI provider-auth regression introduced by `2026.6.1` is not resolved here.
+- At this point the direct `openai/gpt-5.5` route was still a separate follow-up. It was resolved in
+  the auth-order hardening pass recorded in Section 39.
+
+## 39. Knowledgebase OpenAI auth-order hardening after 2026.6.1
+Date: `2026-06-06`
+Problem:
+- A follow-up `Knowledgebase` Telegram smoke still showed the earlier recovery warning in the topic UI
+  even though `wiki_import_tool.py status` proved the forwarded source had already been saved to
+  `raw/**` and `wiki/research/**`.
+- Gateway `models status` showed live `openai:*` OAuth profiles, but runtime auth initially reported
+  `openai via codex ... status=missing` and later `models status --probe --probe-provider openai`
+  marked all usable `openai:*` profiles as `Excluded by auth.order for this provider`.
+- Root cause: `openclaw.json` and the agent-scoped `auth-state.json` order override had drifted into
+  legacy `openai-codex:*` / bare profile ids after the 2026.6.1 upgrade.
+- The temporary fallback through `omniroute/light` was also not acceptable for interactive Telegram:
+  it could hit `Cannot continue from message role: assistant` after compaction retries. DeepSeek
+  succeeded when selected directly.
+Actions:
+- Backed up and removed only the stale `agent:main:main` and `Knowledgebase topic_id=232` session
+  mappings from `agents/main/sessions/sessions.json`, preserving transcript files under
+  `sessions/reset-backups/knowledgebase-*/`.
+- Ran `openclaw doctor --fix` and `openclaw config validate`; doctor migrated active OpenAI Codex auth
+  profile material to the canonical OpenAI provider and repaired stale session routes.
+- Set `auth.order.openai` in `openclaw.json` to canonical `openai:*` profile ids.
+- Set the agent-scoped override with
+  `openclaw models auth order set --provider openai ...`, because `auth-state.json` still pinned a
+  stale `openai-codex:codex-cli-current` token after the config-level order was fixed.
+- Removed `omniroute/light` from the interactive Gateway fallback chain and kept
+  `deepseek/deepseek-v4-flash` as the direct reserve route.
+- Recreated `openclaw-gateway` after each config/order change so in-memory routing state was cleared.
+Validation:
+- `openclaw models status --probe --probe-provider openai` returned `ok` for two canonical `openai:*`
+  OAuth profiles.
+- `openclaw models status --probe --probe-provider deepseek` returned `ok`.
+- Final `Knowledgebase` owner-session smoke in topic 232 received a Telegram `OK` reply.
+- The fresh topic transcript recorded the assistant response as `provider=openai`, `model=gpt-5.5`,
+  followed by the OpenClaw delivery mirror. This confirms the final acceptance path used OpenAI primary,
+  not a fallback.
+- Tracked config now matches the live policy: `openai/gpt-5.5` primary and
+  `deepseek/deepseek-v4-flash` fallback.

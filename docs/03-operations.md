@@ -138,17 +138,22 @@ when UDP/123 is available again.
 ## OpenAI Codex auth recovery
 
 Current live policy: OpenAI via OpenClaw is the normal route. The Gateway primary route is
-`openai/gpt-5.5`, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve.
-As of the 2026-05-28 live validation, the server-side OpenAI Codex OAuth profile was re-authenticated
-with the device-code flow and aliased back to the legacy `openai-codex:*` profile ids so Telegram
-sessions stop seeing stale expired profile state.
+`openai/gpt-5.5`, with `deepseek/deepseek-v4-flash` as the direct reserve. Do not put
+`omniroute/light` in the interactive Gateway fallback chain: after the 2026.6.1 upgrade it could
+return `Cannot continue from message role: assistant` after compaction retries, while DeepSeek
+completed the same Telegram smoke directly.
+
+OpenClaw 2026.6.1 uses the canonical `openai/*` model route plus `openai:*` auth profiles. Avoid
+new `openai-codex:*` entries in `auth.order.openai`; they can leave `openclaw models status --probe`
+with every usable OpenAI OAuth profile marked `Excluded by auth.order for this provider`.
 
 Symptom in Telegram:
 
 ```text
-Model login failed on the gateway for openai-codex
-Missing API key for provider "openai-codex"
-No credentials found for profile "openai-codex:codex-cli-current"
+No API key found for provider "openai"
+You are authenticated with OpenAI ChatGPT/Codex OAuth
+Excluded by auth.order for this provider
+Cannot continue from message role: assistant
 ```
 
 Confirm the cause in gateway logs:
@@ -157,32 +162,53 @@ Confirm the cause in gateway logs:
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   docker compose logs --tail=250 openclaw-gateway |
-    grep -E "Token refresh failed|refresh_token_reused|model fallback|omniroute"
+    grep -E "No API key found|Excluded by auth.order|Cannot continue|model fallback|auto-compaction"
 '
 ```
 
-If logs show `refresh_token_reused`, re-auth from the gateway container and paste the local browser
-redirect URL back into the prompt:
+First run the built-in repair and validate the config:
 
 ```bash
 ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
-  sudo docker compose exec openclaw-gateway \
-    openclaw models auth login --provider openai-codex
+  sudo docker compose exec openclaw-gateway sh -lc "
+    openclaw doctor --fix &&
+    openclaw config validate
+  "
 '
 ```
 
-If logs instead point at the agent-scoped auth store
-`/home/node/.openclaw/agents/main/agent/auth-profiles.json`, refresh the portable token profile
-from a current local Codex auth bootstrap, then delete the temporary server copy immediately. Do not
-print token values in logs or committed docs.
+Then make both auth-order layers point at the canonical `openai:*` profile ids. The first command
+updates `openclaw.json`; the second updates the agent-scoped override in
+`agents/main/agent/auth-state.json`:
+
+```bash
+ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec openclaw-gateway sh -lc "
+    openclaw config set auth.order.openai \
+      '\''[\"openai:default\",\"openai:owner@example.invalid\"]'\'' --strict-json &&
+    openclaw models auth order set --provider openai \
+      openai:default openai:owner@example.invalid
+  "
+'
+```
+
+Use the actual profile ids shown by:
+
+```bash
+openclaw models auth list --provider openai
+```
+
+Do not print token values in logs or committed docs. If no usable `openai:*` OAuth profile exists,
+re-auth from the gateway container with `openclaw models auth login --provider openai`.
 
 Then restart the gateway so the running service drops the old token state:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
-  sudo docker compose restart openclaw-gateway
+  sudo docker compose up -d --force-recreate openclaw-gateway
 '
 ```
 
@@ -191,22 +217,31 @@ Verify routing:
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
-  sudo docker compose exec -T openclaw-gateway openclaw models list
+  sudo docker compose exec -T openclaw-gateway sh -lc "
+    openclaw models status --probe --probe-provider openai &&
+    openclaw config get agents.defaults.model --json
+  "
 '
 ```
 
 Expected essentials:
 
 ```text
-openai/gpt-5.5              ... Auth yes  default,configured
-omniroute/light             ... Auth yes  fallback#1
-deepseek/deepseek-v4-flash  ... Auth yes  fallback#2
+Runtime auth
+- openai via codex uses openai ... status=usable
+
+Auth probes
+- openai/gpt-5.5 ... openai:default ... ok
+
+Model policy
+- primary: openai/gpt-5.5
+- fallback: deepseek/deepseek-v4-flash
 ```
 
-Important: if OpenAI hits a subscription/usage-limit failure, Gateway should move to OmniRoute.
-OmniRoute still only works if its own upstream accounts have quota. Check OmniRoute logs for
-`credits_exhausted`, Gemini monthly spend caps, or OpenRouter credit errors if the reserve route
-returns `ALL_ACCOUNTS_INACTIVE`; DeepSeek is the final reserve after that failure.
+Important: if the Telegram topic still posts an auto-compaction warning after auth is fixed, reset
+only the affected `sessions.json` mappings (`agent:main:main` and the topic session key), preserve
+their transcript files under `sessions/reset-backups/<incident-id>/`, recreate the Gateway, and send
+a short `обсуди:` smoke in the affected topic.
 
 ## OpenClaw auto-compaction reserve
 
