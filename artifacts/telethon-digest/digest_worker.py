@@ -128,6 +128,49 @@ def _post_in_period(post, start: datetime, end: datetime) -> bool:
     return start <= post_dt < end
 
 
+def _filter_posts_in_period(posts, start: datetime, end: datetime):
+    return [post for post in posts if _post_in_period(post, start, end)]
+
+
+def _active_channel_count(posts) -> int:
+    return len({post.channel_id for post in posts})
+
+
+def _scheduled_retry_floor(config: dict, channels_in_scope: int) -> int:
+    configured = config.get("scheduled_min_active_channels")
+    if configured is not None:
+        return max(0, int(configured))
+    return max(12, min(24, int(channels_in_scope * 0.03)))
+
+
+def _should_retry_scheduled_read(
+    config: dict,
+    *,
+    scheduled: bool,
+    channels_in_scope: int,
+    posts_in_period,
+) -> bool:
+    if not scheduled or channels_in_scope < 100:
+        return False
+    floor = _scheduled_retry_floor(config, channels_in_scope)
+    if floor <= 0 or _active_channel_count(posts_in_period) >= floor:
+        return False
+    return len(posts_in_period) >= max(20, floor * 2)
+
+
+def _scheduled_retry_config(config: dict) -> dict:
+    retry_config = copy.deepcopy(config)
+    retry_config["read_batch_size"] = max(
+        1,
+        min(int(retry_config.get("read_batch_size", 5) or 5), 3),
+    )
+    retry_config["read_batch_delay_sec"] = max(
+        float(retry_config.get("read_batch_delay_sec", 1.5) or 1.5),
+        2.0,
+    )
+    return retry_config
+
+
 def apply_read_allowlist(config: dict) -> dict:
     """
     Enforce least-privilege reads before Telethon sees the channel list.
@@ -235,10 +278,48 @@ async def run_digest(config: dict | None = None):
             config,
             use_cursors=slot_bounds is None,
         )
+        posts_in_period = _filter_posts_in_period(all_posts, period_start, period_end)
+        if _should_retry_scheduled_read(
+            config,
+            scheduled=slot_bounds is not None,
+            channels_in_scope=channels_in_scope,
+            posts_in_period=posts_in_period,
+        ):
+            original_posts = len(posts_in_period)
+            original_channels = _active_channel_count(posts_in_period)
+            logger.warning(
+                "Scheduled read coverage low: %s posts across %s channels; retrying with slower pacing",
+                original_posts,
+                original_channels,
+            )
+            retry_all_posts = await read_all_channels(
+                client,
+                _scheduled_retry_config(config),
+                use_cursors=False,
+            )
+            retry_posts_in_period = _filter_posts_in_period(
+                retry_all_posts, period_start, period_end
+            )
+            retry_channels = _active_channel_count(retry_posts_in_period)
+            if retry_channels > original_channels or len(retry_posts_in_period) > original_posts:
+                logger.info(
+                    "Scheduled read coverage retry improved: %s/%s posts, %s/%s channels",
+                    len(retry_posts_in_period),
+                    original_posts,
+                    retry_channels,
+                    original_channels,
+                )
+                all_posts = retry_all_posts
+                posts_in_period = retry_posts_in_period
+            else:
+                logger.info(
+                    "Scheduled read coverage retry did not improve: %s posts, %s channels",
+                    len(retry_posts_in_period),
+                    retry_channels,
+                )
     finally:
         await client.disconnect()
 
-    posts_in_period = [post for post in all_posts if _post_in_period(post, period_start, period_end)]
     if len(posts_in_period) != len(all_posts):
         logger.info(
             "Window filter: kept %s/%s posts for %s → %s",

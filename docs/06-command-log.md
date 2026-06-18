@@ -1506,6 +1506,7 @@ Actions:
 - Changed scheduled slot runs to backread by time window without cursor prefiltering.
 - Kept cursor-based reads for non-slotted/manual fallback runs.
 - Made bulk cursor writes monotonic so a scheduled backread cannot move a watermark backwards.
+- Added a low-coverage scheduled-read retry with slower Telethon pacing.
 - Deployed `telethon-digest` with the repo deploy helper and restarted the cron bridge.
 
 Validation:
@@ -1517,3 +1518,9 @@ Validation:
   21 unique channels, and posted both Telegram chunks successfully.
 - The persisted digest note recorded `# Дайджест | 08:00–11:00 (21 канал, 37 постов)` and
   `Просмотрено 69 новых постов из 366 каналов в скоупе`.
+- Follow-up audit of the `14:00-17:00` window found the scheduled run had under-read the window:
+  the posted run saw 76 posts and selected 16 posts from 6 channels, while an independent no-post
+  bridge audit found 163 posts from 49 channels and would select 42 posts from 29 channels.
+- After deploying the low-coverage retry, a controlled `17:00` slot trigger completed with
+  `exit_code=0`; the persisted digest recorded 121 new posts, 42 selected posts, and
+  `# Дайджест | 14:00–17:00 (32 канала, 42 поста)`.

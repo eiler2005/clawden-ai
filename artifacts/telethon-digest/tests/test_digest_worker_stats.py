@@ -63,6 +63,36 @@ def _config() -> dict:
 
 
 class DigestWorkerStatsTests(unittest.TestCase):
+    def test_scheduled_read_retries_when_active_channel_coverage_is_too_low(self) -> None:
+        posts = [
+            Post(channel_id, f"Channel {channel_id}", "news", 5, idx, "text", datetime(2026, 6, 18, 7, 30, tzinfo=timezone.utc))
+            for idx, channel_id in enumerate([1, 2, 3, 4, 5, 6] * 10, start=1)
+        ]
+
+        self.assertTrue(
+            digest_worker._should_retry_scheduled_read(
+                {},
+                scheduled=True,
+                channels_in_scope=366,
+                posts_in_period=posts,
+            )
+        )
+
+    def test_scheduled_read_does_not_retry_when_active_channel_coverage_is_healthy(self) -> None:
+        posts = [
+            Post(channel_id, f"Channel {channel_id}", "news", 5, channel_id, "text", datetime(2026, 6, 18, 7, 30, tzinfo=timezone.utc))
+            for channel_id in range(1, 22)
+        ]
+
+        self.assertFalse(
+            digest_worker._should_retry_scheduled_read(
+                {},
+                scheduled=True,
+                channels_in_scope=366,
+                posts_in_period=posts,
+            )
+        )
+
     def test_scheduled_stats_count_only_channels_active_in_period(self) -> None:
         captured: dict = {}
         posts = [
