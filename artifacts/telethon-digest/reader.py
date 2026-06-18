@@ -142,7 +142,9 @@ def _build_channel_list(config: dict) -> list[tuple[dict, str, int]]:
     return result
 
 
-async def read_all_channels(client: TelegramClient, config: dict) -> list[Post]:
+async def read_all_channels(
+    client: TelegramClient, config: dict, *, use_cursors: bool = True
+) -> list[Post]:
     """Read all configured channels in batches, return flat list of Posts."""
     all_channels = _build_channel_list(config)
 
@@ -165,7 +167,7 @@ async def read_all_channels(client: TelegramClient, config: dict) -> list[Post]:
     for batch_idx, batch in enumerate(batches):
         tasks = []
         for ch, fname, fpriority in batch:
-            last_seen = state_store.get_cursor(ch["id"])
+            last_seen = state_store.get_cursor(ch["id"]) if use_cursors else 0
             tasks.append(
                 asyncio.ensure_future(
                     _read_channel_with_pins(

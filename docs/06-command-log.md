@@ -1489,3 +1489,31 @@ Validation:
   not a fallback.
 - Tracked config now matches the live policy: `openai/gpt-5.5` primary and
   `deepseek/deepseek-v4-flash` fallback.
+
+## 40. Telethon Digest scheduled-window cursor fix
+
+Date: `2026-06-18`
+
+Problem:
+
+- Scheduled Telegram Digest windows had exact slot bounds, but channel reads still used per-channel
+  `last_seen_msg_id` as `min_id`.
+- If a manual, delayed, or duplicate run advanced a cursor past a later nominal window, scheduled
+  runs could see only a small subset of active channels.
+
+Actions:
+
+- Changed scheduled slot runs to backread by time window without cursor prefiltering.
+- Kept cursor-based reads for non-slotted/manual fallback runs.
+- Made bulk cursor writes monotonic so a scheduled backread cannot move a watermark backwards.
+- Deployed `telethon-digest` with the repo deploy helper and restarted the cron bridge.
+
+Validation:
+
+- Local `telethon-digest` unit suite passed with 12 tests.
+- Live host cron still lists the five Moscow digest slots: `08:00`, `11:00`, `14:00`, `17:00`, `21:00`.
+- Live bridge accepted a manual `interval` trigger for the `11:00` slot and finished with `exit_code=0`.
+- The run read 172 posts, kept 69 posts in the exact `08:00-11:00` window, selected 37 posts with
+  21 unique channels, and posted both Telegram chunks successfully.
+- The persisted digest note recorded `# Дайджест | 08:00–11:00 (21 канал, 37 постов)` and
+  `Просмотрено 69 новых постов из 366 каналов в скоупе`.

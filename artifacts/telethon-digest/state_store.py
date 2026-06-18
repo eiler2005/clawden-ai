@@ -37,11 +37,12 @@ def set_cursor(channel_id: int, msg_id: int):
 
 
 def bulk_set_cursors(cursors: dict[int, int]):
-    """Update multiple channel cursors at once."""
+    """Update multiple channel cursors without moving any watermark backwards."""
     data = _load()
     cs = data.setdefault("cursors", {})
     for cid, mid in cursors.items():
-        cs[str(cid)] = mid
+        key = str(cid)
+        cs[key] = max(int(cs.get(key, 0) or 0), int(mid))
     _save(data)
 
 

@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Telegram Digest scheduled channel coverage**: scheduled slot runs now backread by time window
+  instead of prefiltering with per-channel cursors, keeping cursor watermarks monotonic while the
+  digest header reports channels active inside the exact window.
 - **OpenClaw 2026.6.1 auth-order hardening**: aligned the tracked Gateway config with the live
   recovery path: canonical `openai:*` OAuth profiles for `openai/gpt-5.5`, matching
   `models auth order` override guidance, and a direct `deepseek/deepseek-v4-flash` reserve route

@@ -230,7 +230,11 @@ async def run_digest(config: dict | None = None):
 
     try:
         # 1. Read channels
-        all_posts = await read_all_channels(client, config)
+        all_posts = await read_all_channels(
+            client,
+            config,
+            use_cursors=slot_bounds is None,
+        )
     finally:
         await client.disconnect()
 
@@ -267,7 +271,7 @@ async def run_digest(config: dict | None = None):
         channels_in_scope=channels_in_scope,
         new_posts_seen=len(posts_in_period),
         posts_selected=len(top_posts),
-        active_channels_seen=len({post.channel_id for post in all_posts}),
+        active_channels_seen=len({post.channel_id for post in posts_in_period}),
             folder_message_counts=dict(Counter(post.folder_name for post in posts_in_period)),
         folder_channel_counts={
             folder_name: len(channel_ids)
