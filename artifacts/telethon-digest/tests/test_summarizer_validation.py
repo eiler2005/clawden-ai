@@ -13,6 +13,16 @@ from models import DigestStats, ModelMeta, Post
 
 
 class SummarizerValidationTests(unittest.TestCase):
+    def test_markdown_fenced_json_is_not_treated_as_retry_marker(self) -> None:
+        raw = '```json\n{"title": "Digest", "lead": ["ok"]}\n```'
+
+        self.assertFalse(summarizer._has_retry_markers(raw))
+
+    def test_clarification_response_is_retry_marker(self) -> None:
+        self.assertTrue(
+            summarizer._has_retry_markers("Мне нужна дополнительная информация.")
+        )
+
     def test_missing_llm_post_url_is_repaired_from_matching_channel(self) -> None:
         posts = [
             Post(

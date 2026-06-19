@@ -210,7 +210,7 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
-- `openclaw-with-iproute2:20260606-slim-2026.6.1`
+- `openclaw-with-iproute2:20260619-slim-2026.6.8`
 
 Previous confirmed healthy images:
 
@@ -218,8 +218,9 @@ Previous confirmed healthy images:
 - `openclaw-with-iproute2:20260516-slim-2026.5.12`
 - `openclaw-with-iproute2:20260528-slim-2026.5.26`
 - `openclaw-with-iproute2:20260528-slim-2026.5.27`
+- `openclaw-with-iproute2:20260606-slim-2026.6.1`
 
-The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.6.1`; live validation is recorded in the command log after deployment.
+The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.6.8`; live validation is recorded in the command log after deployment.
 
 Reason:
 
@@ -229,10 +230,10 @@ Reason:
 - Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.6.1`
-- bundled Codex plugin registry version: `2026.6.1`; stale managed npm `codex@2026.5.12` was removed after the earlier upgrade
+- current OpenClaw CLI version in that image: `2026.6.8`
+- bundled Codex plugin registry version: `2026.6.8`; stale managed npm `codex@2026.5.12` was removed after the earlier upgrade
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.1`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.8`.
 
 ## Workspace state
 

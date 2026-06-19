@@ -272,7 +272,10 @@ def render_digest_html(document: DigestDocument) -> str:
         (
             f"📊 <b>{escape(document.title)}</b> | {escape(document.period_label)} "
             f"({active_channels} {_pluralize(active_channels, 'канал', 'канала', 'каналов')}, "
-            f"{document.stats.posts_selected} {_pluralize(document.stats.posts_selected, 'пост', 'поста', 'постов')})"
+            f"обработано {document.stats.new_posts_seen} "
+            f"{_pluralize(document.stats.new_posts_seen, 'сообщение', 'сообщения', 'сообщений')}, "
+            f"в выпуске {document.stats.posts_selected} "
+            f"{_pluralize(document.stats.posts_selected, 'пост', 'поста', 'постов')})"
         ),
     ]
 

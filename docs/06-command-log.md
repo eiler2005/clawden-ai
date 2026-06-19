@@ -1524,3 +1524,80 @@ Validation:
 - After deploying the low-coverage retry, a controlled `17:00` slot trigger completed with
   `exit_code=0`; the persisted digest recorded 121 new posts, 42 selected posts, and
   `# Дайджест | 14:00–17:00 (32 канала, 42 поста)`.
+
+## 41. OpenClaw 2026.6.8 live upgrade and service startup check
+
+Date: `2026-06-19`
+
+Goal:
+
+- Upgrade the live derived OpenClaw Gateway image from `OpenClaw 2026.6.1` to the latest stable
+  `OpenClaw 2026.6.8`.
+- Bring up the current service set after the Gateway recreate.
+- Check whether the recent Telegram Digest low-channel counts still indicate reader-side truncation.
+
+Actions:
+
+- Updated the derived-image template from `ghcr.io/openclaw/openclaw:2026.6.1-slim` to
+  `ghcr.io/openclaw/openclaw:2026.6.8-slim`.
+- Backed up the live `/opt/openclaw/.env` and `/opt/openclaw/Dockerfile.iproute2`, installed the new
+  Dockerfile, rebuilt `openclaw-with-iproute2:20260619-slim-2026.6.8`, updated `OPENCLAW_IMAGE`, and
+  recreated `openclaw-gateway`.
+- Brought up the current service set and removed the stale `telethon-digest` service plus the accidental
+  stale container created by running the broad `/opt/openclaw` compose project. The active digest
+  service remains `/opt/telethon-digest` / `telethon-digest-cron-bridge`.
+- Started `agentmail-work-email-bridge` with `docker compose --env-file email.env ...`; running without
+  the env file falls back to the inbox bridge container name and conflicts with `agentmail-email-bridge`.
+
+Validation:
+
+- `openclaw --version` returned `OpenClaw 2026.6.8`.
+- `/healthz` returned `{"ok":true,"status":"live"}` and the Gateway container returned to `healthy`.
+- `command -v ip` inside `openclaw-gateway` returned `/usr/bin/ip`.
+- `openclaw config validate` returned `Config valid: ~/.openclaw/openclaw.json`; `openclaw doctor`
+  only reported the known startup-env warning in the exec CLI context.
+- Current services were up: `openclaw-gateway`, `omniroute`, `telethon-digest-cron-bridge`,
+  `signals-bridge`, `agentmail-email-bridge`, `agentmail-work-email-bridge`, `wiki-import`, and
+  `lightrag`.
+- `/opt/openclaw` compose now lists only `omniroute` and `openclaw-gateway`; Telegram Digest remains
+  isolated in its dedicated `/opt/telethon-digest` compose project.
+- `telethon-digest-cron-bridge` reported `Telethon 1.43.2`; the `11:00` MSK digest run completed with
+  `exit_code=0`, kept 57 posts in the exact `08:00-11:00` MSK window, selected 16 posts from 7 unique
+  channels, posted two chunks, persisted `interval-0500-0800.md`, and enqueued RAG ingest.
+- The same `11:00` MSK digest fell back to deterministic local summarization after two LLM responses
+  contained retry markers. This is a quality/fallback issue, not a channel-reader truncation issue.
+- The `08:00` MSK morning digest remained a separate follow-up: logs show the bridge restarted at
+  `2026-06-19T05:12:22Z` after starting the morning run, with no `Pipeline completed OK` line.
+
+## 42. Telegram Digest status/header/fallback cleanup
+
+Date: `2026-06-19`
+
+Problem:
+
+- A bridge/container restart during `digest_worker.py --now` could leave
+  `/app/state/cron-bridge-status.json` stuck at `running=true` even though no worker process survived.
+- The Telegram header mixed raw active-channel count with selected-post count, so a line like
+  `9 каналов, 19 постов` looked like the reader had only seen 19 source posts.
+- Fenced JSON responses from the LLM summarizer were rejected as retry markers before JSON extraction,
+  causing avoidable deterministic fallback.
+
+Actions:
+
+- Added bridge startup recovery: stale `running=true` status is marked `interrupted`, `exit_code=130`,
+  and the matching Redis digest run lock is released.
+- Changed the Telegram header to show active channels, processed source messages, and selected posts
+  separately.
+- Changed summarizer validation order so fenced/extractable JSON is parsed before retry-marker checks.
+- Added unit tests for interrupted status recovery, header counter wording, and retry-marker handling.
+- Redeployed `telethon-digest` and restarted `telethon-digest-cron-bridge`.
+
+Validation:
+
+- Server-side container test run passed: `18 tests OK`.
+- `telethon-digest-cron-bridge` `/health` returned `ok=true`, `running=false`, and last digest
+  `exit_code=0`.
+- Host cron still contains the five Moscow slots for `08:00`, `11:00`, `14:00`, `17:00`, and `21:00`.
+- Current containers were up: `openclaw-gateway`, `omniroute`, `telethon-digest-cron-bridge`,
+  `signals-bridge`, `agentmail-email-bridge`, `agentmail-work-email-bridge`, `wiki-import`, and
+  `lightrag`.

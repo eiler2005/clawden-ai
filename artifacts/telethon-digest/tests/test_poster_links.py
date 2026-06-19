@@ -53,6 +53,44 @@ class PosterLinkTests(unittest.TestCase):
         lead_block = html.split("🗂 <b>Папки</b>", 1)[0]
         self.assertIn('<a href="https://t.me/c/100/10">→</a>', lead_block)
 
+    def test_header_separates_processed_and_selected_post_counts(self) -> None:
+        document = DigestDocument(
+            digest_type="interval",
+            title="Дайджест",
+            period_label="08:00–11:00",
+            lead=["MarketTwits: крипторынок слабее."],
+            new_glance=[],
+            must_read=[],
+            sections=[
+                DigestSection(
+                    folder="news",
+                    tier="A",
+                    folder_link=None,
+                    items=[
+                        DigestItem(
+                            channel="MarketTwits",
+                            channel_url=None,
+                            post_url="https://t.me/c/100/10",
+                            summary="Крипторынок слабее.",
+                            kind="signal",
+                        )
+                    ],
+                )
+            ],
+            low_signal=[],
+            stats=DigestStats(
+                channels_in_scope=366,
+                new_posts_seen=57,
+                posts_selected=16,
+                active_channels_seen=7,
+            ),
+            model_meta=ModelMeta(model_id="gpt-5.5", tier="medium"),
+        )
+
+        html = poster.render_digest_html(document)
+
+        self.assertIn("7 каналов, обработано 57 сообщений, в выпуске 16 постов", html)
+
 
 if __name__ == "__main__":
     unittest.main()

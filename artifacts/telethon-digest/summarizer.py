@@ -25,7 +25,6 @@ from models import (
 from omniroute_client import (
     call_chat_completion,
     extract_json_payload,
-    has_markdown_fences,
 )
 from pulse import build_pulse_lines
 
@@ -485,8 +484,6 @@ def _user_prompt(context: dict) -> str:
 
 def _has_retry_markers(raw_text: str) -> bool:
     lowered = raw_text.lower()
-    if has_markdown_fences(raw_text):
-        return True
     return any(marker in lowered for marker in _CLARIFICATION_MARKERS)
 
 
@@ -948,10 +945,6 @@ async def summarize(
             if not raw_text:
                 logger.warning("Empty digest response on attempt %s", attempt + 1)
                 continue
-            if _has_retry_markers(raw_text):
-                logger.warning("Digest response contained retry markers on attempt %s", attempt + 1)
-                continue
-
             try:
                 payload = extract_json_payload(raw_text)
                 return _validate_document_payload(
@@ -971,6 +964,12 @@ async def summarize(
                     posts=posts,
                 )
             except Exception as exc:
+                if _has_retry_markers(raw_text):
+                    logger.warning(
+                        "Digest response contained retry markers on attempt %s",
+                        attempt + 1,
+                    )
+                    continue
                 logger.warning("Digest validation failed on attempt %s: %s", attempt + 1, exc)
 
     logger.error("Falling back to deterministic local digest for %s", digest_type)

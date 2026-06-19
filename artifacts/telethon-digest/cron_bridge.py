@@ -119,6 +119,37 @@ def _release_run_lock(r: redis_lib.Redis, *, run_id: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+def _recover_interrupted_status() -> None:
+    status = _load_status()
+    if not status.get("running"):
+        return
+
+    run_id = str(status.get("run_id") or "")
+    tail = list(status.get("tail") or [])
+    tail.append("bridge restarted before digest_worker.py finished")
+    status.update(
+        {
+            "ok": False,
+            "running": False,
+            "finished_at": _utc_now(),
+            "exit_code": 130,
+            "interrupted": True,
+            "error": "bridge_restarted_while_pipeline_running",
+            "tail": tail[-12:],
+        }
+    )
+    _write_status(status)
+    logger.warning("Marked interrupted digest run_id=%s after bridge restart", run_id)
+
+    if not (REDIS_URL and run_id):
+        return
+    try:
+        r = _make_redis()
+        _release_run_lock(r, run_id=run_id)
+    except redis_lib.exceptions.RedisError as exc:
+        logger.error("Failed to release interrupted run lock run_id=%s: %s", run_id, exc)
+
+
 # HTTP handler
 # ---------------------------------------------------------------------------
 
@@ -485,6 +516,8 @@ def consumer_loop() -> None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    _recover_interrupted_status()
+
     if not REDIS_URL:
         logger.warning(
             "REDIS_URL is not set — consumer loops disabled, /trigger will return 503"

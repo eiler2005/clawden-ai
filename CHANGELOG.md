@@ -8,6 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Telegram Digest status and rendering clarity**: the cron bridge now marks an in-flight digest as
+  interrupted after a bridge restart instead of leaving `running=true` stale, releases the matching
+  Redis run lock on recovery, and the Telegram header now distinguishes processed source messages
+  from posts selected for the final issue. LLM summarization now parses fenced JSON before treating
+  retry/clarification markers as a failed response, reducing unnecessary deterministic fallback.
+- **OpenClaw runtime live upgrade**: upgraded the live derived gateway image to
+  `openclaw-with-iproute2:20260619-slim-2026.6.8`, based on the latest stable upstream
+  `OpenClaw 2026.6.8` release. The gateway was recreated, and the current service set was
+  brought up and revalidated after the recreate. Removed the stale live `telethon-digest`
+  service from the OpenClaw compose override so broad OpenClaw compose operations no longer
+  create an obsolete digest container.
 - **Telegram Digest scheduled channel coverage**: scheduled slot runs now backread by time window
   instead of prefiltering with per-channel cursors, keeping cursor watermarks monotonic while the
   digest header reports channels active inside the exact window. Low-coverage scheduled reads now

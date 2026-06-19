@@ -1186,6 +1186,23 @@ The cron sync script also sets a longer OpenClaw run timeout (`1800` seconds by
 default) so the cron run can wait for the digest to finish instead of reporting
 the bridge as "hung" while the worker is still processing a large window.
 
+**Header counters:** the digest header reports active channels in the exact source
+window, then raw messages processed in that window, then posts selected for the
+published issue. For example, `7 каналов, обработано 57 сообщений, в выпуске 16
+постов` means the reader saw 57 source messages from 7 active channels, and the
+score/dedup stage selected 16 direct post links for rendering.
+
+**Bridge status recovery:** on `telethon-digest-cron-bridge` startup, if the
+persisted status still says `running=true`, the bridge marks that previous run
+as `interrupted`, sets `exit_code=130`, and releases the matching Redis run lock.
+This prevents a container restart during `digest_worker.py --now` from leaving a
+stale running flag or blocking the next scheduled slot until lock TTL expiry.
+
+**LLM fallback:** summarizer responses wrapped in Markdown JSON fences are parsed
+as normal JSON before retry-marker checks. Deterministic local fallback should
+therefore mean the model route failed validation after retries, not merely that
+the model returned fenced JSON.
+
 On this deployment, `openclaw cron list` may hang even when the gateway itself is
 healthy. Because of that, the sync helpers patch the cron store (`jobs.json`)
 directly, back it up first, then restart the gateway container so it reloads the
