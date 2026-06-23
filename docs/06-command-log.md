@@ -1633,3 +1633,55 @@ Validation:
 - Running bridge imported `news_target=0.3` and `news_hard=0.35`.
 - `telethon-digest-cron-bridge` health returned `ok=true`, `running=false`.
 - Host cron still contains the five Moscow slots for `08:00`, `11:00`, `14:00`, `17:00`, and `21:00`.
+
+## 44. OpenClaw 2026.6.9 live upgrade and direct DeepSeek fallback repair
+
+Date: `2026-06-24`
+
+Goal:
+
+- Upgrade the live derived OpenClaw Gateway image from `OpenClaw 2026.6.8` to the current stable
+  `OpenClaw 2026.6.9`.
+- Verify that the Gateway starts, validates config, and can answer agent turns after the upgrade.
+- Repair the interactive fallback route without reintroducing `omniroute/light` into Gateway-level
+  fallback.
+
+Actions:
+
+- Verified the latest stable upstream target as `OpenClaw 2026.6.9`; the newer
+  `2026.6.10-beta.2` release was prerelease-only and was not used for production.
+- Updated the derived image template from `ghcr.io/openclaw/openclaw:2026.6.8-slim` to
+  `ghcr.io/openclaw/openclaw:2026.6.9-slim`.
+- Backed up the live `/opt/openclaw/.env` and `/opt/openclaw/Dockerfile.iproute2`, installed the new
+  Dockerfile, rebuilt `openclaw-with-iproute2:20260624-slim-2026.6.9`, updated `OPENCLAW_IMAGE`, and
+  recreated `openclaw-gateway`.
+- Restored DeepSeek auth from the existing runtime env SecretRef and added the sanitized
+  `deepseek-direct` provider to the tracked config template.
+- Replaced the interactive fallback from `deepseek/deepseek-v4-flash` with
+  `deepseek-direct/deepseek-chat`. On OpenClaw 2026.6.9, the built-in DeepSeek route returned an
+  unknown-model error, while the direct OpenAI-compatible DeepSeek route succeeded with the bare
+  `deepseek-chat` model id.
+
+Validation:
+
+- `openclaw --version` returned `OpenClaw 2026.6.9` in the derived image and in the running Gateway
+  container.
+- `command -v ip` inside `openclaw-gateway` returned `/usr/bin/ip`.
+- `/healthz` returned `{"ok":true,"status":"live"}` and `openclaw-gateway` returned to Docker
+  `healthy`.
+- `openclaw config validate` returned `Config valid: ~/.openclaw/openclaw.json`.
+- `openclaw models status --probe --probe-provider deepseek-direct` returned `ok` for
+  `deepseek-direct/deepseek-chat`.
+- Explicit agent smoke with `--model deepseek-direct/deepseek-chat` returned the requested
+  `OK_OPENCLAW_2026_6_9` marker.
+- Default-route agent smoke returned the requested `OK_DEFAULT_ROUTE_2026_6_9` marker after falling
+  back from the `openai/gpt-5.5` primary route to `deepseek-direct/deepseek-chat`.
+- Current containers were up after the Gateway recreate, including `openclaw-gateway`, `omniroute`,
+  `telethon-digest-cron-bridge`, `signals-bridge`, both AgentMail bridges, `wiki-import`, and Redis.
+
+Current caveat:
+
+- OpenAI primary is not counted healthy yet after the 2026.6.9 upgrade: the new auth store did not
+  expose a usable `openai:*` OAuth profile, so default-route success currently depends on the direct
+  DeepSeek fallback. Re-auth OpenAI from the Gateway container before treating `openai/gpt-5.5` as
+  primary-healthy again.

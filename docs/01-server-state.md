@@ -210,7 +210,7 @@ OpenClaw is not running from the untouched upstream image anymore.
 
 Last confirmed healthy image:
 
-- `openclaw-with-iproute2:20260619-slim-2026.6.8`
+- `openclaw-with-iproute2:20260624-slim-2026.6.9`
 
 Previous confirmed healthy images:
 
@@ -219,8 +219,9 @@ Previous confirmed healthy images:
 - `openclaw-with-iproute2:20260528-slim-2026.5.26`
 - `openclaw-with-iproute2:20260528-slim-2026.5.27`
 - `openclaw-with-iproute2:20260606-slim-2026.6.1`
+- `openclaw-with-iproute2:20260619-slim-2026.6.8`
 
-The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.6.8`; live validation is recorded in the command log after deployment.
+The current image is prepared for `/opt/openclaw` and targets `OpenClaw 2026.6.9`; live validation is recorded in the command log after deployment.
 
 Reason:
 
@@ -230,10 +231,10 @@ Reason:
 - Whisper, ffmpeg, and the extra Python toolchain were intentionally removed from the derived image on 2026-04-12 because they added roughly 2+ GB and were not being used
 - voice transcription remains a future option, but it is not part of the current production runtime
 - the host OS remains lean and does not carry duplicate runtime toolchains for OpenClaw features
-- current OpenClaw CLI version in that image: `2026.6.8`
-- bundled Codex plugin registry version: `2026.6.8`; stale managed npm `codex@2026.5.12` was removed after the earlier upgrade
+- current OpenClaw CLI version in that image: `2026.6.9`
+- bundled Codex plugin registry version: `2026.6.9`; stale managed npm `codex@2026.5.12` was removed after the earlier upgrade
 
-Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.8`.
+Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.9`.
 
 ## Workspace state
 
@@ -319,7 +320,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
   - `medium` → Kiro/claude-3-5-haiku-20241022 → Gemini/gemini-2.0-flash → OpenRouter/qwen3-30b-a3b
   - `light` → OpenRouter free model pool → OpenRouter DeepSeek free → OpenRouter Qwen3 8B; optional direct DeepSeek reserve is available when `DEEPSEEK_API_KEY` is present
 - LightRAG integration: active again for API-based retrieval. Live LightRAG uses direct DeepSeek for extraction after OmniRoute `light` timed out, and `wiki-import` local embeddings for vector work after Gemini/OpenRouter credentials/credits failed. `scripts/sync-omniroute-openrouter-provider.sh` remains available if a paid OpenRouter embeddings route is restored. Codex/OpenAI OAuth remains a Gateway text-inference route, not an embeddings API route; DeepSeek remains an LLM reserve only.
-- OpenClaw integration: **active** — registered as `omniroute` provider in `openclaw.json`; live Gateway policy lists `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve. After the `2026.6.1` upgrade, direct `openai/gpt-5.5` CLI smokes still report a provider-auth selection error with ChatGPT/Codex OAuth, so bridge LLM work currently relies on the fallback chain until the OpenAI-primary auth mapping is repaired.
+- OpenClaw integration: **active** — `omniroute` remains available for digest/signals/RAG service flows, while the interactive Gateway policy lists `openai/gpt-5.5` as primary and `deepseek-direct/deepseek-chat` as direct reserve. After the `2026.6.9` upgrade, the default-route smoke completed through the DeepSeek fallback because the new auth store did not expose a usable `openai:*` OAuth profile; OpenAI primary re-auth remains a follow-up.
 - OpenClaw compaction reserve: `agents.defaults.compaction.reserveTokensFloor=20000` in the live Gateway config, added after the 2026-05-28 upgrade to keep long tool-heavy sessions recoverable.
 - Бенька model selection: rule-based heuristics in `workspace/AGENTS.md` — code/complex → smart, chat → medium, lightweight lookups/classification → light
 - auth: `REQUIRE_API_KEY` is redacted on the API port; dashboard password-protected; API key stored in `/opt/openclaw/.env`

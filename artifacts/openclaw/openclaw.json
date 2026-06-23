@@ -78,13 +78,43 @@
       "dangerouslyAllowPrivateNetwork": false
     }
   },
+  "models": {
+    "providers": {
+      "deepseek-direct": {
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKey": {
+          "source": "env",
+          "provider": "default",
+          "id": "DEEPSEEK_API_KEY"
+        },
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "deepseek-chat",
+            "name": "DeepSeek Chat Direct",
+            "api": "openai-completions",
+            "reasoning": false,
+            "input": ["text"],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 131072,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
   "agents": {
     "defaults": {
       "workspace": "/home/node/.openclaw/workspace",
       "model": {
         "primary": "openai/gpt-5.5",
         "fallbacks": [
-          "deepseek/deepseek-v4-flash"
+          "deepseek-direct/deepseek-chat"
         ]
       },
       "memorySearch": {

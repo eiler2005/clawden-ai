@@ -137,15 +137,20 @@ when UDP/123 is available again.
 
 ## OpenAI Codex auth recovery
 
-Current live policy: OpenAI via OpenClaw is the normal route. The Gateway primary route is
-`openai/gpt-5.5`, with `deepseek/deepseek-v4-flash` as the direct reserve. Do not put
-`omniroute/light` in the interactive Gateway fallback chain: after the 2026.6.1 upgrade it could
-return `Cannot continue from message role: assistant` after compaction retries, while DeepSeek
-completed the same Telegram smoke directly.
+Current live policy: OpenAI via OpenClaw remains the intended normal route. The Gateway primary route
+is `openai/gpt-5.5`, with `deepseek-direct/deepseek-chat` as the direct reserve. `deepseek-direct` is
+a custom OpenAI-compatible provider that uses the bare DeepSeek model id and an env SecretRef for
+`DEEPSEEK_API_KEY`.
 
-OpenClaw 2026.6.1 uses the canonical `openai/*` model route plus `openai:*` auth profiles. Avoid
-new `openai-codex:*` entries in `auth.order.openai`; they can leave `openclaw models status --probe`
-with every usable OpenAI OAuth profile marked `Excluded by auth.order for this provider`.
+Do not put `omniroute/light` in the interactive Gateway fallback chain: after the 2026.6.1 upgrade it
+could return `Cannot continue from message role: assistant` after compaction retries, while DeepSeek
+completed the same Telegram smoke directly. Also do not use the built-in `deepseek/deepseek-v4-flash`
+route as the current interactive reserve on OpenClaw 2026.6.9; the live probe failed with an unknown
+model response, while the direct DeepSeek-compatible `deepseek-chat` route succeeded.
+
+OpenClaw 2026.6.9 uses the canonical `openai/*` model route plus `openai:*` auth profiles. Avoid new
+`openai-codex:*` entries in `auth.order.openai`; they can leave `openclaw models status --probe` with
+every usable OpenAI OAuth profile marked `Excluded by auth.order for this provider`.
 
 Symptom in Telegram:
 
@@ -212,13 +217,13 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
-Verify routing:
+Verify the current safety route:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   sudo docker compose exec -T openclaw-gateway sh -lc "
-    openclaw models status --probe --probe-provider openai &&
+    openclaw models status --probe --probe-provider deepseek-direct &&
     openclaw config get agents.defaults.model --json
   "
 '
@@ -227,16 +232,16 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 Expected essentials:
 
 ```text
-Runtime auth
-- openai via codex uses openai ... status=usable
-
 Auth probes
-- openai/gpt-5.5 ... openai:default ... ok
+- deepseek-direct/deepseek-chat ... ok
 
 Model policy
 - primary: openai/gpt-5.5
-- fallback: deepseek/deepseek-v4-flash
+- fallback: deepseek-direct/deepseek-chat
 ```
+
+After OpenAI re-auth, run `openclaw models status --probe --probe-provider openai` and require an
+`openai/gpt-5.5 ... ok` probe before treating the primary route as healthy again.
 
 Important: if the Telegram topic still posts an auto-compaction warning after auth is fixed, reset
 only the affected `sessions.json` mappings (`agent:main:main` and the topic session key), preserve

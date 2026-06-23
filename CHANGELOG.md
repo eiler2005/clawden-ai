@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw runtime live upgrade**: upgraded the tracked target for the live derived gateway image
+  to `openclaw-with-iproute2:20260624-slim-2026.6.9`, based on the latest stable upstream
+  `OpenClaw 2026.6.9` release. The live Gateway upgrade, `deepseek-direct/deepseek-chat` fallback
+  repair, and validation are recorded in the command log.
 - **Telegram Digest content mix**: `telethon-digest` now caps the `news` folder during source
   selection, targeting about 30% and hard-capping at 35% when other allowlisted folders have enough
   scored candidates. The cap expands automatically when non-news folders are sparse, keeping quiet
@@ -46,7 +50,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **LightRAG route split**: registered DeepSeek as the final OmniRoute `light` LLM reserve for RAG answer generation, then moved the live LightRAG extraction hop to direct `deepseek-chat` after OmniRoute `light` timed out. Retrieval now uses `wiki-import` local 3072-dimensional embeddings because Gemini/OpenRouter embeddings are blocked by quota/credits. DeepSeek is explicitly documented and smoke-tested as not being an embeddings provider.
 - **Telethon Digest scheduler**: moved live digest scheduling from OpenClaw agent-turn Cron Jobs to `/etc/cron.d/telethon-digest`, which calls `/opt/telethon-digest/trigger-digest.sh` directly. This avoids false-positive OpenClaw cron runs when the lightweight cron context has no shell tool available.
 - **OpenClaw runtime target**: updated the redacted OpenClaw image template from `openclaw-with-iproute2:20260412-slim-2026.4.11` (`OpenClaw 2026.4.11`) to `openclaw-with-iproute2:20260516-slim-2026.5.12`, based on the GitHub latest stable release and GHCR `latest` image reporting `OpenClaw 2026.5.12`. Added a tracked `artifacts/openclaw/Dockerfile.iproute2` template for rebuilding the minimal derived image with only `iproute2`; the live `/opt/openclaw` gateway now runs this image.
-- **OpenClaw model policy**: live Gateway uses `openai/gpt-5.5` as primary, then `omniroute/light`, then `deepseek/deepseek-v4-flash` as final reserve. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
+- **OpenClaw model policy**: live Gateway uses `openai/gpt-5.5` as primary and direct DeepSeek as reserve. Builtin `memorySearch` remains disabled while external embedding limits are unstable; LightRAG remains the intended retrieval layer.
 - **OpenClaw GPT model ref**: replaced active legacy GPT/OpenAI Codex references with canonical OpenClaw `openai/gpt-5.5` fallback docs and footer labels, matching the current live model catalog and OpenClaw provider docs.
 - **OpenClaw Codex catalog hygiene**: disabled live Codex model discovery, pruned older static Codex catalog entries in the derived-image template, and cleaned the deployed `signals` topic session state so stale GPT footer context no longer survives gateway restarts.
 - **LightRAG smoke script**: `scripts/smoke-check-knowledge.sh` now uses `/query/data` with explicit keyword hints and no reranker so retrieval checks can validate references and source links without waiting on answer synthesis.
