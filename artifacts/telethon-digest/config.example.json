@@ -26,6 +26,14 @@
     "news": null,
     "fintech": null
   },
+  "content_mix": {
+    "capped_folders": {
+      "news": {
+        "target_share": 0.3,
+        "hard_share": 0.35
+      }
+    }
+  },
   "persistence": {
     "enabled": true,
     "obsidian_root": "Telegram Digest",

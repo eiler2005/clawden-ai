@@ -9,6 +9,8 @@ score = folder_tier_priority
 LLM dedup is handled by dedup.py.
 LLM summarization is handled by summarizer.py.
 """
+from __future__ import annotations
+
 import logging
 import re
 from collections import defaultdict
@@ -17,6 +19,15 @@ from typing import List
 from models import Post
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_CONTENT_MIX = {
+    "capped_folders": {
+        "news": {
+            "target_share": 0.30,
+            "hard_share": 0.35,
+        },
+    },
+}
 
 # ── Relevance keywords ──────────────────────────────────────────────────────
 _HIGH_RELEVANCE = re.compile(
@@ -107,6 +118,66 @@ def _tier_priority(folder_name: str, config: dict) -> int:
 
 # ── Main scoring pass ────────────────────────────────────────────────────────
 
+def _folder_key(folder_name: str) -> str:
+    return (folder_name or "").casefold()
+
+
+def _share(value, default: float) -> float:
+    try:
+        share = float(value)
+    except (TypeError, ValueError):
+        return default
+    return min(max(share, 0.0), 1.0)
+
+
+def _content_mix_limits(posts: list[Post], top_n: int, config: dict) -> dict[str, int]:
+    mix_config = config.get("content_mix", _DEFAULT_CONTENT_MIX)
+    if not isinstance(mix_config, dict):
+        return {}
+
+    capped_folders = mix_config.get("capped_folders", {})
+    if not isinstance(capped_folders, dict):
+        return {}
+
+    limits: dict[str, int] = {}
+    for folder_name, folder_config in capped_folders.items():
+        if not folder_name:
+            continue
+        folder_config = folder_config if isinstance(folder_config, dict) else {}
+        target_share = _share(folder_config.get("target_share"), 0.30)
+        hard_share = max(target_share, _share(folder_config.get("hard_share"), 0.35))
+        target_cap = max(1, int(top_n * target_share))
+        hard_cap = max(target_cap, int(top_n * hard_share))
+        folder = _folder_key(folder_name)
+        other_available = sum(1 for post in posts if _folder_key(post.folder_name) != folder)
+        fill_cap = max(0, top_n - other_available)
+        limits[folder] = min(top_n, max(hard_cap, fill_cap))
+    return limits
+
+
+def _content_mix_allows(
+    post: Post,
+    counts: dict[str, int],
+    limits: dict[str, int],
+) -> bool:
+    folder = _folder_key(post.folder_name)
+    limit = limits.get(folder)
+    return limit is None or counts[folder] < limit
+
+
+def _add_selected(
+    post: Post,
+    selected: list[Post],
+    channel_counts: dict[int, int],
+    folder_counts: dict[str, int],
+    mix_counts: dict[str, int],
+) -> None:
+    selected.append(post)
+    channel_counts[post.channel_id] += 1
+    folder_counts[post.folder_name] += 1
+    mix_counts[_folder_key(post.folder_name)] += 1
+
+
 def score_posts(posts: List[Post], config: dict) -> List[Post]:
     configured_pin_boost = config.get("pin_boost", 4)
     configured_min_score = config.get("min_score", 2)
@@ -144,6 +215,8 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
     selected: list[Post] = []
     channel_counts: dict[int, int] = defaultdict(int)
     folder_counts: dict[str, int] = defaultdict(int)
+    mix_counts: dict[str, int] = defaultdict(int)
+    content_mix_limits = _content_mix_limits(filtered, top_n, config)
     folder_soft_cap = max(3, min(6, top_n // 6))
     folder_hard_cap = max(folder_soft_cap + 1, min(9, top_n // 4))
     primary_target = max(1, int(top_n * 0.7))
@@ -171,9 +244,9 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
             continue
         if len(selected) >= coverage_limit:
             break
-        selected.append(post)
-        channel_counts[post.channel_id] += 1
-        folder_counts[post.folder_name] += 1
+        if not _content_mix_allows(post, mix_counts, content_mix_limits):
+            continue
+        _add_selected(post, selected, channel_counts, folder_counts, mix_counts)
 
     for post in filtered:
         if len(selected) >= primary_target:
@@ -184,9 +257,9 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
             continue
         if folder_counts[post.folder_name] >= folder_soft_cap:
             continue
-        selected.append(post)
-        channel_counts[post.channel_id] += 1
-        folder_counts[post.folder_name] += 1
+        if not _content_mix_allows(post, mix_counts, content_mix_limits):
+            continue
+        _add_selected(post, selected, channel_counts, folder_counts, mix_counts)
 
     for post in filtered:
         if len(selected) >= top_n:
@@ -197,9 +270,9 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
             continue
         if folder_counts[post.folder_name] >= folder_hard_cap:
             continue
-        selected.append(post)
-        channel_counts[post.channel_id] += 1
-        folder_counts[post.folder_name] += 1
+        if not _content_mix_allows(post, mix_counts, content_mix_limits):
+            continue
+        _add_selected(post, selected, channel_counts, folder_counts, mix_counts)
 
     for post in filtered:
         if len(selected) >= top_n:
@@ -208,9 +281,9 @@ def score_posts(posts: List[Post], config: dict) -> List[Post]:
             continue
         if channel_counts[post.channel_id] >= 3:
             continue
-        selected.append(post)
-        channel_counts[post.channel_id] += 1
-        folder_counts[post.folder_name] += 1
+        if not _content_mix_allows(post, mix_counts, content_mix_limits):
+            continue
+        _add_selected(post, selected, channel_counts, folder_counts, mix_counts)
 
     logger.info(
         "Scoring: selected %s posts with diversity pass (target=%s, unique_channels=%s, folders=%s)",

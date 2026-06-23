@@ -1601,3 +1601,35 @@ Validation:
 - Current containers were up: `openclaw-gateway`, `omniroute`, `telethon-digest-cron-bridge`,
   `signals-bridge`, `agentmail-email-bridge`, `agentmail-work-email-bridge`, `wiki-import`, and
   `lightrag`.
+
+## 43. Telegram Digest content-mix cap for news-heavy slots
+
+Date: `2026-06-23`
+
+Problem:
+
+- The scored Telegram Digest source pool could become dominated by the `news` folder when news
+  channels were active, crowding out `evolution`, `startups`, `growth.me`, `fintech`, `investing`,
+  `work`, `eb1`, `гребенюк`, `personal`, and `faang`.
+- The existing folder soft/hard caps improved diversity in early selection passes, but the final
+  fallback pass could still refill the issue from the same noisy folder.
+
+Actions:
+
+- Added a default `content_mix` cap in `scorer.py`: `news` targets 30% and hard-caps at 35% when
+  enough other allowlisted folders have scored candidates.
+- Kept the cap elastic: when non-news candidates are sparse, `news` can exceed 35% to fill the
+  selected source pool instead of producing a thin digest.
+- Documented the runtime config shape in `config.example.json`, README, server-state, operations,
+  and architecture docs.
+- Redeployed `telethon-digest` and restarted `telethon-digest-cron-bridge`.
+
+Validation:
+
+- Local `.venv` test run passed: `20 tests OK`.
+- Local compile/json checks passed for `artifacts/telethon-digest`.
+- Diff sensitive-value scan found no live credential additions.
+- Server-side test run in the deployed image with mounted artifact passed: `20 tests OK`.
+- Running bridge imported `news_target=0.3` and `news_hard=0.35`.
+- `telethon-digest-cron-bridge` health returned `ok=true`, `running=false`.
+- Host cron still contains the five Moscow slots for `08:00`, `11:00`, `14:00`, `17:00`, and `21:00`.

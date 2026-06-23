@@ -8,6 +8,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Telegram Digest content mix**: `telethon-digest` now caps the `news` folder during source
+  selection, targeting about 30% and hard-capping at 35% when other allowlisted folders have enough
+  scored candidates. The cap expands automatically when non-news folders are sparse, keeping quiet
+  slots populated instead of dropping strong posts.
 - **Telegram Digest status and rendering clarity**: the cron bridge now marks an in-flight digest as
   interrupted after a bridge restart instead of leaving `running=true` stale, releases the matching
   Redis run lock on recovery, and the Telegram header now distinguishes processed source messages

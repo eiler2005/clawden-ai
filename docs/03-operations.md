@@ -1281,9 +1281,22 @@ Read scope config (`config.json` — not committed):
   "read_only": true,
   "require_explicit_allowlist": true,
   "read_broadcast_channels_only": true,
-  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "work", "eb1", "гребенюк", "personal", "faang"]
+  "allowed_folder_names": ["news", "evolution", "startups", "growth.me", "fintech", "investing", "work", "eb1", "гребенюк", "personal", "faang"],
+  "content_mix": {
+    "capped_folders": {
+      "news": {"target_share": 0.3, "hard_share": 0.35}
+    }
+  }
 }
 ```
+
+Content mix selection:
+
+- `content_mix.capped_folders.news` is also the code default, so older live `config.json` files start using the rule after deploy even before the key is written into config.
+- The rule applies after score/min-score filtering and during the diversity selection passes. It does not remove `news` from the Telethon read allowlist.
+- When non-news folders have enough scored candidates, `news` stays around 30% and cannot exceed 35% of the selected source pool.
+- When non-news folders are sparse for a slot, the effective cap expands and strong `news` posts fill the remaining `top_posts_for_llm` budget.
+- To disable the cap intentionally, set `"content_mix": {"capped_folders": {}}` in `/opt/telethon-digest/config.json`.
 
 ### Run digest immediately
 

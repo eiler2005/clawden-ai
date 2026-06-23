@@ -452,6 +452,15 @@ The digest path still runs two consumer threads in the same `telethon-digest-cro
 container; `signals-bridge` is a separate standalone worker with its own internal scheduler.
 `integration-bus-redis` (Redis 7 Alpine) is a standalone project at `/opt/integration-bus/`.
 
+### Telegram Digest source mix
+
+`telethon-digest/scorer.py` keeps the source pool broad before LLM summarization:
+
+- `news` remains in the read allowlist and Tier A scoring, but has a default content-mix target of 30% and hard cap of 35% during selection.
+- The cap is enforced across the coverage, primary, secondary, and final fallback selection passes, so a noisy folder cannot refill the issue after folder diversity caps have run.
+- The cap is elastic: if other allowlisted folders do not have enough scored candidates for the slot, `news` can exceed 35% to keep the digest populated.
+- Runtime override lives in `/opt/telethon-digest/config.json` under `content_mix.capped_folders`; tracked `config.example.json` documents the shape.
+
 ### `Пульс дня` ranking
 
 `Пульс дня` now behaves like a compact editor, not a raw repetition counter.

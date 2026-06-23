@@ -46,6 +46,7 @@ Everything is observable through a Telegram supergroup with 11 dedicated topics 
 **Telegram channel digest**
 - Reads 150–200 Telegram channels through a personal Telethon session (not a bot — full channel access)
 - Clusters and summarizes with a medium-tier model, posts 5× daily
+- Keeps the scored issue mixed: `news` targets about 30% and is capped at 35% when other allowlisted folders have enough candidates; quiet non-news windows can still fill from `news`
 
 **Email digests**
 - Polls two inboxes (personal + work) on a schedule, threads notable messages, and posts structured recaps to dedicated Telegram topics; `work-email` additionally splits the window into actionable vs informational triage

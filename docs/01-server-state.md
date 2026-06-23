@@ -342,6 +342,7 @@ During gateway cold starts or config-triggered restarts, `docker compose ps` can
 - schedule: host cron file `/etc/cron.d/telethon-digest` uses UTC cron times `05:00`, `08:00`, `11:00`, `14:00`, `18:00` to produce Moscow slots `08:00`, `11:00`, `14:00`, `17:00`, `21:00`; OpenClaw Telethon agent-turn cron jobs are disabled because the lightweight cron context no longer exposes shell tools reliably
 - read scope: application-enforced allowlist, `read_only=true`, `read_broadcast_channels_only=true`
 - current allowlist: `news`, `evolution`, `startups`, `growth.me`, `fintech`, `investing`, `work`, `eb1`, `гребенюк`, `personal`, `faang`
+- content mix: `news` is selected toward a 30% target and capped at 35% when enough other allowlisted folders have scored candidates; if other folders are quiet, the cap expands so the digest can still fill from strong news posts
 - catalog: 18 folders, 499 dialogs, 426 broadcast channels recorded; 240 broadcast channels selected by current allowlist
 - bridge endpoints: `GET /health`, `GET /status`, `POST /trigger`
 - status: bridge running as `telethon-digest-cron-bridge`; job timing managed by host cron calling `/opt/telethon-digest/trigger-digest.sh`
