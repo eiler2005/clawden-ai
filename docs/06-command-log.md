@@ -1679,9 +1679,44 @@ Validation:
 - Current containers were up after the Gateway recreate, including `openclaw-gateway`, `omniroute`,
   `telethon-digest-cron-bridge`, `signals-bridge`, both AgentMail bridges, `wiki-import`, and Redis.
 
-Current caveat:
+Initial caveat, later resolved in Section 45:
 
 - OpenAI primary is not counted healthy yet after the 2026.6.9 upgrade: the new auth store did not
   expose a usable `openai:*` OAuth profile, so default-route success currently depends on the direct
-  DeepSeek fallback. Re-auth OpenAI from the Gateway container before treating `openai/gpt-5.5` as
-  primary-healthy again.
+  DeepSeek fallback. Section 45 resolved this by importing the legacy auth profiles into SQLite and
+  pinning the OpenAI provider to ChatGPT/Codex OAuth transport.
+
+## 45. OpenAI primary restore after 2026.6.9 SQLite auth migration
+
+Date: `2026-06-24`
+
+Problem:
+
+- `openclaw models status --probe --probe-provider openai` initially reported no usable OpenAI
+  profile in the new per-agent SQLite auth store, while legacy `auth-profiles.json` still existed.
+- Importing the legacy profiles made `openai:default` probe successfully, but default agent turns
+  still fell back to `deepseek-direct/deepseek-chat` because `openai/gpt-5.5` resolved to the direct
+  OpenAI Platform `openai-responses` transport, which requires an API key and rejects OAuth.
+
+Actions:
+
+- Backed up the live agent auth files before repair.
+- Imported legacy `auth-profiles.json` and `auth-state.json` into
+  `agents/main/agent/openclaw-agent.sqlite` with OpenClaw's own auth-profile SQLite migration
+  function. The migration created `.sqlite-import.*.bak` backups and reported no warnings.
+- Pinned `models.providers.openai` to ChatGPT/Codex OAuth transport:
+  `baseUrl=https://chatgpt.com/backend-api/codex`, `api=openai-chatgpt-responses`, `auth=oauth`.
+- Recreated `openclaw-gateway` so the running service loaded the repaired auth store and provider
+  transport.
+
+Validation:
+
+- `openclaw models auth list --provider openai --json` returned the restored OpenAI profiles from
+  `openclaw-agent.sqlite`.
+- `openclaw models status --probe --probe-provider openai` returned `ok` for `openai/gpt-5.5` with
+  the `openai:default` OAuth profile.
+- `/healthz` returned `{"ok":true,"status":"live"}` and `openclaw-gateway` returned to Docker
+  `healthy`.
+- Final default-route agent smoke returned `OK_OPENAI_PRIMARY_CODEX_TRANSPORT_2026_06_24` with
+  `provider=openai`, `model=gpt-5.5`, and `fallbackAttempts=0`.
+- `deepseek-direct/deepseek-chat` remains configured as the direct reserve fallback.

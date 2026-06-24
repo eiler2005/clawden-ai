@@ -148,9 +148,25 @@ completed the same Telegram smoke directly. Also do not use the built-in `deepse
 route as the current interactive reserve on OpenClaw 2026.6.9; the live probe failed with an unknown
 model response, while the direct DeepSeek-compatible `deepseek-chat` route succeeded.
 
-OpenClaw 2026.6.9 uses the canonical `openai/*` model route plus `openai:*` auth profiles. Avoid new
-`openai-codex:*` entries in `auth.order.openai`; they can leave `openclaw models status --probe` with
-every usable OpenAI OAuth profile marked `Excluded by auth.order for this provider`.
+OpenClaw 2026.6.9 uses the canonical `openai/*` model route plus `openai:*` auth profiles in the
+per-agent SQLite auth store. Avoid new `openai-codex:*` entries in `auth.order.openai`; they can
+leave `openclaw models status --probe` with every usable OpenAI OAuth profile marked
+`Excluded by auth.order for this provider`.
+
+The OpenAI provider must stay pinned to ChatGPT/Codex OAuth transport:
+
+```json
+{
+  "baseUrl": "https://chatgpt.com/backend-api/codex",
+  "auth": "oauth",
+  "api": "openai-chatgpt-responses",
+  "models": []
+}
+```
+
+Without that provider transport, `openai/gpt-5.5` can resolve to the direct OpenAI Platform
+`openai-responses` path, where OAuth is rejected and the agent falls back with
+`No API key found for provider "openai"`.
 
 Symptom in Telegram:
 
@@ -171,30 +187,42 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
-First run the built-in repair and validate the config:
+If `openclaw models auth list --provider openai --json` returns no profiles after an upgrade but
+legacy `auth-profiles.json` still exists, import it into the SQLite store with the OpenClaw runtime
+migration. Do not run broad `openclaw doctor --fix` unless you are ready to accept unrelated doctor
+repairs such as skill toggles or session-state migrations.
 
 ```bash
-ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
-  sudo docker compose exec openclaw-gateway sh -lc "
-    openclaw doctor --fix &&
-    openclaw config validate
+  sudo docker compose exec -T openclaw-gateway node --input-type=module -e "
+    import fs from 'node:fs';
+    import { n as migrate } from '/app/dist/doctor-auth-flat-profiles-ojJQmduz.js';
+    const cfg = JSON.parse(fs.readFileSync('/home/node/.openclaw/openclaw.json', 'utf8'));
+    const prompter = { confirmAutoFix: async function () { return true; } };
+    const result = await migrate({ cfg, env: process.env, prompter, now: function () { return Date.now(); } });
+    console.log(JSON.stringify({
+      detected: result.detected.length,
+      changes: result.changes,
+      warnings: result.warnings
+    }, null, 2));
   "
 '
 ```
 
-Then make both auth-order layers point at the canonical `openai:*` profile ids. The first command
-updates `openclaw.json`; the second updates the agent-scoped override in
-`agents/main/agent/auth-state.json`:
+Then pin the provider transport and make both auth-order layers point at the canonical `openai:*`
+profile ids. The first command updates `openclaw.json`; the second updates the agent-scoped override:
 
 ```bash
 ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   sudo docker compose exec openclaw-gateway sh -lc "
+    openclaw config set models.providers.openai \
+      '\''{\"auth\":\"oauth\",\"baseUrl\":\"https://chatgpt.com/backend-api/codex\",\"api\":\"openai-chatgpt-responses\",\"models\":[]}'\'' --strict-json &&
     openclaw config set auth.order.openai \
-      '\''[\"openai:default\",\"openai:owner@example.invalid\"]'\'' --strict-json &&
+      '\''[\"openai:default\"]'\'' --strict-json &&
     openclaw models auth order set --provider openai \
-      openai:default openai:owner@example.invalid
+      openai:default
   "
 '
 ```
@@ -205,8 +233,9 @@ Use the actual profile ids shown by:
 openclaw models auth list --provider openai
 ```
 
-Do not print token values in logs or committed docs. If no usable `openai:*` OAuth profile exists,
-re-auth from the gateway container with `openclaw models auth login --provider openai`.
+Do not print token values in logs or committed docs. If no usable `openai:*` OAuth profile exists
+after SQLite import, re-auth from the gateway container with
+`openclaw models auth login --provider openai`.
 
 Then restart the gateway so the running service drops the old token state:
 
@@ -217,12 +246,13 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
-Verify the current safety route:
+Verify the primary route and reserve route:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
   sudo docker compose exec -T openclaw-gateway sh -lc "
+    openclaw models status --probe --probe-provider openai &&
     openclaw models status --probe --probe-provider deepseek-direct &&
     openclaw config get agents.defaults.model --json
   "
@@ -233,6 +263,7 @@ Expected essentials:
 
 ```text
 Auth probes
+- openai/gpt-5.5 ... openai:default ... ok
 - deepseek-direct/deepseek-chat ... ok
 
 Model policy
@@ -240,8 +271,8 @@ Model policy
 - fallback: deepseek-direct/deepseek-chat
 ```
 
-After OpenAI re-auth, run `openclaw models status --probe --probe-provider openai` and require an
-`openai/gpt-5.5 ... ok` probe before treating the primary route as healthy again.
+Finish with a real default-route agent smoke and require `fallbackAttempts=0` before treating the
+primary route as healthy.
 
 Important: if the Telegram topic still posts an auto-compaction warning after auth is fixed, reset
 only the affected `sessions.json` mappings (`agent:main:main` and the topic session key), preserve

@@ -98,10 +98,10 @@ Upgrade history:
 - gateway auth mode: `token`
 - trusted proxies: localhost and Docker bridge
 - builtin memorySearch: disabled while external embedding limits are unstable; retrieval should use LightRAG once its embedding provider is healthy
-- model routing: `openai/gpt-5.5` primary, `deepseek-direct/deepseek-chat` direct fallback. After
-  the `2026.6.9` upgrade, the default-route smoke succeeded through the direct DeepSeek fallback
-  while OpenAI OAuth re-auth remains a follow-up because the new auth store did not expose a usable
-  `openai:*` profile.
+- model routing: `openai/gpt-5.5` primary, `deepseek-direct/deepseek-chat` direct fallback. The
+  OpenAI provider is pinned to ChatGPT/Codex OAuth transport
+  (`https://chatgpt.com/backend-api/codex`, `openai-chatgpt-responses`) so `gpt-5.5` uses the
+  restored OAuth profile instead of the direct OpenAI Platform API-key path.
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`

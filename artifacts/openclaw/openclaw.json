@@ -80,6 +80,12 @@
   },
   "models": {
     "providers": {
+      "openai": {
+        "baseUrl": "https://chatgpt.com/backend-api/codex",
+        "auth": "oauth",
+        "api": "openai-chatgpt-responses",
+        "models": []
+      },
       "deepseek-direct": {
         "baseUrl": "https://api.deepseek.com/v1",
         "apiKey": {

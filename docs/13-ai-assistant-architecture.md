@@ -58,11 +58,12 @@ User message
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
 This is channel-agnostic — applies to all surfaces (Telegram, web UI, API).
-OpenAI `openai/gpt-5.5` is the primary Gateway route. `deepseek-direct/deepseek-chat` is the direct
-reserve for interactive Gateway turns. OmniRoute remains available as a separate service route for
-digest/signals/RAG flows, but it is intentionally not in the interactive Gateway fallback chain after
-the 2026.6.1 continuation failure (`Cannot continue from message role: assistant`) seen in Telegram
-smokes.
+OpenAI `openai/gpt-5.5` is the primary Gateway route and uses ChatGPT/Codex OAuth transport
+(`openai-chatgpt-responses`), not the direct OpenAI Platform API-key path. `deepseek-direct/deepseek-chat`
+is the direct reserve for interactive Gateway turns. OmniRoute remains available as a separate service
+route for digest/signals/RAG flows, but it is intentionally not in the interactive Gateway fallback
+chain after the 2026.6.1 continuation failure (`Cannot continue from message role: assistant`) seen
+in Telegram smokes.
 
 ### OmniRoute tiers
 

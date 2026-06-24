@@ -8,6 +8,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **OpenClaw OpenAI primary restore**: imported the legacy OpenAI auth profile JSON into the
+  `openclaw-agent.sqlite` auth store, set the tracked OpenAI provider to ChatGPT/Codex OAuth
+  transport, and revalidated the default Gateway route on `openai/gpt-5.5` without fallback.
 - **OpenClaw runtime live upgrade**: upgraded the tracked target for the live derived gateway image
   to `openclaw-with-iproute2:20260624-slim-2026.6.9`, based on the latest stable upstream
   `OpenClaw 2026.6.9` release. The live Gateway upgrade, `deepseek-direct/deepseek-chat` fallback
