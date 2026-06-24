@@ -1752,3 +1752,158 @@ Validation:
   `http://lightrag:9621/health` returned healthy status.
 - `wiki/OVERVIEW.md`, `wiki/INDEX.md`, `wiki/TOPICS.md`, and `wiki/SCHEMA.md` were present inside the
   Gateway workspace.
+
+## 47. Football topic Telegram routing recovery
+
+Date: `2026-06-24`
+
+Problem:
+
+- A follow-up message in Telegram forum topic `11` did not produce a bot reply.
+- OpenAI primary was suspected. The first live probe showed `openai/gpt-5.5` with the active
+  `openai:default` profile was healthy, but a later probe during the same incident showed the same
+  profile in Codex usage cooldown until reset.
+- A live Gateway request hit `FailoverError` during that cooldown instead of cleanly answering through
+  `deepseek-direct/deepseek-chat`, so the fallback chain still needed proof rather than a primary-route
+  switch.
+- Gateway logs did not contain a new Telegram inbound event for topic `11`, and Bot API
+  `getUpdates` showed no pending update to recover.
+- Reusing the old topic session without an explicit model override returned `exit:137` and restarted
+  the Gateway, so the stale session state was treated as part of the incident.
+
+Actions:
+
+- Proved the model path with an isolated agent smoke: the transcript returned
+  `OK_OPENAI_PRIMARY_1033` through provider `openai`, model `gpt-5.5`, and `stopReason=stop`.
+- Sent the requested football schedule answer directly to topic `11` with Telegram Bot API so the
+  chat was not left without an answer.
+- Added `football: { message_thread_id: 11 }` to the live server
+  `/home/node/.openclaw/telegram-topic-map.json` and restarted `openclaw-gateway`.
+- Backed up and removed the stale session key
+  `agent:main:telegram:group:<ops-supergroup-chat-id>:topic:11` under
+  `sessions/reset-backups/football-topic-11-<timestamp>/`, preserving the old transcript and session
+  entry.
+- Ran a clean delivered smoke to the same Telegram topic. The new session used
+  `deepseek-direct/deepseek-chat` after the OpenAI cooldown fallback and returned the expected status
+  message.
+- Temporarily switched the global primary route to DeepSeek while diagnosing the missed fallback, then
+  rolled that back after review: the correct live policy is still `openai/gpt-5.5` primary with
+  `deepseek-direct/deepseek-chat` as reserve.
+- Recreated `openclaw-gateway` after restoring the model policy so the running Gateway dropped the
+  temporary in-memory route state.
+- Sent the missed Botafogo/CSKA answer through the restored topic delivery path with a prepared answer,
+  avoiding another live web/tool turn while the `exit:137` trigger was still under diagnosis.
+
+Validation:
+
+- Telegram Bot API `sendMessage` returned `ok=true` for the football topic.
+- Gateway returned healthy after restart, `/healthz` returned live status, and the Telegram provider
+  restarted isolated polling.
+- The live topic map now contains the `football` topic entry.
+- Final clean `openclaw agent --session-key ... --deliver` smoke returned `status=ok`,
+  `provider=deepseek-direct`, `model=deepseek-chat`, and `deliveryStatus.status=sent`.
+- After rollback, runtime config again reported `primary=openai/gpt-5.5` and
+  `fallbacks=[deepseek-direct/deepseek-chat]`; both provider probes succeeded after the OpenAI reset.
+- Simple default-route and topic-delivery smokes succeeded through OpenAI primary. A tool/web-heavy
+  topic turn still reproduced `exit:137`, so it remains a separate follow-up from the model policy.
+- A post-rollback health check returned `/healthz` live, Docker reported `openclaw-gateway` healthy
+  with `oom=false`, and short default-route plus explicit reserve agent smokes both returned
+  `status=ok` without another Gateway restart.
+- The affected topic session updated from explicit `--deliver` smokes, but not from the earlier user UI
+  message observed during the incident; do not treat outbound delivery as proof that Telegram inbound
+  polling has fully recovered.
+- Final channel probe showed Telegram polling connected, recent outbound activity, `groups:unmentioned`,
+  `works`, and `audit ok`.
+
+## 48. AgentMail poll containment after football topic no-reply
+
+Date: `2026-06-24`
+
+Problem:
+
+- A fresh user message in Telegram forum topic `11` again received no automatic answer.
+- The Gateway had restarted at the same time with `exit=137`, `oom=false`, and no normal JavaScript
+  exception in the Gateway log.
+- Docker events showed two AgentMail 5-minute `openclaw agent` execs started in parallel inside
+  `openclaw-gateway` immediately before the container died. This made the football no-reply look like
+  a Telegram/model issue, but the direct cause was AgentMail poll load killing the shared Gateway.
+
+Actions:
+
+- Stopped both AgentMail bridge containers to stop the recurring 5-minute overload while diagnosing.
+- Changed the shared AgentMail bridge so `poll_llm_enabled` defaults to `false`; the poll path now uses
+  the deterministic prefilter/label fallback without launching an OpenClaw agent turn unless explicitly
+  re-enabled.
+- Updated both AgentMail deploy helpers to propagate `poll_llm_enabled=false` into existing server
+  configs and to treat a missing legacy OpenClaw cron store as a warning because host cron owns digest
+  delivery.
+- Redeployed `agentmail-email-bridge` and `agentmail-work-email-bridge`, repaired the partially
+  interrupted `work-email` env hydration, and restarted both bridge containers.
+- Tried to enable Telegram typing feedback with `channels.telegram.typingIndicator=true`, but
+  OpenClaw 2026.6.9 rejected that key as an additional property. The config change was rolled back and
+  `openclaw-gateway` was recreated successfully.
+- Sent the missed Botafogo-player answer directly to the football topic so the chat was not left
+  without a reply.
+
+Validation:
+
+- Local AgentMail tests passed: `test_poll_prefilter` (`8 tests OK`) and `test_footer` (`11 tests OK`).
+- `bash -n` passed for both AgentMail deploy helpers.
+- Both live AgentMail configs reported `poll_llm_enabled=false`.
+- The next personal and work 5-minute polls self-enqueued without creating any `openclaw agent` exec
+  event in `openclaw-gateway`.
+- `openclaw-gateway` returned healthy after rollback of the unsupported typing key, with
+  `primary=openai/gpt-5.5` and `fallbacks=[deepseek-direct/deepseek-chat]`.
+- Telegram channel probe returned enabled, connected, polling, `groups:unmentioned`, `works`, and
+  `audit ok`.
+
+## 49. OpenClaw 2026.6.9 Telegram ingress hotfix
+
+Date: `2026-06-24`
+
+Problem:
+
+- After AgentMail poll containment, fresh user messages in Telegram forum topic `11` still sometimes
+  produced no automatic answer.
+- Gateway health, Telegram channel status, model probes, and outbound `sendMessage` delivery all
+  looked healthy, but fresh UI messages did not advance the Telegram update offset and did not log
+  `Inbound message telegram:...`.
+- The earlier post-upgrade validation was incomplete: `openclaw agent --deliver` proved model
+  execution plus outbound Telegram delivery, but did not prove the Telegram UI ingress path.
+- This was not a Telethon issue. Telethon is used by digest/MTProto jobs; the interactive Sir Ben'ka
+  bot receives Telegram messages through Bot API polling inside OpenClaw.
+
+Actions:
+
+- Enabled live Telegram ingress diagnostics with `OPENCLAW_LOG_LEVEL=debug` and
+  `OPENCLAW_DEBUG_TELEGRAM_INGRESS=1`.
+- Confirmed the live Gateway was running `OpenClaw 2026.6.9` with
+  `primary=openai/gpt-5.5` and `fallbacks=[deepseek-direct/deepseek-chat]`; the model route was not
+  changed to DeepSeek primary.
+- Checked webhook state, bot permissions, topic config, local token holders, and Telegram spool
+  counts. Webhooks were disabled, the bot could read group messages, the football topic did not
+  require mentions, and no local bridge was consuming updates with `getUpdates`.
+- Found that OpenClaw 2026.6.9 defaults Telegram Bot API ingress to an internal
+  `isolatedIngress.enabled=true` path. The public config schema does not expose this as an ordinary
+  `openclaw.json` key.
+- Patched the derived OpenClaw image so `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0` disables the isolated
+  worker and uses the regular polling handler.
+- Built and deployed
+  `openclaw-with-iproute2:20260624-slim-2026.6.9-telegram-polling-hotfix`, updated the live
+  `OPENCLAW_IMAGE`, added `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0`, and recreated only
+  `openclaw-gateway`.
+
+Validation:
+
+- The hotfix image contains the `OPENCLAW_TELEGRAM_ISOLATED_INGRESS` patch and the running Gateway
+  reports `OpenClaw 2026.6.9`.
+- `/healthz` returned live and Docker reported `openclaw-gateway` healthy on the hotfix image.
+- Telegram channel probe returned enabled, configured, connected, `mode:polling`, `groups:unmentioned`,
+  `works`, and `audit ok`.
+- After the hotfix, the log showed the regular polling path instead of
+  `isolated polling ingress started`.
+- A recovered topic run sent a Telegram answer successfully with `telegram outbound send ok`.
+- A fresh Telegram UI smoke logged `telegram ingress`, `Inbound message telegram:group:<...>:topic:11`,
+  `run_completed`, `message_completed`, and `dispatchCompleteMs=18315`, proving the UI ingress path was
+  restored. That short test text did not emit a separate outbound message, so future end-to-end smokes
+  should use an explicit prompt such as `answer exactly OK_STATUS`.

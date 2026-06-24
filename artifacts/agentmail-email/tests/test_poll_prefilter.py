@@ -185,6 +185,7 @@ class PollPrefilterTests(unittest.TestCase):
 
     def test_prepare_poll_result_passes_only_candidate_threads_to_llm(self) -> None:
         config = sample_config()
+        config["poll_llm_enabled"] = True
         low_signal_thread = make_thread(
             "thread-low",
             {
@@ -250,8 +251,44 @@ class PollPrefilterTests(unittest.TestCase):
         self.assertTrue(any("candidate_threads=1" in line for line in tail))
         self.assertTrue(any("llm_skipped=false" in line for line in tail))
 
+    def test_prepare_poll_result_skips_candidate_llm_by_default(self) -> None:
+        config = sample_config()
+        candidate_thread = make_thread(
+            "thread-action",
+            {
+                "message_id": "msg-action-1",
+                "labels": [],
+                "subject": "Project update",
+                "preview": "please reply before tomorrow",
+                "text_excerpt": "please reply before tomorrow",
+                "has_attachments": False,
+                "attachment_count": 0,
+            },
+        )
+
+        with patch.object(cron_bridge, "_collect_thread_snapshots", return_value=(1, [candidate_thread])), patch.object(
+            cron_bridge,
+            "run_agent_json",
+            side_effect=AssertionError("Poll LLM should be disabled by default"),
+        ):
+            result, tail = cron_bridge._prepare_poll_result(
+                config=config,
+                run_id="run-default-skip",
+                inbox_ref="my-inbox@agentmail.to",
+                since_dt=cron_bridge.datetime(2026, 4, 13, 8, 0, tzinfo=cron_bridge.timezone.utc),
+                until_dt=cron_bridge.datetime(2026, 4, 13, 8, 5, tzinfo=cron_bridge.timezone.utc),
+                mode="poll",
+            )
+
+        self.assertTrue(result.llm_skipped)
+        self.assertEqual(result.messages_scanned, 1)
+        self.assertEqual(result.threads_considered, 1)
+        self.assertTrue(any("llm_skipped=true" in line for line in tail))
+        self.assertTrue(any("poll llm skipped: disabled" in line for line in tail))
+
     def test_prepare_poll_result_compacts_large_llm_prompt(self) -> None:
         config = sample_config()
+        config["poll_llm_enabled"] = True
         candidate_threads = [
             make_thread(
                 f"thread-action-{idx}",
@@ -309,6 +346,7 @@ class PollPrefilterTests(unittest.TestCase):
 
     def test_prepare_poll_result_falls_back_when_llm_fails(self) -> None:
         config = sample_config()
+        config["poll_llm_enabled"] = True
         candidate_thread = make_thread(
             "thread-action",
             {

@@ -313,6 +313,13 @@ def _scheduler_enabled(config: dict) -> bool:
     return _as_bool((config.get("scheduler") or {}).get("enabled"), True)
 
 
+def _poll_llm_enabled(config: dict) -> bool:
+    raw = config.get("poll_llm_enabled")
+    if raw is None:
+        raw = os.environ.get("AGENTMAIL_POLL_LLM_ENABLED")
+    return _as_bool(raw, False)
+
+
 def _scheduler_tick_seconds(config: dict) -> int:
     scheduler = config.get("scheduler") or {}
     raw = scheduler.get("tick_seconds", int(config.get("poll_interval_minutes", 5) or 5) * 60)
@@ -829,8 +836,9 @@ def _prepare_poll_result(
         thread_snapshots,
         config=config,
     )
-    prefilter_line = _prefilter_tail_line(prefilter_stats, llm_skipped=not candidate_threads)
-    if not candidate_threads:
+    poll_llm_enabled = _poll_llm_enabled(config)
+    prefilter_line = _prefilter_tail_line(prefilter_stats, llm_skipped=(not candidate_threads or not poll_llm_enabled))
+    if not candidate_threads or not poll_llm_enabled:
         empty = _fallback_poll_result(
             run_id=run_id,
             inbox_ref=inbox_ref,
@@ -841,7 +849,10 @@ def _prepare_poll_result(
             prefilter_low_signal_count=prefilter_low_signal_count,
             prefilter_stats=prefilter_stats,
         )
-        return empty, _tail_union(prelude, [prefilter_line])
+        tail = [prefilter_line]
+        if candidate_threads and not poll_llm_enabled:
+            tail.append("poll llm skipped: disabled")
+        return empty, _tail_union(prelude, tail)
 
     topic_name = str(config.get("topic_name", "inbox-email"))
     prompt, prompt_tail = _build_bounded_poll_prompt(

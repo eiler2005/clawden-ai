@@ -145,6 +145,7 @@ if env.get("AGENTMAIL_INBOX_REF"):
 data["topic_name"] = "work-email"
 data["timezone"] = "Europe/Moscow"
 data["poll_interval_minutes"] = 5
+data["poll_llm_enabled"] = False
 data.setdefault("scheduler", {})
 data["scheduler"]["enabled"] = True
 data["scheduler"]["tick_seconds"] = 300
@@ -231,6 +232,7 @@ CRON
   sudo python3 - <<'"'"'PY'"'"'
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -240,7 +242,8 @@ paths = [
 ]
 store_path = next((path for path in paths if path.exists()), None)
 if store_path is None:
-    raise SystemExit("OpenClaw cron store not found.")
+    print("OpenClaw cron store not found; host cron is authoritative for AgentMail work email.", file=sys.stderr)
+    raise SystemExit(0)
 
 raw = json.loads(store_path.read_text())
 jobs = raw.get("jobs", raw if isinstance(raw, list) else [])

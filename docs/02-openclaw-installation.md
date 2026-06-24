@@ -88,7 +88,8 @@ Upgrade history:
 - `openclaw-with-iproute2:20260528-slim-2026.5.27` (`OpenClaw 2026.5.27`) — previous production; latest stable release verified from GitHub and live-confirmed on `/opt/openclaw`
 - `openclaw-with-iproute2:20260606-slim-2026.6.1` (`OpenClaw 2026.6.1`) — previous production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
 - `openclaw-with-iproute2:20260619-slim-2026.6.8` (`OpenClaw 2026.6.8`) — previous production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
-- `openclaw-with-iproute2:20260624-slim-2026.6.9` (`OpenClaw 2026.6.9`) — current production; latest stable release verified from GitHub/GHCR and live-confirmed on `/opt/openclaw`
+- `openclaw-with-iproute2:20260624-slim-2026.6.9` (`OpenClaw 2026.6.9`) — previous production; latest stable release verified from GitHub/GHCR, but UI Telegram ingress required the hotfix below
+- `openclaw-with-iproute2:20260624-slim-2026.6.9-telegram-polling-hotfix` (`OpenClaw 2026.6.9`) — current production; disables isolated Telegram ingress with `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0` while retaining the 2026.6.9 OpenAI/fallback repairs
 
 ## Final deployed shape
 
@@ -102,6 +103,8 @@ Upgrade history:
   OpenAI provider is pinned to ChatGPT/Codex OAuth transport
   (`https://chatgpt.com/backend-api/codex`, `openai-chatgpt-responses`) so `gpt-5.5` uses the
   restored OAuth profile instead of the direct OpenAI Platform API-key path.
+- Telegram Bot API ingress: isolated polling is disabled in the derived hotfix image with
+  `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0`; do not confuse this path with Telethon digest jobs.
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`
@@ -144,7 +147,7 @@ Current policy:
 - Whisper is **not** installed on the host OS
 - Whisper is **not** installed in the current OpenClaw gateway image
 - the current derived image keeps only `iproute2`, which is operationally required for `bind=lan`
-- the current live image tag is `openclaw-with-iproute2:20260624-slim-2026.6.9`
+- the current live image tag is `openclaw-with-iproute2:20260624-slim-2026.6.9-telegram-polling-hotfix`
 
 ### Verify current absence
 

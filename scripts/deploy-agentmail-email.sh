@@ -169,6 +169,7 @@ data.setdefault("topic_name", "inbox-email")
 data.setdefault("scheduler", {})
 data["scheduler"].setdefault("enabled", True)
 data["scheduler"].setdefault("tick_seconds", int(data.get("poll_interval_minutes", 5) or 5) * 60)
+data.setdefault("poll_llm_enabled", False)
 data.setdefault("schedule_slots", ["08:00", "13:00", "16:00", "20:00"])
 data.setdefault("poll_bootstrap_lookback_minutes", 720)
 config_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
@@ -212,6 +213,7 @@ CRON
   sudo python3 - <<'PY'
 import json
 import shutil
+import sys
 import time
 from pathlib import Path
 
@@ -221,7 +223,8 @@ paths = [
 ]
 store_path = next((path for path in paths if path.exists()), None)
 if store_path is None:
-    raise SystemExit("OpenClaw cron store not found.")
+    print("OpenClaw cron store not found; host cron is authoritative for AgentMail email.", file=sys.stderr)
+    raise SystemExit(0)
 
 data = json.loads(store_path.read_text())
 jobs = data.get("jobs", data if isinstance(data, list) else [])
@@ -250,7 +253,7 @@ cat <<'EOF'
 AgentMail inbox-email pipeline deployed.
 
 Scheduled:
-  - internal scheduler poll every 5 minutes
+  - internal scheduler poll every 5 minutes (LLM disabled by default)
   - digests at 08:00 / 13:00 / 16:00 / 20:00 MSK via /etc/cron.d/agentmail-email
 
 Useful commands:

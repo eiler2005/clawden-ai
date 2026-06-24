@@ -8,6 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Changed
+- **Football Telegram topic recovery**: registered the live football forum topic, reset its stale
+  OpenClaw session state after a missed inbound update, and verified delivered topic smokes after
+  restoring the intended `openai/gpt-5.5` primary plus `deepseek-direct/deepseek-chat` reserve policy.
+  The temporary DeepSeek-primary recovery attempt was rolled back; OpenAI cooldowns must be handled by
+  the configured fallback chain rather than by changing the global primary route.
+- **AgentMail poll gateway isolation**: the 5-minute AgentMail `poll` path now skips OpenClaw LLM
+  classification by default and uses the deterministic prefilter/label path. This prevents parallel
+  personal/work AgentMail poll windows from launching heavy `openclaw agent` execs inside
+  `openclaw-gateway` and taking Telegram replies down with `exit=137`.
+- **Telegram ingress diagnostics**: after AgentMail containment, a fresh football-topic no-reply was
+  narrowed to the Telegram ingress/update path rather than the model route. Live diagnostics were
+  enabled with `OPENCLAW_LOG_LEVEL=debug` and `OPENCLAW_DEBUG_TELEGRAM_INGRESS=1`; OpenAI remains the
+  primary model and `deepseek-direct/deepseek-chat` remains the reserve.
+- **OpenClaw Telegram polling hotfix**: added a derived-image kill switch for the OpenClaw 2026.6.9
+  isolated Telegram ingress worker and deployed the live Gateway with
+  `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0`. Fresh Telegram UI messages now reach the regular polling
+  handler again; this is separate from Telethon, which is only used by digest/MTProto jobs.
 - **OpenClaw OpenAI primary restore**: imported the legacy OpenAI auth profile JSON into the
   `openclaw-agent.sqlite` auth store, set the tracked OpenAI provider to ChatGPT/Codex OAuth
   transport, and revalidated the default Gateway route on `openai/gpt-5.5` without fallback.
@@ -87,6 +104,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **LightRAG and wiki boot context recovery**: restored live LightRAG health after `Exit 137` cold
   starts by raising the live memory limit, and synced bot-facing top-level wiki navigation files into
   the OpenClaw workspace so `wiki/OVERVIEW.md` cold-start reads no longer fail with `exit 2`.
+- **Telegram forum topic routing**: registered the live `football` forum topic in the server
+  `telegram-topic-map.json` after an unlisted topic stopped producing agent inbound logs even though
+  OpenAI primary and Telegram Bot API sends were healthy.
+- **AgentMail bridge deploy safety**: deploy helpers now propagate `poll_llm_enabled=false` into
+  existing live configs and treat a missing legacy OpenClaw cron store as a warning because host cron
+  is authoritative for AgentMail digest delivery.
 - **Knowledgebase save recovery after 2026.6.1**: recovered a missed `Knowledgebase` save after the
   message reached Telegram ingress but the agent turn failed on the new OpenAI provider-auth regression
   plus a stale compacted topic transcript. Reset only the affected topic/generic session mappings,

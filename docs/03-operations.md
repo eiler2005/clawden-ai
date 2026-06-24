@@ -142,6 +142,12 @@ is `openai/gpt-5.5`, with `deepseek-direct/deepseek-chat` as the direct reserve.
 a custom OpenAI-compatible provider that uses the bare DeepSeek model id and an env SecretRef for
 `DEEPSEEK_API_KEY`.
 
+Do not switch the global primary route to DeepSeek as a cooldown workaround. If OpenAI reports a
+Codex subscription cooldown such as `You've reached your Codex subscription usage limit`, the intended
+behavior is still `openai/gpt-5.5` primary with the configured DeepSeek reserve handling the failed
+turn. Changing `agents.defaults.model.primary` masks the fallback defect and makes later default-route
+smokes less useful.
+
 Do not put `omniroute/light` in the interactive Gateway fallback chain: after the 2026.6.1 upgrade it
 could return `Cannot continue from message role: assistant` after compaction retries, while DeepSeek
 completed the same Telegram smoke directly. Also do not use the built-in `deepseek/deepseek-v4-flash`
@@ -274,6 +280,23 @@ Model policy
 Finish with a real default-route agent smoke and require `fallbackAttempts=0` before treating the
 primary route as healthy.
 
+During an OpenAI cooldown incident, run an explicit reserve smoke as well, but leave the model policy
+unchanged:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec -T openclaw-gateway sh -lc "
+    openclaw agent --agent main --model deepseek-direct/deepseek-chat \
+      --message OK_DEEPSEEK_RESERVE_SMOKE --json
+  "
+'
+```
+
+If the default route surfaces `FailoverError` instead of answering through the reserve, keep the
+primary as OpenAI, capture the failing transcript/log lines, then recreate only `openclaw-gateway` and
+repeat both the default-route and explicit-reserve smokes.
+
 Important: if the Telegram topic still posts an auto-compaction warning after auth is fixed, reset
 only the affected `sessions.json` mappings (`agent:main:main` and the topic session key), preserve
 their transcript files under `sessions/reset-backups/<incident-id>/`, recreate the Gateway, and send
@@ -331,12 +354,19 @@ recreate can leave old `.json.processing` claims behind. If the new container re
 OpenClaw may treat those old claims as live and stop draining the lane even though Bot API polling
 still receives updates.
 
+Separate inbound failures from manual delivery checks. A successful
+`openclaw agent --session-key ... --deliver` proves model execution and Telegram outbound delivery,
+but it does not prove that a fresh user message from the Telegram UI was received by isolated polling.
+For no-reply incidents, verify the affected topic session timestamp changes after a new UI message,
+or capture the missing update as an ingress defect.
+
 Symptoms:
 
 - Gateway `/healthz` is OK.
 - Telegram logs show `isolated polling ingress started`.
 - New user messages get no reply.
 - The spool has `.json` or `.json.processing` files that do not drain.
+- Manual `--deliver` smokes can still post into the topic.
 
 Check the spool:
 
@@ -374,6 +404,44 @@ scripts/recover-telegram-ingress-spool.sh --install-cron
 This installs `/usr/local/sbin/openclaw-telegram-spool-guard` and
 `/etc/cron.d/openclaw-telegram-spool-guard`. The cron runs once per minute and logs only when it
 actually requeues or drops stale duplicate processing files.
+
+## Telegram isolated polling kill switch
+
+OpenClaw 2026.6.9 can run Telegram Bot API ingress through a separate isolated polling worker. If
+the Gateway is healthy, Telegram status reports `mode:polling`, outbound Telegram sends work, but a
+fresh message from the Telegram UI does not log `Inbound message telegram:...`, treat this as an
+ingress defect rather than a model fallback defect. Telethon upgrades do not affect this path:
+Telethon is used by digest/MTProto jobs, while the interactive OpenClaw bot receives messages through
+Telegram Bot API polling.
+
+The derived OpenClaw image carries a local kill switch:
+
+```bash
+OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0
+```
+
+With the switch set, the Telegram plugin uses the regular polling handler instead of the isolated
+worker/spool path. Keep `openai/gpt-5.5` as the primary route and
+`deepseek-direct/deepseek-chat` as the reserve fallback; do not make DeepSeek the global primary just
+to work around an OpenAI cooldown or an ingress outage.
+
+Validation after enabling the switch:
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose up -d --no-deps --force-recreate openclaw-gateway &&
+  sudo docker exec openclaw-openclaw-gateway-1 sh -lc '"'"'
+    openclaw channels status telegram --probe
+    tail -n 500 /tmp/openclaw/openclaw-$(date +%F).log |
+      grep -Ei "telegram ingress|Inbound message|telegram outbound send ok|isolated polling"
+  '"'"'
+'
+```
+
+For a real smoke, send a fresh message from the Telegram UI and require both an inbound line and a
+final outbound line. `openclaw agent --deliver` is still useful, but it only proves model execution
+and outbound delivery; it does not prove the Telegram UI ingress path.
 
 ## Docker resource guardrails
 
@@ -814,6 +882,20 @@ Post any plain-text message in the Knowledge channel — bot responds with top r
 ```
 
 **If bot doesn't respond:** check that Knowledgebase topic_id=232 is registered in `telegram-topic-map.json` and workspace is deployed.
+
+For any forum topic where the bot should answer without an explicit mention, first verify that the
+topic is registered in the live server `telegram-topic-map.json`. Unlisted topics can look like model
+failures from the UI because Bot API polling may consume the update without creating an agent inbound
+log. The live `football` topic is registered as `message_thread_id=11`.
+
+If a registered forum topic still does not answer, inspect the matching session key in
+`~/.openclaw/agents/main/sessions/sessions.json`, for example
+`agent:main:telegram:group:<chat-id>:topic:11`. A stale or very heavy topic session can be backed up
+under `sessions/reset-backups/<incident-id>/` and removed from `sessions.json` so the next inbound
+creates a clean topic session. Validate with an `openclaw agent --session-key ... --deliver` smoke to
+the same Telegram `topic:<id>` target. During OpenAI Codex usage cooldown, expect the clean default
+route to fall back to `deepseek-direct/deepseek-chat`; the OpenAI provider probe will show the
+cooldown explicitly.
 
 ### Ideas capture workflow
 
@@ -1369,10 +1451,10 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
 AgentMail Inbox Email polls the personal inbox every 5 minutes through a standalone Python
 bridge that talks to the AgentMail HTTP API directly, uses an internal 5-minute scheduler for
 poll-based state/labeling only, and publishes scheduled recaps to the `inbox-email` topic at
-`08:00`, `13:00`, `16:00`, and `20:00` MSK. OpenClaw is only used for JSON-only poll
-classification, and the poll path now runs a deterministic prefilter so obvious empty / low-signal
-windows can skip the LLM entirely. Scheduled digests render directly from the mailbox window so
-they always reflect the actual message count and senders.
+`08:00`, `13:00`, `16:00`, and `20:00` MSK. The 5-minute poll path uses deterministic prefiltering by
+default and must not call `openclaw agent` inside the Gateway unless `poll_llm_enabled=true` is set
+deliberately for a controlled test. Scheduled digests render directly from the mailbox window so they
+always reflect the actual message count and senders.
 
 If a scheduled digest window has no messages, the bridge now still posts a short
 "empty window" message to Telegram instead of silently skipping the slot.
@@ -1444,6 +1526,9 @@ Current validation snapshot:
   mailbox window, and applied `benka/digested=1`
 - on `2026-04-13`, the internal scheduler successfully self-enqueued a poll after bridge restart,
   the run finished with `exit_code=0`, and `/status` showed the new prefilter diagnostics directly
+- on `2026-06-24`, both personal and work 5-minute polls were pinned to `poll_llm_enabled=false`
+  after parallel AgentMail `openclaw agent` execs killed `openclaw-gateway` with `exit=137` and caused
+  unrelated Telegram topic replies to disappear.
   in `poll summary` (`prefilter_scanned`, `skipped_handled`, `skipped_low_signal`,
   `candidate_threads`, `llm_skipped`)
 - on `2026-04-13`, server-side image tests passed: `python -m unittest discover -s /app/tests`
@@ -1466,8 +1551,9 @@ delivery.
 AgentMail Work Email is a second live runtime that reuses the same Python bridge codebase but runs
 separately from the personal inbox at `/opt/agentmail-work-email`. It talks directly to the
 AgentMail HTTP API for `workmail.denny@agentmail.to`, uses its own internal 5-minute scheduler for
-poll-based state/labeling, and publishes scheduled digests to Telegram topic `work-email` at
-`08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, and `19:00` MSK.
+poll-based state/labeling with `poll_llm_enabled=false` by default, and publishes scheduled digests to
+Telegram topic `work-email` at `08:30`, `10:00`, `11:30`, `13:00`, `14:30`, `16:00`, `17:30`, and
+`19:00` MSK.
 
 Unlike the personal `inbox-email` runtime, the work digest can resolve the original sender from
 forwarded-message headers inside the email body. This is enabled only for `work-email`, so a mail
@@ -1531,6 +1617,9 @@ Current validation snapshot:
 - on `2026-05-29`, email polling was verified healthy while Telegram digest delivery had stalled
   behind false-positive OpenClaw Cron runs without an exec/shell tool; digest delivery moved to
   `/etc/cron.d/agentmail-work-email`, and the legacy OpenClaw Cron jobs were disabled.
+- on `2026-06-24`, `work-email` was redeployed with `poll_llm_enabled=false`; the next scheduled poll
+  self-enqueued without creating an `openclaw agent` exec in the Gateway, and `openclaw-gateway`
+  remained healthy.
 
 ### Host cron jobs
 
