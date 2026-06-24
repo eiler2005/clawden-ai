@@ -1706,6 +1706,8 @@ Actions:
   function. The migration created `.sqlite-import.*.bak` backups and reported no warnings.
 - Pinned `models.providers.openai` to ChatGPT/Codex OAuth transport:
   `baseUrl=https://chatgpt.com/backend-api/codex`, `api=openai-chatgpt-responses`, `auth=oauth`.
+- Set both config-level and agent-level OpenAI auth order to the verified `openai:default` profile so
+  expired legacy profiles remain stored but are excluded from active routing.
 - Recreated `openclaw-gateway` so the running service loaded the repaired auth store and provider
   transport.
 
@@ -1717,6 +1719,6 @@ Validation:
   the `openai:default` OAuth profile.
 - `/healthz` returned `{"ok":true,"status":"live"}` and `openclaw-gateway` returned to Docker
   `healthy`.
-- Final default-route agent smoke returned `OK_OPENAI_PRIMARY_CODEX_TRANSPORT_2026_06_24` with
+- Final default-route agent smoke returned `OK_OPENAI_PRIMARY_FINAL_2026_06_24` with
   `provider=openai`, `model=gpt-5.5`, and `fallbackAttempts=0`.
 - `deepseek-direct/deepseek-chat` remains configured as the direct reserve fallback.
