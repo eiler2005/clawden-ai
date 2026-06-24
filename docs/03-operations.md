@@ -383,12 +383,12 @@ for SSH, Docker, Redis, Caddy/networking, and lightweight bridge services. The a
 ```text
 openclaw-gateway  0.90 CPU  1224m RAM  256 pids
 omniroute         0.25 CPU   512m RAM  128 pids
-lightrag          0.45 CPU  1536m RAM  128 pids
+lightrag          0.45 CPU  2304m RAM  2816m swap  128 pids
 ```
 
 The combined CPU cap for the main AI path is `1.60` out of `2.00` vCPU. Do not reduce LightRAG
-memory below `1536m` without rebuilding/pruning its graph: the current graph is about `15k` nodes /
-`20k` edges, and a `768m` cap caused `Exit 137` during cold start.
+memory below `2304m` without rebuilding/pruning its graph: the current graph is about `20k` nodes /
+`26k` edges, and a `1536m` cap caused `Exit 137` during cold start.
 
 These are active Compose overrides, not advisory examples: OpenClaw/OmniRoute limits live in
 `/opt/openclaw/docker-compose.override.yml`, and LightRAG limits live in

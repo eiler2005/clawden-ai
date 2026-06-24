@@ -90,6 +90,11 @@ LightRAG deduplicates by document identity/content, so repeated cron runs are ex
 operational check is not "did upload return 200?" but whether `/documents/status_counts` converges
 to `processed > 0` and `failed = 0`.
 
+OpenClaw agent cold starts also expect compact top-level wiki navigation files in the agent
+workspace, especially `wiki/OVERVIEW.md`. Keep
+`/opt/openclaw/workspace/wiki/{OVERVIEW.md,INDEX.md,TOPICS.md,SCHEMA.md,LOG.md,CANONICALS.yaml,IMPORT-QUEUE.md}`
+mirrored from `/opt/obsidian-vault/wiki/` without replacing workspace-only `wiki/research/**` pages.
+
 ### What LightRAG builds
 
 During processing, LightRAG:
@@ -136,9 +141,9 @@ the bot which raw/workspace/Obsidian file to inspect next if the answer needs st
 
 All graph/vector data lives under `/opt/lightrag/data/` on the host.
 
-Live resource guardrail on this host: LightRAG runs with `cpus: "0.45"`, `mem_limit: 1536m`,
-`memswap_limit: 1536m`, and `pids_limit: 128`. The 1.5GB memory cap is intentional: the current
-graph has roughly 15k nodes and 20k edges, and a 768MB cap caused `Exit 137` during cold start.
+Live resource guardrail on this host: LightRAG runs with `cpus: "0.45"`, `mem_limit: 2304m`,
+`memswap_limit: 2816m`, and `pids_limit: 128`. The current graph has roughly 20k nodes and 26k
+edges; a 1536MB cap caused `Exit 137` during cold start.
 
 **Current split:** the preferred policy is OmniRoute first, then direct DeepSeek fallback for RAG
 LLM extraction. On 2026-05-31 the live server moved to the fallback because OmniRoute `light`
@@ -220,8 +225,8 @@ services:
       - /opt/openclaw/workspace:/app/data/inputs/workspace:ro
     restart: unless-stopped
     cpus: "0.45"
-    mem_limit: 1536m
-    memswap_limit: 1536m
+    mem_limit: 2304m
+    memswap_limit: 2816m
     pids_limit: 128
     healthcheck:
       test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9621/health', timeout=5).read()"]

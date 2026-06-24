@@ -1722,3 +1722,33 @@ Validation:
 - Final default-route agent smoke returned `OK_OPENAI_PRIMARY_FINAL_2026_06_24` with
   `provider=openai`, `model=gpt-5.5`, and `fallbackAttempts=0`.
 - `deepseek-direct/deepseek-chat` remains configured as the direct reserve fallback.
+
+## 46. Telegram tool-error diagnosis and LightRAG cold-start recovery
+
+Date: `2026-06-24`
+
+Problem:
+
+- A Telegram group request in topic `11` showed intermediate tool errors:
+  `wiki/OVERVIEW.md` read failed with `exit 2`, and `http://lightrag:9621/health` failed from the
+  Gateway container.
+- The same request was also interrupted by the planned Gateway recreate during OpenAI auth repair.
+
+Actions:
+
+- Verified the Telegram run was recovered by OpenClaw startup recovery and completed with
+  `stopReason=stop` on `openai/gpt-5.5`.
+- Started the dormant LightRAG compose service and found it OOMKilled on cold start at the old
+  `1536m` limit while loading the current graph.
+- Raised the live LightRAG override to `mem_limit: 2304m` and `memswap_limit: 2816m`, then recreated
+  the service.
+- Synced top-level wiki navigation files from `/opt/obsidian-vault/wiki` into
+  `/opt/openclaw/workspace/wiki` so agent cold starts can read `wiki/OVERVIEW.md`.
+
+Validation:
+
+- `openclaw-gateway` remained healthy and `/healthz` returned live status.
+- LightRAG became Docker `healthy`; host-local `127.0.0.1:8020/health` and Gateway-side
+  `http://lightrag:9621/health` returned healthy status.
+- `wiki/OVERVIEW.md`, `wiki/INDEX.md`, `wiki/TOPICS.md`, and `wiki/SCHEMA.md` were present inside the
+  Gateway workspace.

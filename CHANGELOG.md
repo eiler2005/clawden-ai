@@ -44,8 +44,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the recreate.
 - **Live Docker resource guardrails**: capped the main 2-vCPU AI path with about 20% host headroom:
   `openclaw-gateway` at `0.90 CPU / 1224m`, `omniroute` at `0.25 CPU / 512m`, and `lightrag` at
-  `0.45 CPU / 1536m`. The LightRAG memory cap intentionally stays at 1.5GB because the current
-  graph cold start OOMed at 768MB.
+  `0.45 CPU / 2304m` with `2816m` memory-swap. The LightRAG cap was raised after the current
+  graph cold start OOMed at 1536MB.
 - **Telegram LLM route order**: `telethon-digest` and `signals-bridge` now use the intended route order for LLM enrichment: OpenClaw `openai/gpt-5.5` primary via the live Gateway, OmniRoute fallback, then optional DeepSeek API fallback. Deterministic local fallback is now last-resort only after all model routes fail.
 - **OpenClaw runtime live upgrade**: upgraded the prepared derived gateway image to `openclaw-with-iproute2:20260528-slim-2026.5.27`, based on the latest stable upstream `OpenClaw 2026.5.27` release. Removed the stale managed npm `codex@2026.5.12` plugin install so the live registry uses the bundled `codex` plugin from the current OpenClaw image.
 - **OpenAI primary auth refresh**: refreshed the live `openai-codex` token profile used by the `openai/gpt-5.5` primary route. OmniRoute/OpenRouter remain configured as the first fallback route.
@@ -84,6 +84,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **OmniRoute OpenRouter sync helper**: added `scripts/sync-omniroute-openrouter-provider.sh` to upsert the live OpenRouter key into OmniRoute's encrypted provider store, clear stale no-credential/quota state, and smoke-test 3072-dimensional embeddings from the LightRAG runtime.
 
 ### Fixed
+- **LightRAG and wiki boot context recovery**: restored live LightRAG health after `Exit 137` cold
+  starts by raising the live memory limit, and synced bot-facing top-level wiki navigation files into
+  the OpenClaw workspace so `wiki/OVERVIEW.md` cold-start reads no longer fail with `exit 2`.
 - **Knowledgebase save recovery after 2026.6.1**: recovered a missed `Knowledgebase` save after the
   message reached Telegram ingress but the agent turn failed on the new OpenAI provider-auth regression
   plus a stale compacted topic transcript. Reset only the affected topic/generic session mappings,
