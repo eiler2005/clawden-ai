@@ -7,13 +7,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [Frozen] - 2026-09-06
+
+### Changed
+
+- **Repository freeze and functional handoff:** froze this OpenClaw-era repository as a historical
+  record and moved active implementation to
+  [My AI Office](https://github.com/eiler2005/my-ai-office), branch
+  [migration/hermes-native](https://github.com/eiler2005/my-ai-office/tree/migration/hermes-native).
+  Removed installation, deployment, runtime-template, maintenance-skill, test, and workspace
+  artifacts so this repository cannot be used as a new deployment source.
+
 ### Fixed
+
+- **OpenClaw 2026.9.1 recovery:** recorded the final candidate failure: the built candidate did not
+  expose health, startup, or readiness endpoints and was not OOM-killed. It was removed, and the
+  verified Mac state archive restored the known-good 2026.6.9 Gateway.
+
+### Added
+
+- **Hermes migration plan:** documented the new-repository and VPS migration,
+  native integration work, testing, backup and rollback gates. Candidate
+  preparation is followed by approximately two weeks with OpenClaw remaining
+  production; cutover requires a separate owner command and a fresh state copy.
+
+### Fixed
+
+- **OpenAI OAuth refresh:** restored the Gateway's expired OpenAI login through
+  the supported device-code flow, selected the fresh agent-scoped profile, and
+  recreated only `openclaw-gateway`. A no-delivery `openclaw agent --json` smoke
+  completed on `openai/gpt-5.5` without a fallback.
+
+- **Mac-archive recovery:** made rollback tolerate bridge callers that were
+  already stopped, preventing a repeated `docker stop` from blocking archive
+  restoration.
 
 - **Telegram Digest scheduled delivery:** host cron now invokes
   `trigger-digest.sh` through `/bin/bash`, so a source sync that restores the
   tracked non-executable file mode cannot silently stop digest triggers.
 
 ### Changed
+
+- **OpenClaw 2026.9.1 candidate preparation:** pinned the derived image to the
+  2026.9.1 slim digest, replaced the hash-specific Telegram patch with a
+  verified runtime-asset patch, and removed cron keys rejected by the new
+  schema from the redacted config template. The candidate remains held: the
+  2026-09-05 read-only preflight found insufficient free disk for the agreed
+  Mac streamed archive, one server-side candidate copy, candidate image, and
+  1 GiB recovery reserve. Production has not been switched.
+
+- **OpenClaw 2026.9.1 runtime hold:** the derived candidate builds and validates
+  its configuration, but its Gateway never exposes startup/readiness endpoints
+  in this deployment. The held candidate was restored to the known-good 2026.6.9
+  image from a verified Mac archive; candidate images and temporary state were
+  removed from the VPS.
+
+- **Approved low-capacity recovery path:** added an explicit Mac-archive mode for
+  the constrained VPS. It records and verifies the cold archive before in-place
+  migration, frees the failed candidate image before restoration, and normally
+  retains migrated state separately. A separately acknowledged last-resort
+  variant discards only failed candidate state when capacity makes retention
+  impossible. This exception skips the isolated rehearsal and depends on the Mac
+  archive and SSH route for rollback; it remains `candidate-held` until the full
+  acceptance gate passes.
+- **Gateway rollback policy:** made the verified Mac cold archive the default
+  recovery source for future Gateway upgrades. The VPS must not hold a full
+  rollback-state clone; capacity-constrained recovery may discard only stopped
+  failed-candidate state after archive verification.
+
+- **Mac archive timing:** separated the cold-archive deadline from the candidate
+  watchdog after the first 2026.9.1 attempt timed out before migration. The
+  known-good Gateway, host cron, and Syncthing recovered; no state was migrated.
+
+- **2026.9.1 candidate hardening:** the candidate now removes only fields that
+  its exact config validator rejects, changes `openclaw.json` ownership for the
+  runtime UID, and bootstraps the pinned compatible DuckDuckGo plugin before
+  returning its configured provider. Offline validation passed. Live candidates
+  remain held: no manual Telegram proof or acceptance occurred, and the current
+  VPS has 1.53 GiB free while a rebuild needs 4.42 GiB. The 2026.6.9 Gateway was
+  restored healthy from a verified Mac cold archive.
+
+- **Candidate-held evidence and documentation:** recorded the 2026-09-05 capacity calculation,
+  extracted-image Telegram/Codex layout checks, cold-backup timing estimate, and the required
+  server-directory rename rollback. The known-good 2026.6.9 hotfix remains production; the initial
+  read-only review did not pull, build, prune, or deploy on the VPS. Current docs also distinguish the
+  OpenAI OAuth Gateway primary from per-bridge routing, document disabled `memorySearch` and media
+  automation, and identify direct Telegram Bot API polling rather than Caddy as inbound transport.
+
+- **Gateway cron migration:** replaced tracked direct `jobs.json` mutations with
+  bounded, paginated Gateway RPC helpers. At deployment, host-cron Telegram Digest
+  and AgentMail jobs will retain their ids and remain disabled through `cron.update`;
+  Wiki Lifecycle and Last30Days jobs will use prefix-scoped RPC patches.
 
 - **Qwen-first staged rollout (2026-08-14):** transferred the DashScope
   credential only between ignored server-side environments, then applied Qwen

@@ -2117,3 +2117,140 @@ Validation and rollout:
   the channel source and one author-scoped candidate from the chat source. They were already present
   in deduplication state from the initial rollout attempt, so the final checks safely reported
   `posted=0` with duplicates rather than publishing another copy.
+
+## 57. OpenClaw 2026.9.1 candidate preflight held
+
+Date: `2026-09-05`
+
+Read-only evidence:
+
+- The running Gateway remained on the known-good 2026.6.9 Telegram polling hotfix. Its resource
+  limits matched the documented 0.9 CPU, 1224 MiB memory, and 256 PID guardrails; `/healthz`,
+  `/startupz`, and `/readyz` each returned HTTP 200.
+- The known-good derived image was present locally. The pinned 2026.9.1 base and candidate image
+  were not cached. Config state includes SQLite databases with active WAL files, so cold backup must
+  capture the full config tree rather than a JSON-only cron export.
+- Available server disk was `5,029,436 KiB`; the config tree was `5,212,716 KiB`. Inactive Docker
+  build cache was `3.628 GB`, but it is insufficient by itself for a candidate image, a fresh
+  rehearsal copy, a retained cold archive, and candidate-failure state. The target base is
+  `1,238,646,850` bytes compressed and at least `3,420,826,624` bytes uncompressed; it shares only
+  five empty 1 KiB layers with the current image.
+
+Decision:
+
+- Do not build or switch the candidate until capacity is explicitly prepared. Preserve the current
+  image and all state. A Mac-resident protected cold archive plus one server-side rehearsal copy can
+  reduce the required server peak, but still requires a post-build capacity check before pausing the
+  Gateway.
+
+Local validation:
+
+- The pinned Telegram patch fixtures passed positive, missing-target, and duplicate-target cases.
+- The digest-verified extracted target image passed the Telegram patch at the compiled runtime asset
+  and Telegram extension source; Node syntax and the Codex/OpenAI layout verifier also passed. Docker
+  could not be started on the Mac, so no candidate runtime build was performed.
+- OpenClaw cron RPC tests passed pagination, stable-snapshot, repeated-offset, id-preservation,
+  disabled-managed-job, generated request, and bounded timeout cases without using a live Gateway.
+- The new server-local agent JSON contract probe passed fixture tests for valid envelopes, stderr
+  diagnostics, hidden fallback mismatch, missing metadata, nonzero exits, timeout, and invalid agent.
+  It has not run against any Gateway and is not live CLI evidence.
+- Isolated dependency environments passed all declared bridge regression tests: Telethon Digest 21,
+  Signals 98, and AgentMail 19. A 128 MiB cold-archive stream to the Mac took 6.52 seconds, which
+  estimates about 261 seconds for 5 GiB; the Mac has 367 GiB free. `syncthing@deploy` must be paused
+  for the vault copy. The user was asked for a 10 GiB disk extension or named removable data; that
+  decision and the manual Telegram baseline remain pending.
+
+## 58. OpenClaw 2026.9.1 Mac-archive attempt recovered before migration
+
+Date: `2026-09-06`
+
+- The pinned derived candidate passed exact `2026.9.1` version, `ip`, and pinned
+  RootFS ancestry checks. The Mac-archive low-disk recovery mode was selected
+  because the VPS cannot retain both original and failed candidate state.
+- The stopped cold archive reached `4,268,421,120` bytes before the former
+  10-minute transfer deadline. No live config migration or candidate container
+  start occurred. The incomplete local archive was deleted.
+- The initial recovery path encountered an absent stopped Gateway container before
+  `compose up`; the runner now treats that stop as idempotent. The known-good
+  `OpenClaw 2026.6.9` Gateway was restored healthy with `/healthz`, `/startupz`,
+  and `/readyz`; Syncthing and all three host cron files were restored.
+- The candidate remains `candidate-held`. Future Mac cold archives receive their
+  own 14-minute pre-migration deadline; the independent 15-minute watchdog starts
+  only after the verified archive exists.
+
+## 59. OpenClaw 2026.9.1 candidate validation and capacity hold
+
+Date: `2026-09-06`
+
+- A candidate exited with a configuration error before acceptance. An offline
+  candidate probe against the real state identified a root-owned `openclaw.json`,
+  five groups of fields rejected by the 2026.9.1 validator, and the DuckDuckGo
+  provider's new external plugin requirement.
+- The migration now removes only those confirmed fields, sets the runtime file to
+  UID/GID 1000, installs `@openclaw/duckduckgo-plugin@2026.9.1` while its provider
+  is temporarily unset, restores the provider, and validates the candidate config
+  without network. That isolated probe passed.
+- No candidate completed the structured acceptance, five-minute observation, or
+  manual Telegram UI proof. Each attempt was held and the 2026.6.9 Gateway,
+  `/healthz`, `/startupz`, `/readyz`, Syncthing, and three host-cron files were
+  restored from a verified Mac archive.
+- The candidate remains held. The later capacity preparation allowed a rebuild,
+  but the Mac-mode post-build guard still refused a new migration because a
+  separate failed-candidate state plus its recovery reserve would not fit. The
+  discard variant was not selected. Candidate images and temporary runs were
+  removed; Docker reports no reclaimable image, container, volume, or build cache.
+
+## 60. OpenAI OAuth refresh on the known-good Gateway
+
+Date: `2026-09-06`
+
+Problem:
+
+- Telegram reported that the Gateway's OpenAI model login had expired. The stored profiles remained
+  present, but the active OAuth route was not usable.
+
+Actions:
+
+- Started the supported OpenAI device-code flow in an interactive Gateway TTY. The account owner
+  completed browser confirmation locally; no URL state, device code, token, or account identifier was
+  recorded here.
+- Saved the refreshed credential under a new agent-scoped profile and made it the selected OpenAI
+  profile for `main`. Existing provider profiles were retained; `--force` was not used.
+- Recreated only `openclaw-gateway` with `--no-deps`, then deleted the one-time login transcript and
+  local helper artifacts.
+
+Validation:
+
+- The Gateway returned to Docker `healthy` on the known-good `OpenClaw 2026.6.9` image.
+- A no-delivery `openclaw agent --json` smoke returned its private marker with
+  `provider=openai` and `model=gpt-5.5`; it did not use Qwen or DeepSeek fallback.
+- This repair does not promote the 2026.9.1 candidate, which remains held by the VPS capacity gate.
+
+## 61. OpenClaw 2026.9.1 runtime hold and Mac-archive recovery
+
+Date: `2026-09-06`
+
+- The pinned derived 2026.9.1 image built successfully, passed exact-version, `ip`, ancestry, and
+  disposable config validation checks. A current full state archive, including the refreshed OpenAI
+  OAuth state, was verified on the Mac before the Gateway switch.
+- The candidate process remained running but did not expose `/healthz`, `/startupz`, or `/readyz`
+  before the bounded readiness deadline. It was not OOM-killed and no Telegram, cron, or bridge
+  acceptance test ran. The release is therefore `candidate-held`.
+- The first automatic Mac restore stopped a caller twice and treated the second stop as an error. The
+  rollback runner now checks whether a recorded container is actually running before stopping it.
+  Targeted regression tests passed, and the verified Mac archive was then restored successfully.
+- Recovery restored the 2026.6.9 Gateway, all three health endpoints, Syncthing, host cron, and the
+  previously running bridges. The held candidate image, temporary server runs, diagnostic container,
+  and superseded Mac archive were removed. One verified current archive remains on the Mac.
+
+## 62. Freeze after the OpenClaw 2026.9.1 failure
+
+Date: 2026-09-06
+
+- The candidate's missing health, startup, and readiness endpoints remain unresolved. It was not
+  promoted and no functional acceptance gates ran.
+- Production remains on the restored 2026.6.9 Gateway. The 2026.9.1 candidate image, its
+  diagnostic container, temporary server run, and build cache were removed. Docker reported no
+  safely reclaimable candidate artifacts after cleanup.
+- The repository is frozen as a historical OpenClaw record. Active implementation moves to
+  My AI Office; see docs/26-archive-and-migration.md.

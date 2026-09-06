@@ -53,7 +53,8 @@ User message
      -> Agent runner
         -> Primary route: openai/gpt-5.5
             on rate_limit / auth error / provider error:
-            -> Fallback: deepseek-direct/deepseek-chat
+            -> Fallback: qwen-direct/qwen3.7-flash
+                -> Final reserve: deepseek-direct/deepseek-chat
 ```
 
 Fallbacks are configured in `agents.defaults.model.fallbacks` in `openclaw.json`.
@@ -93,7 +94,11 @@ For Telegram save/promote actions, the preferred write path is:
 - `wiki_ingest(url)` when a stable source URL already exists
 - `wiki_ingest(text)` only when there is no reliable URL or the source is a plain note
 
-The main user response uses OpenAI first. OmniRoute is the first reserve route, not the default.
+The main user response uses OpenAI first, then the direct Qwen and DeepSeek reserves. OmniRoute is
+separate infrastructure, not an interactive Gateway reserve.
+
+This is the current 2026.6.9 hotfix production route. The 2026.9.1 image is candidate-held and must
+not be described as deployed until its cold-backup, readiness, bridge, and manual Telegram gates pass.
 
 ### Response footer
 
@@ -137,8 +142,8 @@ _light · delegated · 5% · simple_
 | Telegram Digest (topic) | Digest | Low | Digest summaries only |
 | Signals (topic) | Alert | High, narrow | Compact alert record |
 | Family (separate group) | Family | Low, mention-only | Never without explicit approval |
-| Knowledgebase (supergroup topic, id=232) | Knowledge | Low | Question → search; explicit save content → auto-structured `raw/**` + `wiki/research/**` + optional canonical enrichment |
-| Ideas (supergroup topic, id=639) | Idea capture | Low | Light-curated `raw/**` + `wiki/research/**` immediately; promoted to Knowledgebase later for deeper enrichment |
+| Knowledgebase (supergroup topic) | Knowledge | Low | Question → search; explicit save content → auto-structured `raw/**` + `wiki/research/**` + optional canonical enrichment |
+| Ideas (supergroup topic) | Idea capture | Low | Light-curated `raw/**` + `wiki/research/**` immediately; promoted to Knowledgebase later for deeper enrichment |
 | Sandbox / Lab | Testing | Free | Never production memory |
 
 ### Trigger rules
@@ -181,7 +186,7 @@ The goal is simple:
 
 | Skill | Purpose |
 |-------|---------|
-| `openclaw-cron-maintenance` | Safe workflow for OpenClaw cron-store maintenance when `openclaw cron list/add/remove` is unreliable; patch `jobs.json`, restart gateway, validate health |
+| `openclaw-cron-maintenance` | Safe bounded Gateway-RPC workflow when ordinary cron CLI paths are unreliable; preserve managed IDs and validate inventory without state-file edits |
 
 ### Scope boundary
 
@@ -654,7 +659,7 @@ Top 30 by score → LLM. Rest discarded.
 
 ### Setup steps (one-time)
 
-Current status: completed and running on the server through OpenClaw Cron Jobs.
+Current status: completed and running through host cron; retained OpenClaw jobs stay disabled.
 
 ```bash
 # 0. Work from the standalone project directory
@@ -667,7 +672,7 @@ docker compose run --rm telethon-digest python auth.py
 docker compose run --rm telethon-digest python sync_channels.py
 # 4. Manual smoke test
 docker compose run --rm telethon-digest python digest_worker.py --now
-# 5. Sync OpenClaw Cron Jobs
+# 5. Sync managed-job disabled state through Gateway RPC
 /opt/telethon-digest/sync-openclaw-cron-jobs.sh
 ```
 

@@ -1,6 +1,6 @@
 # Server State
 
-Snapshot date: `2026-05-31`
+Snapshot date: `2026-09-05` (read-only upgrade preflight)
 
 This file is for live inventory and host state.
 For the actual memory model, use `docs/10-memory-architecture.md`.
@@ -51,7 +51,7 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 
 ### OpenClaw builtin memorySearch
 
-- status: disabled/deprecated while external embedding limits are unstable
+- status: disabled while external embedding limits are unstable
 - backend: builtin SQLite memory engine (not QMD)
 - embedding provider: Gemini/OpenRouter/OpenAI embeddings when a funded route is restored
 - default memory roots:
@@ -94,6 +94,7 @@ For Knowledgebase / Ideas behavior, use `docs/17-knowledge-management.md`.
 - connection: via Syncthing global relay (port 22000 blocked by Hetzner cloud firewall)
 - Syncthing on Mac: homebrew service (`homebrew.mxcl.syncthing`), config: `~/Library/Application Support/Syncthing/`, GUI: `http://127.0.0.1:8384`
 - Syncthing on server: systemd service (`syncthing@deploy`), config: `~/.config/syncthing/`, GUI via SSH tunnel: `ssh -L 8385:127.0.0.1:8384 deploy@<server-host>` → `http://127.0.0.1:8385`
+- upgrade rule: pause `syncthing@deploy` before a cold vault copy and restore its prior state only after the backup or rollback boundary is complete
 - re-index: manual or after bulk changes — `lightrag-ingest.sh`
 - legacy rsync agent (`com.openclaw.obsidian-sync`) still installed but **superseded by Syncthing**
 
@@ -189,12 +190,12 @@ That absence is intentional. Voice transcription was removed to keep the CX23 VP
 
 ## Telegram knowledge topics
 
-Two forum topics in `Ben'ka_Clawbot_SuperGroup` (-1003592370241) for knowledge management:
+Two forum topics in the private bot supergroup support knowledge management:
 
-| Topic | ID | Mode | Behaviour |
-|---|---|---|---|
-| `📚 Knowledgebase` | 232 | knowledge | Question → search (LightRAG hybrid + memory, internet opt-in only); explicit save content → `raw/**` + `wiki/research/**` immediately via `wiki_ingest(capture_mode=knowledgebase)` |
-| `💡 Ideas` | 639 | idea_capture | Any content (forwarded post, link, text) → light-curated `raw/**` + `wiki/research/**` immediately; promote to Knowledgebase later for deeper enrichment |
+| Topic | Mode | Behaviour |
+|---|---|---|
+| `📚 Knowledgebase` | knowledge | Question → search (LightRAG hybrid, internet opt-in only); explicit save content → `raw/**` + `wiki/research/**` immediately via `wiki_ingest(capture_mode=knowledgebase)` |
+| `💡 Ideas` | idea_capture | Any content (forwarded post, link, text) → light-curated `raw/**` + `wiki/research/**` immediately; promote to Knowledgebase later for deeper enrichment |
 
 Config: `telegram-topic-map.json`, `telegram-surfaces.policy.json` on server. See `docs/17-knowledge-management.md`.
 
@@ -209,7 +210,7 @@ The final deployment is a layered setup:
 
 ## Image state
 
-OpenClaw is not running from the untouched upstream image anymore.
+OpenClaw is not running from the untouched upstream image anymore. Production remains on the 2026.6.9 hotfix; 2026.9.1 is candidate-held.
 
 Version-specific compatibility decisions, active local adaptations, blocked releases, and required
 upgrade gates are maintained in the [OpenClaw Version Compatibility Ledger](22-openclaw-version-compatibility-ledger.md).
@@ -254,7 +255,32 @@ Reason:
   real UI release gate. The scripted MTProto message produced neither an inbound Gateway event nor a
   bot reply on the candidate or the restored image, so it is not evidence of an upstream regression.
   The candidate was rolled back conservatively; require a manual Telegram UI ingress/outbound smoke
-  before another production attempt.
+   before another production attempt.
+- OpenClaw 2026.9.1 is prepared only as a `candidate-held`. A 2026-09-05
+  read-only preflight confirmed the current known-good image and all three health
+  endpoints, but found insufficient server disk for a server-side candidate copy.
+  The standing rollback policy is a verified streamed Mac cold archive, not a full
+  VPS state clone. Because the VPS cannot retain failed candidate state alongside
+  an archive extraction, the explicitly acknowledged low-disk recovery path may
+  discard only stopped failed-candidate state after archive verification.
+  A 2026-09-06 attempt did not migrate state: its Mac archive reached the former
+   10-minute stream limit, then the known-good 2026.6.9 Gateway, writers, and host
+   cron were restored. The procedure now gives the Mac archive a separate
+   pre-migration deadline before starting the candidate watchdog.
+  Subsequent candidate attempts found exact 2026.9.1 validation failures from
+  root-owned `openclaw.json`, retired config fields, and the now-external
+  DuckDuckGo provider. The migration and pinned `2026.9.1` plugin bootstrap were
+  validated offline against the real state. No candidate completed acceptance or
+  the required manual Telegram proof; each attempt restored 2026.6.9 from its
+  verified Mac archive.
+  The candidate remains held because the VPS now has about 1.53 GiB free while a
+  rebuild plus recovery reserve needs 4.42 GiB. All remaining Docker images back
+  running VPS services and are not cleanup targets.
+- preflight capacity evidence: available server disk was `5,029,436 KiB`; the config tree was
+  `5,212,716 KiB`; inactive build cache was `3.628 GB`. That cache is insufficient for a cold
+  state copy plus the new image and recovery reserve. The target base is `1,238,646,850` bytes
+  compressed with an uncompressed lower bound of `3,420,826,624` bytes and shares only five empty
+  1 KiB layers with the current image.
 
 Previous blocked releases: `2026.4.5` — startup instability (high-CPU spin loop, port never bound). Fixed by later releases including the current `2026.6.9`.
 

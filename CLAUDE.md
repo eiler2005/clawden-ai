@@ -1,4 +1,8 @@
 # Claude Code Instructions and rules for working in this project
+
+> **Frozen repository.** Do not install, deploy, or upgrade OpenClaw from this
+> repository. It preserves the legacy record; active implementation lives in
+> [My AI Office](https://github.com/eiler2005/my-ai-office).
  
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
@@ -90,6 +94,18 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - A healthy container, channel probe, or outbound-only Telegram delivery does not prove Telegram UI
   ingress. For OpenClaw/Telegram changes, require a fresh manual UI inbound-and-outbound smoke before
   promotion.
+
+## Gateway Backup And Rollback Policy
+
+- Use a verified cold archive on the Mac as the default rollback source for every OpenClaw Gateway
+  upgrade. Do not reserve a full mutable-state clone on this VPS for rollback or rehearsal.
+- Before an in-place migration, stop the recorded writers, stream the complete state archive to a
+  protected Mac directory, verify its member list and SHA-256, and keep the Mac and SSH route available
+  until acceptance completes.
+- Retain the known-good image on the VPS. If capacity cannot retain failed candidate state during a
+  rollback, it may be discarded only after the verified Mac archive exists and the Gateway is stopped.
+- Record the selected recovery mode, capacity evidence, archive verification, and acceptance outcome in
+  `docs/05-rollback-and-backup.md`, the compatibility ledger, and the command log.
 
 ## Security And Secrets
 

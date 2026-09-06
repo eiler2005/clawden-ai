@@ -245,15 +245,38 @@ openclaw models auth list --provider openai
 ```
 
 Do not print token values in logs or committed docs. If no usable `openai:*` OAuth profile exists
-after SQLite import, re-auth from the gateway container with
-`openclaw models auth login --provider openai`.
+after SQLite import, re-auth from the gateway container. A headless Gateway needs an interactive
+TTY and the device-code flow; open the displayed URL in a local browser and enter the one-time code.
+Use a new named profile rather than `--force`, which would delete all existing profiles for the
+provider:
+
+```bash
+ssh -tt -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec openclaw-gateway \
+    openclaw models auth login --provider openai \
+      --profile-id openai:refresh-YYYYMMDD --device-code
+'
+```
+
+After the browser confirms the login, set that exact profile first for the target agent. This
+changes the per-agent SQLite order only; do not copy a profile id to another agent that does not
+contain it.
+
+```bash
+ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
+  cd /opt/openclaw &&
+  sudo docker compose exec -T openclaw-gateway \
+    openclaw models auth order set --provider openai openai:refresh-YYYYMMDD
+'
+```
 
 Then restart the gateway so the running service drops the old token state:
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
   cd /opt/openclaw &&
-  sudo docker compose up -d --force-recreate openclaw-gateway
+  sudo docker compose up -d --force-recreate --no-deps openclaw-gateway
 '
 ```
 
@@ -1084,7 +1107,7 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" '
 '
 ```
 
-`wiki-import` now ships with an OpenClaw cron-store sync helper:
+`wiki-import` schedules are maintained through Gateway RPC, not a cron-store file:
 - daily dry-run lifecycle report
 - weekly safe archive + overview/topics refresh
 
@@ -1380,15 +1403,24 @@ as normal JSON before retry-marker checks. Deterministic local fallback should
 therefore mean the model route failed validation after retries, not merely that
 the model returned fenced JSON.
 
-On this deployment, `openclaw cron list` may hang even when the gateway itself is
-healthy. Because of that, the sync helpers patch the cron store (`jobs.json`)
-directly, back it up first, then restart the gateway container so it reloads the
-managed jobs.
+The 2026.9.1 candidate keeps cron state in SQLite; production remains on the
+2026.6.9 hotfix. Do not edit `jobs.json` or any
+SQLite file directly. Use Gateway RPC `cron.list`, `cron.add`, `cron.update`, and
+`cron.remove` through the bounded `artifacts/openclaw/openclaw-cron-rpc.sh`
+helper. Its inventory requests `includeDisabled=true` and follows every
+`nextOffset`, so a managed-job update preserves unrelated and disabled jobs.
 
-This workflow is also captured as the repo skill
-`skills/openclaw-cron-maintenance/SKILL.md`, so future schedule or cron-store
-changes can follow one stable procedure instead of re-discovering the recovery
-path each time.
+Telegram Digest and both AgentMail digest services use host cron as their
+authoritative scheduler. Keep their legacy OpenClaw jobs disabled through
+`cron.update`; do not remove their ids or recreate them from a bridge deploy.
+Wiki Lifecycle and other active Gateway jobs retain their schedules and timezones
+through Gateway RPC. The old cron-store workflow remains historical only.
+
+The candidate includes `scripts/check-openclaw-agent-contract.py` for a later
+server-local smoke. It uses separate stdout/stderr capture, explicit primary and
+reserve models, fresh upgrade session keys, and an invalid-agent negative case;
+it never delivers Telegram or triggers cron. Its fixture tests are not evidence
+of a live CLI contract. Do not execute it until the 2026.9.1 capacity gate opens.
 
 ### How `Пульс дня` is selected
 
@@ -1414,12 +1446,10 @@ volume. It is updated after each digest from the current strong-post pool and st
 This ranking/profile layer is intentionally generic and can later be reused for `inbox-email` or
 `work-email` recaps.
 
-**Important:** the target OpenClaw agent must be allowed to use `exec` and must
-have access to `/opt/telethon-digest`. The sync script defaults to agent `main`,
-but you can override it with `OPENCLAW_CRON_AGENT=ops` before deploy if your
-server uses a dedicated ops agent. The sync script reads existing jobs from
-`/opt/openclaw/config/cron/jobs.json` by default; override with
-`OPENCLAW_CRON_STORE=...` if your gateway uses a custom cron store path.
+**Important:** cron jobs that invoke a bridge need the configured target agent to
+have only the required tool permissions. Do not expand tool permissions during a
+cron migration. The RPC helper communicates with the running Gateway and has a
+45-second outer timeout plus a 30-second Gateway-call timeout by default.
 
 **Bridge diagnostics:**
 
@@ -1501,11 +1531,11 @@ ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
   'cd /opt/telethon-digest && sudo docker compose logs --tail=100'
 ```
 
-### Check OpenClaw cron schedule
+### Inspect OpenClaw cron inventory
 
 ```bash
 ssh -i ~/.ssh/id_rsa "$OPENCLAW_HOST" \
-  'sudo cat /opt/openclaw/config/cron/jobs.json 2>/dev/null || sudo cat /home/deploy/.openclaw/cron/jobs.json'
+  'cd /opt/openclaw && /opt/openclaw/openclaw-cron-rpc.sh inventory'
 ```
 
 ## AgentMail Inbox Email

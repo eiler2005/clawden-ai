@@ -96,6 +96,12 @@ this list is not implicitly approved for deployment.
 - `openclaw-with-iproute2:20260624-slim-2026.6.9` (`OpenClaw 2026.6.9`) — previous production; latest stable release verified from GitHub/GHCR, but UI Telegram ingress required the hotfix below
 - `openclaw-with-iproute2:20260624-slim-2026.6.9-telegram-polling-hotfix` (`OpenClaw 2026.6.9`) — current production; disables isolated Telegram ingress with `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0` while retaining the 2026.6.9 OpenAI/fallback repairs
 - `ghcr.io/openclaw/openclaw:2026.6.11-slim` (`OpenClaw 2026.6.11`) — derived-image canary built on 2026-07-10, but the automated MTProto smoke could not establish UI ingress on either the candidate or restored image. The candidate was rolled back to `2026.6.9-telegram-polling-hotfix`; require a manual UI ingress/outbound smoke before retrying.
+- `openclaw-with-iproute2:20260905-slim-2026.9.1-telegram-polling-hotfix` (`OpenClaw 2026.9.1`) — prepared derived candidate pinned to the upstream digest. It is not built or deployed yet: the candidate remains held until the cold-backup capacity gate and manual Telegram UI gate are satisfied.
+
+The candidate patch and layout verification were run against an extracted, digest-verified Linux/amd64
+image filesystem: the Telegram targets were the compiled `dist/probe-DYd9aA4Q.js` asset and the
+Telegram extension source, and the Codex/OpenAI layout check passed. This is artifact evidence only:
+Docker could not be started on the Mac for a runtime build, and the VPS candidate is not pulled or built.
 
 ## Final deployed shape
 
@@ -111,6 +117,8 @@ this list is not implicitly approved for deployment.
   restored OAuth profile instead of the direct OpenAI Platform API-key path.
 - Telegram Bot API ingress: isolated polling is disabled in the derived hotfix image with
   `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0`; do not confuse this path with Telethon digest jobs.
+- live configuration already contains none of the retired `cron.store`, `cron.maxConcurrentRuns`, or
+  `cron.runLog` keys. The template was changed for candidate compatibility; no live config was rewritten.
 - host publish:
   - `127.0.0.1:18789:18789`
   - `127.0.0.1:18790:18790`
