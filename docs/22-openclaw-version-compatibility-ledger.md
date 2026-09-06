@@ -57,6 +57,7 @@ removed only by a candidate result that proves the original failure path is fixe
 | Qwen direct reserve | `production-verified` for text route (2026-08-14) | Keep Qwen before DeepSeek; verify a controlled text smoke after provider/catalog changes. Image/audio/video auto-understanding stays disabled unless a separately verified vision route is introduced. |
 | Direct DeepSeek reserve | `production-verified`, revalidate on every model-catalog change | Run an explicit reserve-model smoke; do not substitute it for the primary route. |
 | OpenClaw 2026.6.11 | `candidate-held` | Rebuild only as a candidate and complete the manual Telegram UI gate; the prior MTProto automation is inconclusive. |
+| OpenClaw 2026.9.1 | `blocked` | This repository is frozen after the startup/readiness failure; production remains on 2026.6.9. Future work belongs to My AI Office. |
 
 Every retained OpenClaw release in the image timeline has a record below. A record may explicitly say
 that no version-specific defect was found; that distinction is deliberate and must not be replaced by
@@ -105,6 +106,31 @@ For this deployment, a fresh manual Telegram UI message must produce both an inb
 and an outbound reply whenever the candidate changes OpenClaw or its Telegram implementation.
 
 ## Version records
+
+### OCL-2026.9.1-UPGRADE-CANDIDATE
+
+- **Upstream / derived image:** `ghcr.io/openclaw/openclaw:2026.9.1-slim@sha256:6afe42854c87471188b9c4f8dce6bbc14005a48d8e1592846548b32508754f84`; candidate tag `openclaw-with-iproute2:20260905-slim-2026.9.1-telegram-polling-hotfix`.
+- **Status:** `blocked` by the unresolved Gateway startup/readiness failure. This is not a production promotion.
+- **Known-good parent:** `openclaw-with-iproute2:20260624-slim-2026.6.9-telegram-polling-hotfix`.
+- **Affected surface:** Gateway startup and migrations, SQLite-backed state and auth, model routing, cron persistence, and Telegram UI ingress.
+- **Failure signature:** a healthy container or one-way Telegram send can coexist with lost UI ingress; restoring an older image over migrated state can also leave incompatible data behind.
+- **Decision:** retain `iproute2` and `OPENCLAW_TELEGRAM_ISOLATED_INGRESS=0`. The build patches the candidate Telegram extension source and its compiled runtime assets only after verifying every target, and does not carry the obsolete Codex catalog rewrite. The migration removes only validator-confirmed retired fields, including the three unsupported cron keys, then makes `openclaw.json` readable by UID/GID 1000. Preserve the configured DuckDuckGo provider by installing `@openclaw/duckduckgo-plugin@2026.9.1` before re-enabling it; do not overwrite live config from the redacted template.
+- **Required gates:** build from the pinned digest; candidate `openclaw --version`; `ip`; config validation; `/healthz`, `/startupz`, and `/readyz`; primary OpenAI OAuth smoke with no fallback; separate Qwen and DeepSeek reserve smokes; plugin/channel probes; bridge CLI JSON contract; paginated cron inventory with no duplicate jobs; focused Knowledgebase read-only query; and fresh manual Telegram UI inbound plus outbound proof in a fresh request and an existing conversation.
+- **Rollback:** normal mode uses a server-side candidate copy and directory renames. The approved low-capacity exception uses a SHA-256-recorded Mac cold archive: it skips the isolated rehearsal, stops and removes the failed candidate image to free extraction space, moves migrated state aside, then streams the archive back before recreating only `openclaw-gateway`. If that retention cannot fit, an explicitly acknowledged discard variant deletes only the stopped failed-candidate state before extraction. The remote watchdog can stop a late candidate but cannot restore an archive held on the Mac. Never overlay an archive onto migrated SQLite files.
+- **Evidence:** 2026-09-05 read-only preflight confirmed the 2026.6.9 known-good image is present, all three current health endpoints return HTTP 200, the Gateway has the documented resource limits and config/workspace/secret mounts, the 2026.9.1 base is not yet cached, and live state includes SQLite WAL files. Server free space was `5,029,436 KiB`; config was `5,212,716 KiB`; inactive build cache was `3.628 GB`, which is insufficient. The target base is `1,238,646,850` bytes compressed and at least `3,420,826,624` bytes uncompressed, with only five empty 1 KiB shared layers. The Mac has 367 GiB free; a 128 MiB cold-archive stream took 6.52 seconds, estimating about 261 seconds for 5 GiB. The extracted target image passed the Telegram patch and Codex/OpenAI layout verifier, but no Docker runtime build ran. Existing bridge suites passed 21 Telethon, 98 Signals, and 19 AgentMail tests; local upgrade/cron tests passed. The later runtime evidence records the unresolved readiness failure.
+- **Attempt evidence:** the derived runtime image passed exact-version, `ip`, and pinned-ancestry checks. On 2026-09-06, the first Mac archive transferred `4,268,421,120` bytes before its former 10-minute deadline, so no state migration occurred. The 2026.6.9 Gateway, writers, and host cron recovered healthy. The candidate remains held; the Mac archive now completes under its own pre-migration deadline before the 15-minute candidate watchdog starts.
+- **Further attempt evidence:** exact offline validation against the live state found a root-owned config, five retired config-field groups, and the DuckDuckGo provider's new plugin dependency. The pinned compatible plugin and migrated config validated successfully in a disposable candidate environment. Live candidates did not reach acceptance or manual Telegram proof and were restored from verified Mac archives. After capacity was prepared, the candidate image could be rebuilt, but the Mac-mode post-build guard still refused a new migration because retaining a separate failed-candidate state plus its recovery reserve would not fit. The discard variant is deliberately not used without a separate acknowledgement.
+- **Runtime hold evidence:** after capacity was prepared, the pinned derived image built and a fresh full
+  Mac archive was verified. The switched candidate remained running but never exposed its startup or
+  readiness endpoints before the bounded deadline; it was not OOM-killed. A disposable valid-config
+  candidate reproduced the missing endpoints, so this is an unresolved Gateway-startup gate rather
+  than missing image tooling or an unvalidated schema. The Mac rollback restored the 2026.6.9 image,
+  current state, OpenAI OAuth, writers, and bridge callers. Candidate images and temporary VPS state
+  were removed; one verified current Mac archive remains.
+- **Freeze decision:** this repository no longer attempts OpenClaw upgrades. The 2026.6.9 production
+  image remains the retained recovery reference; the functional successor is My AI Office. See
+  `docs/26-archive-and-migration.md`.
+- **Removal condition:** the isolated-ingress workaround may be removed only after a candidate without it passes the fresh manual Telegram UI gate and records the exact evidence.
 
 ### OCL-2026.4.2-IMAGE-DEPENDENCY
 

@@ -30,29 +30,27 @@ Use when:
 
 - updating OpenClaw-managed schedules for `telethon-digest`, `agentmail-email`, or similar bridges
 - fixing `sync-openclaw-cron-jobs.sh`
-- validating `jobs.json` after deploy
+- validating Gateway RPC inventory after deploy
 - recovering from a hanging `openclaw cron list` / cron CLI path
 
 Core rule:
 
-- on this deployment, prefer patching the cron store directly over relying on
-  `openclaw cron list/add/remove`
+- use bounded Gateway RPC through `artifacts/openclaw/openclaw-cron-rpc.sh`; do
+  not edit cron store files or SQLite directly
 
 Default safe workflow:
 
 1. Read the managed prefix and expected schedules from the repo sync script.
-2. Find the active cron store (`/opt/openclaw/config/cron/jobs.json` first, then `/home/deploy/.openclaw/cron/jobs.json`).
-3. Back up the store to `jobs.json.bak-<timestamp>`.
-4. Replace only the jobs owned by the managed prefix.
-5. Preserve unrelated jobs untouched.
-6. Restart `openclaw-openclaw-gateway-1`.
-7. Wait until the gateway becomes `healthy`.
-8. Validate expected names, cron expressions, and `enabled=true`.
+2. Enumerate every `cron.list` page with `includeDisabled=true` and a stable snapshot.
+3. Patch only the managed prefix through `cron.add`, `cron.update`, or `cron.remove`.
+4. Preserve ids, unknown fields, unrelated jobs, and Gateway-computed runtime state.
+5. Validate expected names, cron expressions, timezones, and enabled state through a second RPC inventory.
 
 Why it exists:
 
-- `openclaw cron list` can hang on this server even while the gateway and scheduler are otherwise healthy
-- the bridge jobs still work if `jobs.json` is patched correctly and the gateway is restarted
+- ordinary cron CLI paths can hang, while bounded Gateway RPC gives a defined failure mode
+- the 2026.9.1 candidate uses SQLite-backed cron state, so direct file edits are unsafe; production
+  remains on the 2026.6.9 hotfix until its release gates pass
 
 ---
 
